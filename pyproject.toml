@@ -1,0 +1,77 @@
+[build-system]
+requires = [
+    "setuptools",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telekinesis-illusion"
+version = "0.1.1"
+description = "A synthetic data generation package."
+readme = "README.md"
+requires-python = "~=3.11.14"
+license = "GPL-3.0-or-later"
+license-files = [
+    "LICEN[CS]E*",
+]
+dependencies = [
+    "loguru>=0.7.3",
+    "debugpy>=1.8.19",
+    "opencv-contrib-python==4.13.0.90",
+    "pathlib>=1.0.1",
+    "tqdm>=4.67.1",
+    "pycocotools>=2.0.11",
+    # Blender
+    "bpy==4.2.17",
+    "trimesh==4.12.2",
+    "imageio>=2.34.1",
+    "scikit-learn>=1.5.0",
+    "scikit-image>=0.23.2",
+    "rich>=13.7.1",
+    "pypng>=0.20220715.0",
+    # Deep Learning
+    "fiftyone==1.17.0",
+    "httpx>=0.28.1",
+    # Development
+    "ruff>=0.15.9",
+    "pylint>=4.0.5",
+    "pytest>=8.3.4",
+]
+authors = [
+    { name = "Telekinesis", email = "support@telekinesis.ai" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+docs = [
+    "mkdocs>=1.6,<2",
+    "mkdocstrings[python]>=0.25,<1",
+    "mkdocs-awesome-pages-plugin>=2,<3",
+]
+
+
+[project.urls]
+Homepage = "https://telekinesis.ai"
+Documentation = "https://docs.telekinesis.ai"
+"Telekinesis Examples Repository" = "https://github.com/telekinesis-ai/telekinesis-examples"
+
+[tool.ruff]
+line-length = 80
+
+[tool.pyright]
+stubPath = "stubs"
+
+[tool.setuptools.packages.find]
+where = [
+    "src",
+]
+namespaces = true
