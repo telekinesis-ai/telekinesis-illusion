@@ -350,6 +350,7 @@ class Context:
         collision_shape: str = "CONVEX_HULL",
         scale: float | np.ndarray = 1.0,
         preprocess_model: bool = True,
+        shading: str = "FLAT",
     ) -> None:
         """
         Add a 3D model to the scene and assign it to a COCO category.
@@ -379,6 +380,9 @@ class Context:
                 Scale factor when adding the model.
             preprocess_model: bool
                 Whether to preprocess the model upon loading.
+            shading: str
+                Shading mode applied to the mesh. One of "FLAT", "SMOOTH",
+                "AUTO_SMOOTH". Only applied when 'preprocess_model' is True.
 
         Returns:
             None
@@ -421,6 +425,7 @@ class Context:
             preprocess_model=preprocess_model,
             min_number_instances=min_number_instances,
             max_number_instances=max_number_instances,
+            shading=shading,
         )
 
         # Add object to the objects dictionary

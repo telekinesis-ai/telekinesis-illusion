@@ -264,6 +264,39 @@ class BinPickingWorker:
             **self._specs.get("instance_randomizer", {}),
         }
 
+        # The grid hands out cell centers in order and starts over once it runs
+        # out, so more parts than cells means parts share a center and only the
+        # jitter keeps them apart. Nothing downstream checks this, so say so
+        # here - derived from the spec alone, which keeps this valid both at
+        # construction and on every apply_spec_updates().
+        if self._pose_sampling_strategy == "grid":
+            capacity = (
+                self._grid_cfg["rows"]
+                * self._grid_cfg["cols"]
+                * self._grid_cfg["layers"]
+            )
+            loadable_parts = sum(
+                model["instances"]["max"]
+                for model in self._specs.get("models", [])
+                if model["supercategory"] == "part"
+            )
+            part_cfg = self._instance_cfg.get("part")
+            configured_max = (
+                part_cfg["max"]
+                if part_cfg
+                else self._specs.get("max_number_visible_models", loadable_parts)
+            )
+            visible_parts = min(configured_max, loadable_parts)
+            if visible_parts > capacity:
+                logger.warning(
+                    f"Grid capacity is {capacity} cells "
+                    f"({self._grid_cfg['rows']}x{self._grid_cfg['cols']}x"
+                    f"{self._grid_cfg['layers']}) but up to {visible_parts} "
+                    "parts can be visible - cells get reused, so parts will "
+                    "share positions. Add rows/cols/layers or lower the part "
+                    "instance count."
+                )
+
     def get_output_base_directory(self) -> Path:
         """
         Get the output base directory.
@@ -369,6 +402,7 @@ class BinPickingWorker:
                 collision_shape=model["simulation"]["collision_shape"],
                 scale=model["scale"],
                 preprocess_model=model["preprocess_model"],
+                shading=model.get("shading", "FLAT"),
             )
             model_supercategory_map[model["supercategory"]].append(
                 model["name"]
@@ -397,6 +431,7 @@ class BinPickingWorker:
                 collision_shape=distractor["simulation"]["collision_shape"],
                 scale=distractor["scale"],
                 preprocess_model=distractor["preprocess_model"],
+                shading=distractor.get("shading", "FLAT"),
             )
             self._distractor_names.append(distractor["name"])
             self._id_supercategory_map[distractor["id"]] = distractor[
@@ -455,6 +490,29 @@ class BinPickingWorker:
         self._parse_tunable_cfg()
 
         needs_reload = self._apply_model_scales()
+
+        # Per-asset instance counts are baked in at import: add_model() creates
+        # max-1 linked duplicates and refuses to re-import a name, so a changed
+        # count can only take effect by rebuilding the worker. Reported rather
+        # than applied, otherwise a raised maximum looks like it worked until
+        # ObjectInstanceRandomizer trips over the instances that don't exist.
+        for entry in self._specs.get("models", []) + self._specs.get(
+            "distractors", []
+        ):
+            group = self._context.get_object_group(entry["name"])
+            if not group:
+                # Already reported by _apply_model_scales().
+                continue
+            loaded_min = group[0].min_number_instances
+            loaded_max = group[0].max_number_instances
+            wanted = entry["instances"]
+            if wanted["min"] != loaded_min or wanted["max"] != loaded_max:
+                needs_reload.append(
+                    f"'{entry['name']}' instance count changed "
+                    f"({loaded_min}-{loaded_max} loaded, "
+                    f"{wanted['min']}-{wanted['max']} configured) - "
+                    "reload assets to apply it"
+                )
 
         # Instance counts - plain attributes, re-read on every randomize().
         for role, node_name, legacy in (

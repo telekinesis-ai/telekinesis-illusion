@@ -36,6 +36,7 @@ class Object:
         preprocess_model: bool = True,
         min_number_instances: int = 1,
         max_number_instances: int = 1,
+        shading: str = "FLAT",
     ):
         """
         Initialize the internal parameters.
@@ -74,6 +75,10 @@ class Object:
                 Minimum number of instances for objects of this type.
             max_number_instances: int
                 Maximum number of instances for objects of this type.
+            shading: str
+                Shading mode applied to the mesh when it is loaded. One of
+                "FLAT", "SMOOTH", "AUTO_SMOOTH". Only applied when
+                'preprocess_model' is True. Defaults to "FLAT".
         """
         self._object = None
         self._category_name = category_name
@@ -111,17 +116,28 @@ class Object:
             obj.data.transform(scale_matrix)
             obj.scale = (1.0, 1.0, 1.0)
 
-            # Clear custom split normals and shade flat
+            # Clear custom split normals and apply the requested shading
             if self._preprocess_model:
                 # Deselct everything
                 bpy.ops.object.select_all(action="DESELECT")
-                # Select object
-                bpy.data.objects[self._object_name].select_set(True)
+                # Select and activate object
+                blender_obj = bpy.data.objects[self._object_name]
+                blender_obj.select_set(True)
+                bpy.context.view_layer.objects.active = blender_obj
                 # Remove custom normals
                 bpy.ops.mesh.customdata_custom_splitnormals_clear()
-                # Shade flat
-                for poly in bpy.context.object.data.polygons:
-                    poly.use_smooth = False
+                # Apply shading
+                if shading == "FLAT":
+                    bpy.ops.object.shade_flat()
+                elif shading == "SMOOTH":
+                    bpy.ops.object.shade_smooth()
+                elif shading == "AUTO_SMOOTH":
+                    bpy.ops.object.shade_auto_smooth()
+                else:
+                    raise ValueError(
+                        f"Unsupported shading mode '{shading}'. Supported "
+                        "modes are: FLAT, SMOOTH, AUTO_SMOOTH."
+                    )
                 # Deselct everything
                 bpy.ops.object.select_all(action="DESELECT")
 

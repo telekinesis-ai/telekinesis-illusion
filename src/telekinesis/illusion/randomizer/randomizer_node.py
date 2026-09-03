@@ -672,8 +672,6 @@ class ObjectInstanceRandomizer(RandomizerNode):
         self.min_num_total_objects = min_num_total_objects
         self.max_num_total_objects = max_num_total_objects
 
-        # Check if min and max num of total objects is feasable
-
     def randomize(self, context: Context) -> None:
         """
         Randomized the pose of the target objects by sampling their pose with
@@ -697,9 +695,10 @@ class ObjectInstanceRandomizer(RandomizerNode):
             for obj_name, instances in target_object_group.items():
                 # assuming these are identical across instances of the same object type
                 min_per_obj[obj_name] = instances[0].min_number_instances
-                max_per_obj[obj_name] = instances[
-                    0
-                ].max_number_instances  # == len(instances) per your note
+                # Equals len(instances): add_model() creates exactly
+                # max_number_instances-1 linked duplicates alongside the
+                # original.
+                max_per_obj[obj_name] = instances[0].max_number_instances
                 random.shuffle(instances)
 
             objs = list(target_object_group.keys())
@@ -715,11 +714,16 @@ class ObjectInstanceRandomizer(RandomizerNode):
                 if self.max_num_total_objects is not None
                 else sum(max_per_obj.values())
             )
-            max_total = min(max_total, sum(max_per_obj.values()))
+            loaded_total = sum(max_per_obj.values())
+            max_total = min(max_total, loaded_total)
 
             if min_total > max_total:
                 raise ValueError(
-                    f"min_total_objects ({min_total}) > max_total_objects ({max_total})"
+                    f"min_total_objects ({min_total}) > max_total_objects "
+                    f"({max_total}): only {loaded_total} instance(s) are "
+                    f"loaded {max_per_obj}. Lower the minimum, or raise the "
+                    "assets' max instances and reload the models - instance "
+                    "counts are baked in when the models are imported."
                 )
 
             total = random.randint(min_total, max_total)

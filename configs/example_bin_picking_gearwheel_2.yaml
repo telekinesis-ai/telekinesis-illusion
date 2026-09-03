@@ -22,7 +22,8 @@ shard:
 
 # Models
 #NOTE: id and category_name must be consistent over different datasets
-# Grid capacity is rows*cols*layers = 9, so visible parts are capped at 9.
+# Keep the visible parts within the grid capacity (rows*cols*layers, 6 below):
+# nothing enforces it, and extra parts reuse cells and land on top of each other.
 min_number_visible_models: 1
 max_number_visible_models: 6
 models:
@@ -35,6 +36,7 @@ models:
     simulation: { active: true, collision_shape: CONVEX_HULL }
     scale: 1.0
     preprocess_model: True
+    shading: AUTO_SMOOTH
 
   - name: plastic_bin_2
     id: None
