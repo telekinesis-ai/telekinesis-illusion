@@ -12,10 +12,16 @@
     <a href="LICENSE">
       <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-green" />
     </a>
+    <a href="https://www.blender.org/download/releases/4-2/">
+      <img src="https://img.shields.io/badge/Blender-4.2%20LTS-orange" />
+    </a>
+    <a href="#requirements">
+      <img src="https://img.shields.io/badge/platform-Windows%20x64-lightgrey" />
+    </a>
   </p>
 
   <p>
-    <a href="https://docs.telekinesis.ai/">Docs</a>
+    <a href="https://docs.telekinesis.ai/data-engine/synthetic-data-generation/overview.html">Docs</a>
     &nbsp;•&nbsp;
     <a href="https://github.com/telekinesis-ai/telekinesis-illusion">GitHub</a>
     &nbsp;•&nbsp;
@@ -49,8 +55,8 @@ conda activate telekinesis-illusion
 Clone the repository:
 
 ```bash
-git clone -b develop https://gitlab.com/telekinesis/illusion.git
-cd illusion
+git clone https://github.com/telekinesis-ai/telekinesis-illusion
+cd telekinesis-illusion
 ```
 
 This repository comes with a modified BlenderProc 2.8.0 package that uses an external `bpy` package (4.2.17 (LTS)) - see [BlenderProc/NOTICE.md](BlenderProc/NOTICE.md) for the list of modifications. Install it in editable mode:
