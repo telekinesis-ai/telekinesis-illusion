@@ -79,13 +79,24 @@ You can install the `telekinesis-illusion` Blender extension from our [GitHub](h
 
 ## Quickstart
 
-Run the examples from the `examples` folder. Note: running an example for the first time might take a few minutes and you might see `Loading render kernels (may take a few minutes the first time)` in the terminal.
+Run the examples from the `examples` folder. Note: running an example for the first time might take a few minutes and you might see `Loading render kernels (may take a few minutes the first time)` in the terminal. The quickstart examples demonstarte the following use cases:
 
 ```bash
-python examples/generate_synthetic_data_with_bin_picking_worker.py            # generate a bin-picking dataset
-python examples/quickstart_flying_things.py            # generate a "flying things"-type dataset
-python examples/quickstart_parts_in_bin.py             # low-level API walk-through for bin-picking scenes
+python examples/quickstart_flying_things.py
 ```
+
+Runs the low-level API to build a "flying things" scene: gearwheels and pipes are scattered in mid-air (no physics simulation) against randomized industrial/studio backgrounds. Generates a COCO instance-segmentation dataset of 5 images and opens it in the interactive dataset viewer.
+
+```bash
+python examples/quickstart_parts_in_bin.py
+```
+
+Runs the low-level API to build a bin-picking scene: gearwheels and a pipe fixture are dropped into a bin and settled with physics simulation. Generates a COCO instance-segmentation dataset of 5 images and opens it in the interactive dataset viewer.
+
+```bash
+python examples/generate_synthetic_data_with_bin_picking_worker.py
+```
+Launches synthetic data generation for a bin-picking use case with the default assets. Generates a COCO instance-segmentation dataset of 20 images (gearwheels in an industrial bin, with pipes and pipe fixtures as distractors) and opens the result in the interactive dataset viewer.
 
 ## Documentation
 

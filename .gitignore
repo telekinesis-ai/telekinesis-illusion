@@ -1,0 +1,36 @@
+# Distribution / packaging
+.Python
+build/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+
+# Blender
+*.blend
+*.blend1
+
+# Data 
+synthetic data/
+deprecated/
+data/
+*.obj
+datasets/
+# Default output directory when a spec sets no base_output_directory
+output/
+
+# VS Code
+.vscode/
+**/__pycache__/
+*.pyc
+
+# Training
+runs/
+inference/
+*.pt
+
+# Claude
+.claude/
+
+# Ruff
+.ruff_cache/

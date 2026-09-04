@@ -1,0 +1,190 @@
+metadata:
+  asset_directory: ../assets
+  dataset_name: example_bin_picking_gearwheel_2
+  package_version: "0.0.1"
+  use_case: instance_segmentation
+  annotation_format: coco_instances_rle
+  num_images: 20
+  base_output_directory: output
+  info:
+    description: "Synthetic instance-segmentation dataset of gearwheels arranged in a grid inside industrial bins with labeled distractors."
+    url: "https://github.com/telekinesis-ai"
+    version: "1.0.0"
+    year: 2026
+    contributor: "Telekinesis AI"
+  licenses:
+    - id: 1
+      name: "Attribution-NonCommercial-ShareAlike 4.0 International"
+      url: "https://creativecommons.org/licenses/by-nc-sa/4.0/"
+
+shard:
+  size: 10
+
+# Models
+#NOTE: id and category_name must be consistent over different datasets
+# Keep the visible parts within the grid capacity (rows*cols*layers, 6 below):
+# nothing enforces it, and extra parts reuse cells and land on top of each other.
+min_number_visible_models: 1
+max_number_visible_models: 6
+models:
+  - name: gearwheel_2
+    id: 1
+    supercategory: part
+    category_name: gear
+    path: models/mechanical_parts/gearwheel_2.glb
+    instances: { min: 0, max: 6 }
+    simulation: { active: true, collision_shape: CONVEX_HULL }
+    scale: 1.0
+    preprocess_model: True
+    shading: AUTO_SMOOTH
+
+  - name: plastic_bin_2
+    id: None
+    supercategory: container
+    category_name: distractor
+    path: models/bins/plastic_bin_2.glb
+    instances: { min: 0, max: 1 }
+    simulation: { active: false, collision_shape: MESH }
+    scale: 1.0
+    preprocess_model: True
+
+  - name: plastic_bin_3
+    id: None
+    supercategory: container
+    category_name: distractor
+    path: models/bins/plastic_bin_3.glb
+    instances: { min: 0, max: 1 }
+    simulation: { active: false, collision_shape: MESH }
+    scale: 1.0
+    preprocess_model: True
+
+# Distractors
+# If you dont want the distractors to be labeled set the values to
+#
+# id: None
+# supercategory: distractor
+# category_name: distractor
+#
+# for the added distractors. 
+# Else change the category_name for example to unknown_part and provide 
+# a category_id, e.g.
+#
+#   id: 3
+#   supercategory: distractor
+#   category_name: unknown_part
+
+min_number_visible_distractors: 3
+max_number_visible_distractors: 6
+distractors:
+  - name: pipe_1
+    id: 2
+    supercategory: distractor
+    category_name: pipe
+    path: models/mechanical_parts/pipe_1.glb
+    instances: { min: 0, max: 2 }
+    simulation: { active: True, collision_shape: CONVEX_HULL }
+    scale: 1.0
+    preprocess_model: True
+  - name: pipe_fixture_1
+    id: 3
+    supercategory: distractor
+    category_name: pipe_fixture
+    path: models/mechanical_parts/pipe_fixture_1.glb
+    instances: { min: 0, max: 2 }
+    simulation: { active: True, collision_shape: CONVEX_HULL }
+    scale: 1.0
+    preprocess_model: True
+  - name: pipe_fixture_2
+    id: 3
+    supercategory: distractor
+    category_name: pipe_fixture
+    path: models/mechanical_parts/pipe_fixture_2.glb
+    instances: { min: 0, max: 2 }
+    simulation: { active: True, collision_shape: CONVEX_HULL }
+    scale: 1.0
+    preprocess_model: True
+
+# Structured (grid) placement strategy. Parts start at grid cell centers on the
+# bin's top face with identity rotation; physics simulation still runs so parts
+# settle naturally on top of the bin floor.
+pose_sampling:
+  strategy: grid
+  params:
+    min_height: 0.05
+    max_height: 0.08
+    face_sample_range: [0.1, 0.9]
+    grid:
+      rows: 3
+      cols: 2
+      layers: 1
+      layer_spacing: 0.03
+      "xy_jitter": 0.1
+      "z_rotation_range": [-180.0, 180.0] # In degrees
+      shuffle: true
+
+camera:
+  field_of_view: 0.691111
+  clip_start: 0.1
+  clip_end: 1000
+  pixel_aspect_x: 1
+  pixel_aspect_y: 1
+  shift_x: 0
+  shift_y: 0
+  image_width: 820
+  image_height: 640
+
+renderer:
+  image_format: "PNG"
+
+camera_pose_randomizer:
+  sampler: volume_sampler
+  number_of_views: 2
+  params:
+    distance_range: [0.2, 1.5]
+    inplane_rot_min: -30.0
+    inplane_rot_max: 30.0
+    point_of_interst: [0.0, 0.0, 0.0]
+
+# How many instances of each supercategory are visible per scene. Optional -
+# 'part' and 'distractor' fall back to the top-level min/max_number_visible_*
+# keys above, 'container' falls back to 1..1.
+instance_randomizer:
+  part:       { min: 1, max: 5 }
+  container:  { min: 1, max: 1 }
+  distractor: { min: 5, max: 10 }
+
+# Material type tags per supercategory, matched against the sub-directories of
+# the asset directory's 'materials'. Optional - omitted roles keep their defaults
+# (part: metal, container: plastic, distractor: metal). An empty list disables
+# material randomization for that role.
+material_randomizer:
+  part:       [metal]
+  container:  [plastic]
+  distractor: [metal]
+
+# HDRI packs the scene background is sampled from, matched against the
+# sub-directories of the asset directory's 'hdris'.
+background_randomizer:
+  categories: [indoor/industrial, outdoor/day]
+
+output:
+  shard_name_template: "shard_{date}_{uuid}"
+  write_manifest: True
+  max_size_gb: 50
+  dataset_format: coco # None, coco, yolo
+  train_val_tes_ratio: [0.7, 0.2, 0.1]
+  seed: 42
+  stratify: True
+
+physics_simulator:
+  active: True
+  min_simulation_time_range: [0.1, 0.2]
+  max_simulation_time_range: [0.3, 1.0]
+  check_object_interval: 0.5
+  object_stopped_location_threshold: 0.01
+  object_stopped_rotation_threshold: 1.0
+  substeps_per_frame: 10
+  solver_iters: 10
+  verbose: False
+  use_volume_com: False
+  clean_up_scene: False
