@@ -16,6 +16,7 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 isolate_user_extensions()
 
 import blenderproc as bproc
+import bpy
 from blenderproc.python.utility.LabelIdMapping import LabelIdMapping
 
 from telekinesis.illusion.writer.coco_writer import write_coco_annotations
@@ -123,6 +124,13 @@ class Writer(ABC):
         """
         return str(self._output_dir)
 
+    def get_segmentation_output_config(self) -> Dict[str, Any]:
+        """Describe the BlenderProc segmentation pass required by the writer."""
+        return {
+            "map_by": ["category_id", "instance", "name"],
+            "default_values": {"category_id": 0},
+        }
+
     @abstractmethod
     def write(
         self,
@@ -144,6 +152,8 @@ class CocoWriter(Writer):
         info: Optional[Dict] = None,
         licenses: Optional[List] = None,
         supercategory_map: Optional[Dict] = None,
+        compose_parent_masks: bool = False,
+        include_camera_metadata: bool = False,
     ) -> None:
         """Add info, licenses and supercategory info from the specs if present"""
         super().__init__(create_output_dir_on_init, output_dir)
@@ -173,6 +183,20 @@ class CocoWriter(Writer):
             self._supercategory_map = supercategory_map
         else:
             self._supercategory_map = {}
+        self._compose_parent_masks = compose_parent_masks
+        self._include_camera_metadata = include_camera_metadata
+        self._next_image_metadata: Dict[str, Any] = {}
+
+    def set_image_metadata(self, metadata: Dict[str, Any]) -> None:
+        """Set metadata copied onto each image in the next write call."""
+        self._next_image_metadata = dict(metadata)
+
+    def get_segmentation_output_config(self) -> Dict[str, Any]:
+        config = super().get_segmentation_output_config()
+        if self._compose_parent_masks:
+            config["map_by"].append("annotation_parent")
+            config["default_values"]["annotation_parent"] = ""
+        return config
 
     def write(
         self,
@@ -188,6 +212,26 @@ class CocoWriter(Writer):
         missing = required_keys - data.keys()
         if missing:
             raise KeyError(f"Missing required data keys: {missing}")
+
+        image_metadata = []
+        current_frame = bpy.context.scene.frame_current
+        for frame in range(
+            bpy.context.scene.frame_start, bpy.context.scene.frame_end
+        ):
+            metadata = dict(self._next_image_metadata)
+            if self._include_camera_metadata:
+                bpy.context.scene.frame_set(frame)
+                camera = bpy.context.scene.camera
+                metadata.update(
+                    {
+                        "camera_matrix_world": [
+                            list(row) for row in camera.matrix_world
+                        ],
+                        "camera_lens_mm": camera.data.lens,
+                    }
+                )
+            image_metadata.append(metadata)
+        bpy.context.scene.frame_set(current_frame)
 
         write_coco_annotations(
             output_dir=str(self._output_dir),
@@ -205,7 +249,10 @@ class CocoWriter(Writer):
             label_mapping=categories,
             file_prefix="",
             indent=None,
+            compose_parent_masks=self._compose_parent_masks,
+            image_metadata=image_metadata,
         )
+        self._next_image_metadata = {}
 
         self._has_written_output = True
         return len(data["colors"])

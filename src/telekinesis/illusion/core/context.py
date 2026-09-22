@@ -20,6 +20,7 @@ isolate_user_extensions()
 import bpy
 import blenderproc as bproc  # type: ignore
 from blenderproc.python.utility.LabelIdMapping import LabelIdMapping  # type: ignore
+from blenderproc.python.types.MeshObjectUtility import MeshObject  # type: ignore
 
 from telekinesis.illusion.loader.material_loader import load_ccmaterials
 from telekinesis.illusion.types.object import Object
@@ -441,6 +442,44 @@ class Context:
                 # Add object to the objects dictionary
                 self._objects[linked_duplicate.get_name()] = linked_duplicate
                 self._object_groups[object_name].append(linked_duplicate)
+
+    def add_mesh_object(
+        self,
+        mesh_object: MeshObject,
+        object_name: str,
+        category_name: str | None = None,
+        category_id: int | None = None,
+        active_in_simulation: bool = False,
+        collision_shape: str = "CONVEX_HULL",
+    ) -> Object:
+        """Register procedural Blender geometry with the context.
+
+        Unlike :meth:`add_model`, this method does not import a file or make
+        an instance pool.  It is intended for geometry created at runtime by
+        procedural scene builders.
+        """
+        if object_name in self._objects:
+            raise ValueError(f"Object name '{object_name}' is already registered.")
+
+        final_category_name, final_category_id = (
+            self._resolve_category_id_and_name(
+                object_name=object_name,
+                category_name=category_name,
+                category_id=category_id,
+            )
+        )
+        obj = Object(
+            object=mesh_object,
+            object_name=object_name,
+            category_name=final_category_name,
+            category_id=final_category_id,
+            active_in_simulation=active_in_simulation,
+            collision_shape=collision_shape,
+            preprocess_model=False,
+        )
+        self._objects[object_name] = obj
+        self._object_groups[object_name] = [obj]
+        return obj
 
     def randomize_instance_visibility(
         self,

@@ -62,6 +62,7 @@ class SyntheticDataGenerator:
         save_blender_scene: bool = False,
         clean_up_scene: bool = True,
         render_max_retries: int = 2,
+        render_verbose: bool = False,
     ) -> None:
         """
         Main method for generating the synthetic data. On every iteration, the
@@ -110,30 +111,27 @@ class SyntheticDataGenerator:
             render_max_retries: int
                 Number of times to retry rendering a scene after a transient
                 render failure before raising the error.
+            render_verbose: bool
+                Show Blender's live frame and sample progress while rendering.
         """
         # Record the start time
         start_time = datetime.now()
         logger.info("Generating synthetic images...")
 
-        bproc.renderer.enable_segmentation_output(
-            map_by=["category_id", "instance", "name"],
-            default_values={"category_id": 0},
-        )
+        segmentation_config = self._writer.get_segmentation_output_config()
+        bproc.renderer.enable_segmentation_output(**segmentation_config)
         bproc.renderer.set_render_devices(desired_gpu_device_type="OPTIX")
         # Render the full frame in a single tile (no disk-spooled tile buffers).
         bproc.python.renderer.RendererUtility.set_tiling(
             use_auto_tile=False, tile_size=4096
         )
-        # Save us default user preferences
-        bpy.ops.wm.save_userpref()
-
         # Route loguru through tqdm.write() so log lines don't break the bar
         logger.remove()
         logger.add(lambda msg: tqdm.write(msg, end=""), colorize=True)
 
-        progress_bar = tqdm(total=num_images - 1)
+        progress_bar = tqdm(total=num_images)
         num_total_images = 0
-        while num_total_images < (num_images - 1):
+        while num_total_images < num_images:
             # Hide all hidden objects and disable their rigid body properties
             visible_object_names = self._context.get_visible_object_names()
             objects = self._context.get_objects()
@@ -173,7 +171,7 @@ class SyntheticDataGenerator:
             last_err = None
             for attempt in range(render_max_retries + 1):
                 try:
-                    data = bproc.renderer.render()
+                    data = bproc.renderer.render(verbose=render_verbose)
                     break
                 except (
                     Exception

@@ -1,7 +1,7 @@
 <div align="center">
   <p>
     <a href="https://gitlab.com/telekinesis/illusion">
-      <img width="100%" src="media/images/telekinesis_banner.png" />
+      <img width="100%" src="https://assets.telekinesis.ai/logo/telekinesis-banner.png" />
     </a>
   </p>
 

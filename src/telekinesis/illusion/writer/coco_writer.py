@@ -1,7 +1,6 @@
 """Allows rendering the content of the scene in the coco file format."""
 
 import datetime
-from itertools import groupby
 import json
 import os
 from typing import Optional, Dict, Union, Tuple, List
@@ -10,6 +9,7 @@ from loguru import logger
 import numpy as np
 from skimage import measure
 import cv2
+from pycocotools import mask as mask_utils
 
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
@@ -37,6 +37,8 @@ def write_coco_annotations(
     label_mapping: Optional[LabelIdMapping] = None,
     file_prefix: str = "",
     indent: Optional[Union[int, str]] = None,
+    compose_parent_masks: bool = False,
+    image_metadata: Optional[List[Dict]] = None,
 ):
     """Writes coco annotations in the following steps:
     1. Locate the seg images
@@ -137,6 +139,8 @@ def write_coco_annotations(
         mask_encoding_format,
         existing_coco_annotations,
         label_mapping,
+        compose_parent_masks,
+        image_metadata,
     )
 
     print("Writing coco annotations to " + coco_annotations_path)
@@ -144,41 +148,33 @@ def write_coco_annotations(
         json.dump(coco_output, fp, indent=indent)
 
 
-def binary_mask_to_rle(binary_mask: np.ndarray) -> Dict[str, List[int]]:
-    """Converts a binary mask to COCOs run-length encoding (RLE) format. Instead of outputting
-    a mask image, you give a list of start pixels and how many pixels after each of those
-    starts are included in the mask.
-    :param binary_mask: a 2D binary numpy array where '1's represent the object
-    :return: Mask in RLE format
+def binary_mask_to_rle(binary_mask: np.ndarray) -> Dict[str, Union[str, List[int]]]:
+    """Encode a binary mask as compressed, JSON-safe COCO RLE.
+
+    ``pycocotools`` performs the pixel scan in compiled code. Its encoder
+    returns the compressed counts as bytes, which are converted to ASCII for
+    JSON serialization.
     """
-    rle: Dict[str, List[int]] = {"counts": [], "size": list(binary_mask.shape)}
-    counts = rle.get("counts")
-    for i, (value, elements) in enumerate(
-        groupby(binary_mask.ravel(order="F"))
-    ):
-        if i == 0 and value == 1:
-            counts.append(0)
-        counts.append(len(list(elements)))
+    rle = mask_utils.encode(
+        np.asfortranarray(binary_mask, dtype=np.uint8)
+    )
+    rle["counts"] = rle["counts"].decode("ascii")
+    rle["size"] = [int(value) for value in rle["size"]]
     return rle
 
 
-def rle_to_binary_mask(rle: Dict[str, List[int]]) -> np.ndarray:
-    """Converts a COCOs run-length encoding (RLE) to binary mask.
-    :param rle: Mask in RLE format
-    :return: a 2D binary numpy array where '1's represent the object
-    """
-    binary_array = np.zeros(np.prod(rle.get("size")), dtype=bool)
-    counts: List[int] = rle.get("counts")
-
-    start = 0
-    for i in range(len(counts) - 1):
-        start += counts[i]
-        end = start + counts[i + 1]
-        binary_array[start:end] = (i + 1) % 2
-
-    binary_mask = binary_array.reshape(*rle.get("size"), order="F")
-
-    return binary_mask
+def rle_to_binary_mask(
+    rle: Dict[str, Union[str, List[int]]],
+) -> np.ndarray:
+    """Decode compressed or legacy uncompressed COCO RLE."""
+    encoded = rle
+    if isinstance(rle.get("counts"), list):
+        height, width = rle["size"]
+        encoded = mask_utils.frPyObjects(rle, height, width)
+    decoded = mask_utils.decode(encoded)
+    if decoded.ndim == 3:
+        decoded = decoded[..., 0]
+    return decoded.astype(bool)
 
 
 class _CocoWriterUtility:
@@ -194,6 +190,8 @@ class _CocoWriterUtility:
         mask_encoding_format,
         existing_coco_annotations=None,
         label_mapping: LabelIdMapping = None,
+        compose_parent_masks: bool = False,
+        image_metadata: Optional[List[Dict]] = None,
     ):
         """Generates coco annotations for images
 
@@ -283,39 +281,73 @@ class _CocoWriterUtility:
         images: List[Dict[str, Union[str, int]]] = []
         annotations: List[Dict[str, Union[str, int]]] = []
 
-        for (
+        for frame_index, (
             inst_segmap,
             image_path,
             instance_2_category_map,
             inst_attribute_map,
-        ) in zip(
+        ) in enumerate(zip(
             inst_segmaps,
             image_paths,
             instance_2_category_maps,
             inst_attribute_maps,
-        ):
+        )):
             # Add coco info for image
             image_id = len(images)
-            images.append(
-                _CocoWriterUtility.create_image_info(
-                    image_id, image_path, inst_segmap.shape
-                )
+            image_info = _CocoWriterUtility.create_image_info(
+                image_id, image_path, inst_segmap.shape
             )
+            if image_metadata and frame_index < len(image_metadata):
+                image_info.update(image_metadata[frame_index])
+            images.append(image_info)
 
-            # Go through all objects visible in this image
+            # Go through all objects visible in this image.  A child may opt
+            # into overlapping COCO annotations by naming an annotation parent;
+            # its visible mask is then also included in that parent's mask.
             instances = np.unique(inst_segmap)
-            # Remove background
-            instances = np.delete(instances, np.where(instances == 0))
+            # Remove background. Parent-mask composition also considers an
+            # otherwise hidden parent when one of its children is visible.
+            instances = set(
+                np.delete(instances, np.where(instances == 0)).tolist()
+            )
+            visible_attributes = {
+                int(item["idx"]): item for item in inst_attribute_map
+            }
+            name_to_instance = {
+                item.get("name"): int(item["idx"])
+                for item in inst_attribute_map
+                if item.get("name")
+            }
+            children_by_parent = {}
+            if compose_parent_masks:
+                for child in inst_attribute_map:
+                    parent_name = child.get("annotation_parent")
+                    if parent_name:
+                        children_by_parent.setdefault(parent_name, []).append(
+                            int(child["idx"])
+                        )
+            if compose_parent_masks:
+                for child in inst_attribute_map:
+                    child_idx = int(child["idx"])
+                    if (
+                        child_idx in instances
+                        and child.get("annotation_parent") in name_to_instance
+                    ):
+                        instances.add(
+                            name_to_instance[child["annotation_parent"]]
+                        )
+            annotation_by_instance = {}
+            mask_cache = {}
+
+            def instance_mask(instance_id):
+                instance_id = int(instance_id)
+                if instance_id not in mask_cache:
+                    mask_cache[instance_id] = inst_segmap == instance_id
+                return mask_cache[instance_id]
+
             for inst in instances:
                 if inst in instance_2_category_map:
-                    inst_attributes = next(
-                        (
-                            item
-                            for item in inst_attribute_map
-                            if item["idx"] == inst
-                        ),
-                        None,
-                    )
+                    inst_attributes = visible_attributes.get(int(inst))
                     if inst_attributes:
                         inst_attributes = {
                             k: v
@@ -325,7 +357,16 @@ class _CocoWriterUtility:
                         if len(inst_attributes) == 0:
                             inst_attributes = None
                     # Calc object mask
-                    binary_inst_mask = np.where(inst_segmap == inst, 1, 0)
+                    binary_inst_mask = instance_mask(inst)
+                    if compose_parent_masks:
+                        instance_name = visible_attributes.get(
+                            int(inst), {}
+                        ).get("name")
+                        child_ids = children_by_parent.get(instance_name, [])
+                        if child_ids:
+                            binary_inst_mask = binary_inst_mask.copy()
+                            for child_idx in child_ids:
+                                binary_inst_mask |= instance_mask(child_idx)
                     # Add coco info for object in this image
                     annotation = _CocoWriterUtility.create_annotation_info(
                         len(annotations) + 1,
@@ -337,6 +378,19 @@ class _CocoWriterUtility:
                     )
                     if annotation is not None:
                         annotations.append(annotation)
+                        annotation_by_instance[int(inst)] = annotation
+
+            if compose_parent_masks:
+                for child_idx, child in visible_attributes.items():
+                    parent_name = child.get("annotation_parent")
+                    if not parent_name or child_idx not in annotation_by_instance:
+                        continue
+                    parent_idx = name_to_instance.get(parent_name)
+                    parent_annotation = annotation_by_instance.get(parent_idx)
+                    if parent_annotation is not None:
+                        annotation_by_instance[child_idx][
+                            "parent_annotation_id"
+                        ] = parent_annotation["id"]
 
         new_coco_annotations = {
             "info": info,
@@ -392,6 +446,8 @@ class _CocoWriterUtility:
         for annotation in new_coco_annotations["annotations"]:
             annotation["id"] += annotation_id_offset
             annotation["image_id"] += image_id_offset
+            if "parent_annotation_id" in annotation:
+                annotation["parent_annotation_id"] += annotation_id_offset
         existing_coco_annotations["annotations"].extend(
             new_coco_annotations["annotations"]
         )
