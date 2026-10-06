@@ -20,7 +20,7 @@ class Object:
     Every instance of this class is a mesh which can be rendered in the scene.
     It can have multiple materials and different configurations of vertices with
     faces and edges. This class is a wrapper around BlenderProc's MeshObject
-    class.
+    class. Input models must contain one mesh object without empties.
     """
 
     def __init__(
@@ -37,6 +37,7 @@ class Object:
         min_number_instances: int = 1,
         max_number_instances: int = 1,
         shading: str = "FLAT",
+        material_preprocessing: str = "replace",
     ):
         """
         Initialize the internal parameters.
@@ -70,7 +71,7 @@ class Object:
                 scaled with (scale_x, scale_y, scale_z).
             preprocess_model: bool
                 Whether to preprocess the model upon loading.
-                NOTE: All the preprocessed objects are made to rigid bodies.
+                Applies UV/material preprocessing, shading and initial hiding.
             min_number_instances: int
                 Minimum number of instances for objects of this type.
             max_number_instances: int
@@ -79,7 +80,16 @@ class Object:
                 Shading mode applied to the mesh when it is loaded. One of
                 "FLAT", "SMOOTH", "AUTO_SMOOTH". Only applied when
                 'preprocess_model' is True. Defaults to "FLAT".
+            material_preprocessing: str
+                "replace" keeps legacy dummy-material preprocessing;
+                "preserve" keeps imported slots for slot-level randomization.
         """
+        if material_preprocessing not in ("replace", "preserve"):
+            raise ValueError(
+                "material_preprocessing must be 'replace' or 'preserve'."
+            )
+        self._material_preprocessing = material_preprocessing
+        self._material_slots_collapsed = False
         self._object = None
         self._category_name = category_name
         self._model_path = model_path  # Store original model path for reference
@@ -158,6 +168,7 @@ class Object:
         self._category_id = category_id
         if category_id:
             self.set_category_id(category_id)
+        self.refresh_material_slot_names()
 
     def __repr__(self):
         representation = (
@@ -175,6 +186,33 @@ class Object:
 
     def get_object(self) -> MeshObject:
         return self._object
+
+    def refresh_material_slot_names(self) -> None:
+        """Capture slot identities after import or an intentional layout edit.
+
+        Blender slot names follow their assigned materials. Keep import-time
+        identities so repeated randomizations can still select the same slot.
+        """
+        self._material_slot_names = tuple(
+            slot.name for slot in self._object.blender_obj.material_slots
+        )
+
+    def get_material_slot_names(self) -> tuple[str, ...]:
+        if len(self._material_slot_names) != len(
+            self._object.blender_obj.material_slots
+        ):
+            raise ValueError(
+                f"Material slot layout changed on {self.get_name()!r}; "
+                "call refresh_material_slot_names() after editing the layout."
+            )
+        return self._material_slot_names
+
+    def require_preserved_material_slots(self) -> None:
+        if self._material_slots_collapsed:
+            raise ValueError(
+                f"Slots on {self.get_name()!r} were collapsed by preprocessing. "
+                "Reload with material_preprocessing='preserve' for slot selection."
+            )
 
     def get_name(self) -> str:
         return self._object_name
@@ -301,9 +339,8 @@ class Object:
         'object_name'_INSTANCE_'self._instance_number', where
         'self._instance_number' starts from 0 and is incremented up to the
         number of instances.
-        The optional preprocessing includes the autmoatic smart UV-map addings
-        and enables rigid_body physics for collision checking with a
-        'CONVEX_HULL' collision shape.
+        Optional preprocessing applies smart UV mapping and the configured
+        material policy, then hides the model.
 
         Args:
             model_path: str
@@ -314,6 +351,7 @@ class Object:
                 Wheter to preprocess the added object.
         """
         self._object = load_obj(model_path)[0]
+        self._material_slots_collapsed = False
 
         # Store original Blender object name for reference (before category name is set)
         self._original_blender_name = self._object.blender_obj.name_full
@@ -339,13 +377,13 @@ class Object:
                 )
             self.hide(True)
             # self.enable_rigid_body()
-            # Remove all materials and add a dummy material
-            logger.info("Clearing all material slots...")
-            self._object.blender_obj.data.materials.clear()
-
-            logger.info("Adding dummy material...")
-            dummy_mat = bpy.data.materials.new(name="DummyMaterial")
-            self._object.blender_obj.data.materials.append(dummy_mat)
+            if self._material_preprocessing == "replace":
+                logger.info("Replacing material slots with a dummy material...")
+                self._object.blender_obj.data.materials.clear()
+                dummy_mat = bpy.data.materials.new(name="DummyMaterial")
+                self._object.blender_obj.data.materials.append(dummy_mat)
+                self._material_slots_collapsed = True
+        self.refresh_material_slot_names()
 
     def enable_rigid_body(self) -> None:
         """
@@ -429,9 +467,10 @@ class Object:
         new_obj = self._object.blender_obj.copy()
         bpy.context.collection.objects.link(new_obj)
 
-        bpy.context.view_layer.objects.active = new_obj
-        bpy.context.object.material_slots[0].link = "OBJECT"
-        bpy.context.view_layer.objects.active = self._object.blender_obj
+        for slot in new_obj.material_slots:
+            material = slot.material
+            slot.link = "OBJECT"
+            slot.material = material
 
         # Convert to bproc subclass
         new_entity = MeshObject(new_obj)
@@ -452,8 +491,14 @@ class Object:
             scale=self.get_scale(),
             min_number_instances=self._min_number_instances,
             max_number_instances=self._max_number_instances,
+            material_preprocessing=self._material_preprocessing,
         )
 
+        new_illusion_obj._model_path = self._model_path
+        new_illusion_obj._material_slot_names = self._material_slot_names
+        new_illusion_obj._material_slots_collapsed = (
+            self._material_slots_collapsed
+        )
         return new_illusion_obj
 
 

@@ -284,7 +284,9 @@ class BinPickingWorker:
             configured_max = (
                 part_cfg["max"]
                 if part_cfg
-                else self._specs.get("max_number_visible_models", loadable_parts)
+                else self._specs.get(
+                    "max_number_visible_models", loadable_parts
+                )
             )
             visible_parts = min(configured_max, loadable_parts)
             if visible_parts > capacity:
@@ -402,6 +404,9 @@ class BinPickingWorker:
                 collision_shape=model["simulation"]["collision_shape"],
                 scale=model["scale"],
                 preprocess_model=model["preprocess_model"],
+                material_preprocessing=model.get(
+                    "material_preprocessing", "replace"
+                ),
                 shading=model.get("shading", "FLAT"),
             )
             model_supercategory_map[model["supercategory"]].append(
@@ -431,6 +436,9 @@ class BinPickingWorker:
                 collision_shape=distractor["simulation"]["collision_shape"],
                 scale=distractor["scale"],
                 preprocess_model=distractor["preprocess_model"],
+                material_preprocessing=distractor.get(
+                    "material_preprocessing", "replace"
+                ),
                 shading=distractor.get("shading", "FLAT"),
             )
             self._distractor_names.append(distractor["name"])
@@ -584,12 +592,12 @@ class BinPickingWorker:
             types = self._material_cfg.get(role)
             if node is None or not types:
                 continue
-            if list(types) != list(node.types or []):
+            if types != node.configuration:
                 self._randomizer.replace_randomizer(
                     node_name,
-                    MaterialRandomizer(
+                    MaterialRandomizer.from_config(
                         target_objects=node.target_objects,
-                        types=list(types),
+                        config=types,
                         context=self._context,
                     ),
                 )
@@ -925,9 +933,9 @@ class BinPickingWorker:
                 )
                 return
             self._randomizer.add_randomizer(
-                randomizer_node=MaterialRandomizer(
+                randomizer_node=MaterialRandomizer.from_config(
                     target_objects=target_objects,
-                    types=types,
+                    config=types,
                     context=self._context,
                 ),
                 node_name=node_name,

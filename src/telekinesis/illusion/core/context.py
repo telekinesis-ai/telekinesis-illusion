@@ -4,6 +4,7 @@ generation
 """
 
 import random
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Dict, List
 
@@ -21,6 +22,7 @@ import bpy
 import blenderproc as bproc  # type: ignore
 from blenderproc.python.utility.LabelIdMapping import LabelIdMapping  # type: ignore
 from blenderproc.python.types.MeshObjectUtility import MeshObject  # type: ignore
+from blenderproc.python.types.MaterialUtility import Material
 
 from telekinesis.illusion.loader.material_loader import load_ccmaterials
 from telekinesis.illusion.types.object import Object
@@ -352,9 +354,12 @@ class Context:
         scale: float | np.ndarray = 1.0,
         preprocess_model: bool = True,
         shading: str = "FLAT",
+        material_preprocessing: str = "replace",
     ) -> None:
         """
         Add a 3D model to the scene and assign it to a COCO category.
+
+        The input model must contain one mesh object without empties.
 
         Object names must be unique within the scene; providing an existing
         object_name raises a ValueError. Category assignment follows a strict
@@ -384,6 +389,9 @@ class Context:
             shading: str
                 Shading mode applied to the mesh. One of "FLAT", "SMOOTH",
                 "AUTO_SMOOTH". Only applied when 'preprocess_model' is True.
+            material_preprocessing: str
+                "replace" removes slots and adds one dummy material;
+                "preserve" keeps imported material assignments.
 
         Returns:
             None
@@ -427,6 +435,7 @@ class Context:
             min_number_instances=min_number_instances,
             max_number_instances=max_number_instances,
             shading=shading,
+            material_preprocessing=material_preprocessing,
         )
 
         # Add object to the objects dictionary
@@ -459,7 +468,9 @@ class Context:
         procedural scene builders.
         """
         if object_name in self._objects:
-            raise ValueError(f"Object name '{object_name}' is already registered.")
+            raise ValueError(
+                f"Object name '{object_name}' is already registered."
+            )
 
         final_category_name, final_category_id = (
             self._resolve_category_id_and_name(
@@ -529,7 +540,7 @@ class MaterialManager:
 
     def update_materials(
         self,
-        types: List[str] | None = None,
+        types: Sequence[str] | None = None,
     ) -> None:
         """
         Updates the available materials in the context.
@@ -540,7 +551,9 @@ class MaterialManager:
 
         if types:
             # Check which materials are not loaded yet
-            missing = [t for t in types if t not in self._materials]
+            missing = list(
+                dict.fromkeys(t for t in types if t not in self._materials)
+            )
             for material in missing:
                 # Load missing material
                 materials_directory = assets_path / "materials" / material
@@ -550,16 +563,29 @@ class MaterialManager:
         else:
             # Load all the available materials
             materials_directory = assets_path / "materials"
-            for iter_dir in materials_directory.iterdir():
+            for iter_dir in sorted(materials_directory.iterdir()):
+                if not iter_dir.is_dir():
+                    continue
                 material_type = iter_dir.name
+                if material_type in self._materials:
+                    continue
                 self._materials[material_type] = load_ccmaterials(
                     str(iter_dir), preload=False
+                )
+        available = types or list(self._materials)
+        if not available:
+            raise ValueError("No PBR material types are available.")
+        for name in available:
+            if not self._materials.get(name):
+                raise ValueError(
+                    f"No PBR materials available for type {name!r}."
                 )
 
     def get_random_material(
         self,
-        types: List[str] | None = None,
-    ) -> None:
+        types: Sequence[str] | None = None,
+        rng=None,
+    ) -> Material:
         """
         Sample a random material of the types specified in types.
 
@@ -569,8 +595,14 @@ class MaterialManager:
                 material. If 'None' is provided, the material is sampled from
                 all the available material types.
         """
-        if types:
-            random_type = random.choice(types)
-        else:
-            random_type = random.choice(list(self._materials.keys()))
-        return random.choice(self._materials[random_type])
+        rng = random if rng is None else rng
+        available = types or list(self._materials)
+        if not available:
+            raise ValueError("No PBR material types are available.")
+        for name in available:
+            if not self._materials.get(name):
+                raise ValueError(
+                    f"No PBR materials available for type {name!r}."
+                )
+        random_type = rng.choice(available)
+        return rng.choice(self._materials[random_type])

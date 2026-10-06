@@ -106,6 +106,11 @@ Launches synthetic data generation for a bin-picking use case with the default a
 
 ## Documentation
 
+See [Material randomization](docs/MATERIAL_RANDOMIZATION.md) for whole-object,
+object and material-slot selection, procedural Principled materials and presets.
+Run `python examples/preview_heavy_duty_wheel.py`
+to save reproducible material previews without generating a dataset.
+
 Find the documentation for Illusion at: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.ai/).
 
 ## Citation

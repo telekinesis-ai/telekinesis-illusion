@@ -34,3 +34,6 @@ inference/
 
 # Ruff
 .ruff_cache/
+.venv/
+.pytest_cache/
+pytest-cache-files-*/

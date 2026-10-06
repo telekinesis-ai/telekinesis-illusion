@@ -173,6 +173,13 @@ Reference shape: [`configs/example_bin_picking_gearwheel_2.yaml`](../configs/exa
 
 ## Dataset
 
+### Material randomization
+
+See [Material randomization](MATERIAL_RANDOMIZATION.md) for the Python API,
+extended worker YAML, preserved-slot preprocessing, single-mesh model support,
+Principled presets, validation and seeding. Existing PBR role lists and
+preprocessing defaults retain their behavior.
+
 A worker run produces COCO shards under `<base_output_directory>/<dataset_name>/`. `BinPickingWorker.merge_shards()` consolidates them into a single `merged_coco_annotations.json` (see [Output dataset format and shard layout](#output-dataset-format-and-shard-layout) for the full directory layout).
 
 Both classes are re-exported from `illusion.dataset`:

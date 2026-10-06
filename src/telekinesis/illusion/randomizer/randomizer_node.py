@@ -10,6 +10,8 @@ import random
 import numpy as np
 from loguru import logger
 from pathlib import Path
+from copy import deepcopy
+from collections.abc import Mapping, Sequence
 
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
@@ -32,6 +34,20 @@ from telekinesis.illusion.core.context import Context
 from telekinesis.illusion.types.camera import Camera
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.utils.assets import resolve_asset_dir
+from telekinesis.illusion.randomizer.materials import (
+    AllSlots,
+    MaterialChoice,
+    MaterialMode,
+    MaterialPool,
+    MaterialSlots,
+    MaterialTarget,
+    PBRMaterial,
+    _names,
+    assign_material,
+    clean_generated_materials,
+    material_choices_from_config,
+    slot_pools,
+)
 
 # Stages group the randomizer nodes by what part of the scene they change, so
 # a caller can re-run only some of them (see Randomizer.randomize's 'stages'
@@ -268,7 +284,9 @@ class ObjectPoseRandomizer(RandomizerNode):
 
         sample_results: Dict[Object, Tuple[int, bool]] = {}
         # Track object names that were hidden because of collision
-        visible_object_names: List[str] = list(context.get_visible_object_names())
+        visible_object_names: List[str] = list(
+            context.get_visible_object_names()
+        )
         for obj in objects_to_sample:
             # Store the obejct's initial pose in case we need to place it back
             if mode_on_failure == "initial_pose":
@@ -895,44 +913,157 @@ class BackgroundRandomizer(RandomizerNode):
 
 
 class MaterialRandomizer(RandomizerNode):
-    """
-    Class for randomizing the material of objets.
+    """Randomize materials with independent target/source/assignment policies.
+
+    Existing calls keep prefix matching and active-slot PBR assignment. Use
+    mode='object' for one sample across every slot of each selected mesh.
+    material_slots='all' samples every slot independently; a mapping assigns
+    separate pools to selected original slot names or zero-based indices.
+    Named slots must exist on every selected mesh. Use separate nodes when
+    parts have different layouts. A seed gives this node a private RNG stream.
     """
 
     def __init__(
         self,
-        target_objects: List[str],
+        target_objects: list[str] | MaterialTarget,
         context: Context,
-        types: List[str] | None = None,
+        types: list[str] | None = None,
+        *,
+        mode: MaterialMode | None = None,
+        materials: Sequence[MaterialChoice] | None = None,
+        material_slots: MaterialSlots | None = None,
+        seed: int | None = None,
     ) -> None:
-        self.target_objects = target_objects
+        if isinstance(target_objects, MaterialTarget):
+            self.target_objects = target_objects
+        else:
+            self.target_objects = list(_names(target_objects, "target_objects"))
+        if mode not in (None, "active", "object", "slots"):
+            raise ValueError("mode must be 'active', 'object' or 'slots'.")
+        if types is not None and materials is not None:
+            raise ValueError("Use either types or materials, not both.")
+        if material_slots is not None and mode not in (None, "slots"):
+            raise ValueError("material_slots requires mode='slots'.")
+        if seed is not None and (
+            isinstance(seed, bool) or not isinstance(seed, int)
+        ):
+            raise ValueError("seed must be an integer or None.")
+        self._mode = mode or (
+            "slots"
+            if material_slots is not None
+            else "object"
+            if materials is not None
+            else "active"
+        )
+        self._rng = random if seed is None else random.Random(seed)
         self._types = types
-        context.material_manager.update_materials(self._types)
+        self.configuration = None
+        if self._mode == "slots" and material_slots != "all":
+            if materials is not None or types is not None:
+                raise ValueError(
+                    "Put material choices inside the slot mapping."
+                )
+            self._slot_pools = slot_pools(material_slots)
+            self._pool = None
+        else:
+            self._pool = MaterialPool(
+                materials if materials is not None else [PBRMaterial(types)]
+            )
+            self._slot_pools = (
+                [(AllSlots(), self._pool)] if self._mode == "slots" else []
+            )
+        pools = [p for _, p in self._slot_pools] or [self._pool]
+        for pool in pools:
+            pool.prepare(context.material_manager)
+
+    @classmethod
+    def from_config(cls, target_objects, context, config):
+        """Build from a legacy PBR list or an explicit YAML/JSON mapping."""
+        if isinstance(config, list):
+            result = cls(target_objects, context, types=config)
+        elif isinstance(config, Mapping):
+            unknown = set(config) - {
+                "types",
+                "materials",
+                "material_slots",
+                "mode",
+                "seed",
+            }
+            if unknown:
+                raise ValueError(
+                    f"Unknown material randomizer keys: {unknown}."
+                )
+            kwargs = dict(config)
+            if "materials" in kwargs:
+                kwargs["materials"] = material_choices_from_config(
+                    kwargs["materials"]
+                )
+            if isinstance(kwargs.get("material_slots"), Mapping):
+                kwargs["material_slots"] = {
+                    slot: material_choices_from_config(choices)
+                    for slot, choices in kwargs["material_slots"].items()
+                }
+            result = cls(target_objects, context, **kwargs)
+        else:
+            raise TypeError("Material configuration must be a list or mapping.")
+        result.configuration = deepcopy(config)
+        return result
 
     @property
-    def types(self) -> List[str] | None:
+    def types(self) -> list[str] | None:
         """
         The material type tags this randomizer picks from.
         """
         return self._types
 
     def randomize(self, context: Context) -> None:
-        # Get target objects for context
+        targets = self._targets(context)
+        # Resolve every target before sampling or mutation, so bad selectors
+        # cannot leave a partially randomized asset behind.
+        plan = [(obj, self._assignments(obj)) for obj in targets]
+        try:
+            for obj, assignments in plan:
+                for indices, pool in assignments:
+                    material = pool.generate(
+                        context.material_manager, self._rng
+                    )
+                    assign_material(obj, indices, material)
+        finally:
+            clean_generated_materials()
+
+    def _targets(self, context):
+        if isinstance(self.target_objects, MaterialTarget):
+            return self.target_objects.resolve(context)
         prefixes = tuple(self.target_objects)
-
-        def is_target(name: str) -> bool:
-            return name.startswith(prefixes)
-
-        objects = context.get_objects()
-        target_objects = [
-            objects[name].get_object() for name in objects if is_target(name)
+        return [
+            obj
+            for name, obj in context.get_objects().items()
+            if name.startswith(prefixes)
         ]
 
-        for objects in target_objects:
-            random_material = context.material_manager.get_random_material(
-                self._types
-            )
-            objects.blender_obj.active_material = random_material.blender_obj
+    def _assignments(self, obj):
+        if self._mode == "slots":
+            obj.require_preserved_material_slots()
+            assignments = []
+            seen = set()
+            for selector, pool in self._slot_pools:
+                for index in selector.resolve(obj):
+                    if index in seen:
+                        raise ValueError(
+                            "Multiple selectors target the same slot."
+                        )
+                    seen.add(index)
+                    assignments.append(((index,), pool))
+            if not assignments:
+                raise ValueError(f"No material slots on {obj.get_name()!r}.")
+            return assignments
+        mesh = obj.get_object().blender_obj
+        indices = (
+            (mesh.active_material_index,)
+            if self._mode == "active"
+            else tuple(range(len(mesh.material_slots)))
+        )
+        return [(indices or (0,), self._pool)]
 
 
 class CameraPoseRandomizer(RandomizerNode):

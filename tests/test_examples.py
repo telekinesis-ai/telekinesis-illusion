@@ -1,11 +1,12 @@
 """Smoke tests that run the example scripts and check they don't crash.
 
-These are not unit tests: they invoke the real examples end-to-end, which
-means real Blender rendering (and, for the two quickstart examples, a real
-GUI viewer window). They require a GPU and the bundled default assets, so
-they are meant to be run locally, not in a headless CI environment.
+These invoke the real examples end-to-end. The dataset examples require
+Blender rendering and a GPU; the two quickstarts also open a GUI viewer.
+The heavy-duty wheel material preview uses --no-render and runs headlessly.
 """
+
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -26,7 +27,10 @@ BLOCKING_ON_VIEWER = {
 # This example accepts a flag to skip its interactive preview, so it can run
 # to a normal, timely exit.
 RUNS_TO_COMPLETION = {
-    "generate_synthetic_data_with_bin_picking_worker.py": (["--no-preview"], 300),
+    "generate_synthetic_data_with_bin_picking_worker.py": (
+        ["--no-preview"],
+        300,
+    ),
 }
 
 # Printed by SyntheticDataGenerator.generate() right before scene clean-up,
@@ -45,7 +49,12 @@ def _run_example(
     cmd = [sys.executable, str(EXAMPLES_DIR / script), *(args or [])]
     try:
         return subprocess.run(
-            cmd, cwd=EXAMPLES_DIR, timeout=timeout, capture_output=True, text=True
+            cmd,
+            cwd=EXAMPLES_DIR,
+            timeout=timeout,
+            capture_output=True,
+            text=True,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return None
@@ -85,3 +94,42 @@ def test_view_dataset_importable():
 
     with pytest.raises(FileNotFoundError):
         module._detect_format(Path("/nonexistent/dataset/dir"))
+
+
+def test_material_preview_runs_to_completion(tmp_path):
+    result = _run_example(
+        "preview_heavy_duty_wheel.py",
+        ["--no-render", "--output-dir", str(tmp_path)],
+        timeout=60,
+    )
+    assert result is not None, "Material preview did not finish within 60s"
+    assert "Heavy-duty wheel preview complete:" in result.stdout, (
+        result.stdout + result.stderr
+    )
+    inventory = json.loads((tmp_path / "inventory.json").read_text())
+    assert Path(inventory["model"]).name == "heavy_duty_wheel.glb"
+    assert inventory["objects"] == {
+        "wheel_INSTANCE_0": ["Stahl", "Alu", "Gumi"]
+    }
+    assert inventory["seed"] == 42
+    assert inventory["rendered"] is False
+    previews = inventory["previews"]
+    original = previews["00_original"]
+    expected_changes = {
+        "01_blue_plastic_slot": {"Alu"},
+        "02_procedural_metal_slots": {"Stahl", "Alu"},
+        "03_pbr_metal_slots": {"Stahl", "Alu"},
+        "04_metal_and_rubber_slots": {"Alu", "Gumi"},
+        "05_all_slots": set(original),
+        "06_whole_object_pbr_metal": set(original),
+    }
+    assert set(previews) == {"00_original", *expected_changes}
+    for name, expected in expected_changes.items():
+        assert set(previews[name]) == set(original)
+        changed = {
+            slot for slot in original if previews[name][slot] != original[slot]
+        }
+        assert changed == expected, name
+    assert len(set(previews["06_whole_object_pbr_metal"].values())) == 1
+    # Completing assignments must not mask a native crash during shutdown.
+    assert result.returncode == 0, result.stdout + result.stderr

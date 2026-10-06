@@ -17,22 +17,24 @@ import blenderproc as bproc
 import bpy
 
 from telekinesis.illusion.core.context import Context
-from telekinesis.illusion.core.synthetic_data_generator import SyntheticDataGenerator
+from telekinesis.illusion.core.synthetic_data_generator import (
+    SyntheticDataGenerator,
+)
 from telekinesis.illusion.randomizer.randomizer import Randomizer
 from telekinesis.illusion.randomizer.randomizer_node import (
     BackgroundRandomizer,
     CameraPoseRandomizer,
     MaterialRandomizer,
 )
-from telekinesis.illusion.sampler.camera_pose_sampler import CAMERA_POSE_SAMPLERS
+from telekinesis.illusion.sampler.camera_pose_sampler import (
+    CAMERA_POSE_SAMPLERS,
+)
 from telekinesis.illusion.types.camera import CameraConfig
 from telekinesis.illusion.writer.writer import CocoWriter
 
 
 LayoutBuilder = Callable[[Context, int, Mapping[str, Any]], None]
-RandomizerBuilder = Callable[
-    [Randomizer, Context, Mapping[str, Any]], None
-]
+RandomizerBuilder = Callable[[Randomizer, Context, Mapping[str, Any]], None]
 
 
 class ProceduralSceneWorker:
@@ -125,9 +127,13 @@ class ProceduralSceneWorker:
                         "'target_objects'."
                     )
                 randomizer.add_randomizer(
-                    MaterialRandomizer(
+                    MaterialRandomizer.from_config(
                         target_objects=target_objects,
-                        types=rule.get("types"),
+                        config={
+                            key: value
+                            for key, value in rule.items()
+                            if key not in ("name", "target_objects")
+                        },
                         context=context,
                     ),
                     node_name=rule.get("name", f"material_{index}"),
@@ -184,9 +190,7 @@ class ProceduralSceneWorker:
             context = Context(
                 camera_config=self._camera_config(), asset_dir=asset_dir
             )
-            layout_config = self._mapping(
-                self.spec.get("layout", {}), "layout"
-            )
+            layout_config = self._mapping(self.spec.get("layout", {}), "layout")
             self.layout_builder(context, seed, layout_config)
             samples = int(self.spec.get("renderer", {}).get("samples", 32))
             renderer = self.spec.get("renderer", {})
@@ -219,4 +223,3 @@ class ProceduralSceneWorker:
             )
 
         return self.output_dir
-
