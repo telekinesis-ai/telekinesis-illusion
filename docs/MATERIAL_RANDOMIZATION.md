@@ -3,8 +3,9 @@
 See [validation results](MATERIAL_RANDOMIZATION_VALIDATION.md) for tests,
 supplied-asset inventories, rendered previews and environment limitations.
 
-`MaterialRandomizer` supports texture-based PBR materials and texture-free
-Principled BSDF recipes. Both use the same selection and assignment pipeline.
+`MaterialRandomizer` supports texture-based PBR materials and procedural
+Principled BSDF recipes, with optional surface-imperfection textures. Both use
+the same selection and assignment pipeline.
 The examples below use the public Python API; the workers also accept the YAML
 mapping shown below.
 
@@ -136,8 +137,8 @@ visibility, physics and linked duplication use the existing single-mesh path.
 
 The supported parameters correspond to Blender 4.2 LTS's
 [Principled BSDF](https://docs.blender.org/manual/en/4.2/render/shader_nodes/shader/principled.html).
-Materials contain one Principled node connected to Material Output, without
-image textures. Render-engine settings still govern transparency/refraction.
+By default materials contain one Principled node connected to Material Output,
+without image textures. Render-engine settings still govern transparency/refraction.
 
 | Parameter | Values |
 | --- | --- |
@@ -178,6 +179,142 @@ catalog categories, **not procedural preset names**. Custom sources implement
 material. Generation is separate from assignment. Only unused generated
 procedural materials are reclaimed; imported, user-supplied and PBR materials
 are not deleted or edited.
+
+## Surface imperfections
+
+Enable imperfections on individual procedural recipes with
+`surface_imperfections=True`. The default is **off**. Both whole-object and
+material-slot randomization support it; PBR catalog strings keep their existing
+behavior. Assets are read from `<asset_directory>/surface_imperfections`, so
+`metadata.asset_directory: E:/telekinesis-illusion/assets` uses the supplied
+folder without copying it. Python callers can set the root via
+`Context(asset_dir="E:/telekinesis-illusion/assets")`.
+
+```python
+from telekinesis.illusion.types.material import (
+    PrincipledMaterial, SurfaceImperfections,
+)
+
+scratched_metal = PrincipledMaterial("metal", surface_imperfections=True)
+subtle_plastic = PrincipledMaterial(
+    "plastic",
+    surface_imperfections=SurfaceImperfections(
+        directory="surface_imperfections",  # Relative to the context asset root.
+        roughness_strength=(0.1, 0.2),
+        bump_strength=(0.05, 0.1),
+        bump_distance=0.0001,
+        scale=(1.0, 3.0),
+    ),
+)
+```
+
+The YAML option is a sibling of `preset` and `parameters`:
+
+```yaml
+metadata:
+  asset_directory: E:/telekinesis-illusion/assets
+
+material_randomizer:
+  container:
+    mode: object
+    seed: 42
+    materials:
+      - preset: plastic
+        surface_imperfections: true
+```
+
+For explicit worker `rules`, put the same option on each recipe in `materials`
+or `material_slots`. Use a mapping for custom settings:
+
+```yaml
+- preset: metal
+  surface_imperfections:
+    enabled: true
+    directory: E:/telekinesis-illusion/assets/surface_imperfections
+    roughness_strength: [0.1, 0.3]
+    bump_strength: [0.05, 0.2]
+    bump_distance: 0.0001
+    scale: [1.0, 3.0]
+  parameters:
+    roughness: [0.15, 0.35]
+```
+
+These are the default numeric settings. Each accepts a fixed number or a
+uniform `[minimum, maximum]` range. Strengths must be in [0, 1], bump distance
+non-negative, and scale positive. `enabled: false` skips asset discovery and
+leaves the original procedural shader and random sequence intact. To limit
+sampling to one set, point `directory` at that set's subfolder. A missing folder
+or a folder without `*_Opacity` maps fails when constructing the randomizer.
+
+### Shader setup
+
+One map set is selected per generated material, recursively and uniformly from
+the folder's `*_Opacity` image sets. The five supplied `Scratches` sets use
+their opacity masks; the three `SurfaceImperfections` sets also supply
+roughness and displacement maps. Preview thumbnails, color textures, and
+NormalDX/NormalGL maps are not used.
+
+1. **Texture Coordinate (UV) -> Mapping -> Image Textures (Flat).** Mapping
+   samples a uniform UV scale, U/V offsets in [0, 1], and a rotation of 0, 90,
+   180, or 270 degrees within the UV plane. All maps share this transform and
+   repeat across the mesh's rendering UV layout. Scale is relative to UV space,
+   so the unwrap determines the size and orientation of marks on the surface.
+   When assigning an imperfection material to a mesh without any UV layer,
+   Illusion creates one using the same **smart projection** used by default
+   in PBR model preprocessing. This also works with `preprocess_model=False`.
+   Existing UV layers are preserved by material assignment, including multiple
+   layers; the model-loading UV preprocessing policy is unchanged. Missing
+   UVs on a linked mesh are generated on a private copy, leaving untargeted
+   instances intact. Repeated randomization reuses the resulting layout.
+   Data textures use Non-Color, following Blender's
+   [image texture guidance](https://docs.blender.org/manual/en/4.2/render/shader_nodes/textures/image.html).
+2. **Opacity mask -> Multiply by roughness strength -> Mix -> Principled
+   Roughness.** With `m = mask * roughness_strength`, the result is
+   `clamp((1 - m) * sampled_base_roughness + m * texture_roughness, 0, 1)`.
+   When a roughness map is absent, `texture_roughness = 1`. Unmasked areas
+   retain the sampled recipe roughness.
+3. **Masked displacement -> Bump -> Principled Normal.** Where displacement is
+   available, its product with opacity supplies height. Otherwise opacity
+   supplies height with Bump's Invert enabled, approximating recessed scratches.
+   Bump strength and distance control the relief; distance is in Blender units
+   (0.0001 is 0.1 mm when one unit represents one meter). NormalDX/NormalGL
+   textures remain unused; detail comes from the scalar bump height.
+4. **Principled BSDF -> Material Output Surface.** Base color, metallic,
+   transmission, emission and alpha retain their recipe values. Opacity is
+   used only as an imperfection mask. Vertex positions and output Displacement
+   are unchanged, so silhouette, physical simulation and geometry-based annotations
+   are unaffected.
+
+Map selection and all sampled controls use the material randomizer's existing
+seeded RNG. Keep the asset catalog unchanged for reproducibility. Images are
+reused across live generated materials; unused generated materials and their
+unused imperfection images are reclaimed. Imported image color spaces are not
+modified.
+
+### Plastic bin example
+
+```bash
+python examples/preview_bin_surface_imperfections.py --asset-dir E:/telekinesis-illusion/assets
+```
+
+This example uses only public `telekinesis.illusion` scene APIs, with no
+`blenderproc`, `bpy`, or `mathutils` imports. It renders three identical blue
+plastic bins in one row: **clean, scratches, patchy wear**, left to right.
+The base plastic color and roughness are fixed; only imperfections change.
+Scratch and wear families are pinned to `Scratches003_1K-JPG` and
+`SurfaceImperfections015_1K-JPG`, using stronger settings than the defaults to
+make the effects visible. Change the recipe to `surface_imperfections=True`
+to sample across the whole catalog with default strengths.
+
+The output directory defaults to
+`output/material_preview/plastic_bin_imperfections/` and contains a PNG under
+`images/`, COCO annotations, and `inventory.json` describing the comparison.
+Reruns append another image to the existing dataset. `--output-dir` chooses a
+separate directory, `--seed` changes texture placement, `--resolution` sets
+image height (width is three times this), and `--no-render` checks scene setup
+and writes only the inventory. `--model`, `--imperfections-dir`, and `--hdri`
+accept absolute paths or paths relative to `--asset-dir`. The default bin is
+`models/bins/plastic_bin_3.glb`; lighting defaults to the first studio HDRI.
 
 ## YAML worker configuration
 
@@ -257,6 +394,8 @@ The example expects the wheel's exact slot names. Edit the example's
   extension point for further selection strategies.
 - `types.material` contains Blender-independent recipes, range validation and
   composable presets. PBR uses the existing manager/texture loader.
+- `randomizer.surface_imperfections` discovers mask sets and builds the optional
+  roughness/bump layer; `types.material.SurfaceImperfections` holds its settings.
 - `types.object` wraps one mesh and owns preprocessing and stable original-slot
   identities.
 - `core.context` owns the existing model instance pools and PBR catalog.

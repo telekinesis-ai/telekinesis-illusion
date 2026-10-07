@@ -200,6 +200,40 @@ class Object:
     def get_object(self) -> MeshObject:
         return self._object
 
+    def ensure_uv_mapping(self) -> None:
+        """Smart-project only meshes without UVs, preserving existing layouts.
+
+        A missing map is added to a private mesh when geometry is shared, so
+        assigning a UV-based material cannot change an untargeted instance.
+        """
+        blender_obj = self._object.blender_obj
+        if blender_obj.data.uv_layers:
+            return
+        if blender_obj.data.users > 1:
+            blender_obj.data = blender_obj.data.copy()
+
+        # Projection uses edit-mode operators, including for hidden pool items.
+        active = bpy.context.view_layer.objects.active
+        previous_mode = active.mode if active is not None else "OBJECT"
+        selected = tuple(bpy.context.selected_objects)
+        hidden = blender_obj.hide_get()
+        viewport_hidden = blender_obj.hide_viewport
+        try:
+            blender_obj.hide_viewport = False
+            blender_obj.hide_set(False)
+            self._object.add_uv_mapping("smart")
+        finally:
+            if blender_obj.mode == "EDIT":
+                self._object.object_mode()
+            bpy.ops.object.select_all(action="DESELECT")
+            for obj in selected:
+                obj.select_set(True)
+            bpy.context.view_layer.objects.active = active
+            blender_obj.hide_set(hidden)
+            blender_obj.hide_viewport = viewport_hidden
+            if active is not None and previous_mode != "OBJECT":
+                bpy.ops.object.mode_set(mode=previous_mode)
+
     def refresh_material_slot_names(self) -> None:
         """Capture slot identities after import or an intentional layout edit.
 

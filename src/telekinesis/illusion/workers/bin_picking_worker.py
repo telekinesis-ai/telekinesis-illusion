@@ -97,6 +97,13 @@ DEFAULT_PHYSICS_SIMULATOR_PARAMS = {
     "verbose": False,
     "use_volume_com": False,
     "clean_up_scene": False,
+    "catch_plane": {
+        "active": True,
+        "distance_fraction": 0.25,
+        "minimum_distance": 0.05,
+        "size_factor": 6.0,
+        "contact_tolerance": 0.05,
+    },
 }
 
 # Material type tags per supercategory, matched against the sub-directories of
@@ -248,9 +255,16 @@ class BinPickingWorker:
             **ps_params.get("grid", {}),
         }
         # Physics simulation params
-        self._physics_simulator_params = self._specs.get(
-            "physics_simulator", DEFAULT_PHYSICS_SIMULATOR_PARAMS
-        )
+        physics_cfg = self._specs.get("physics_simulator", {})
+        catch_plane_cfg = {
+            **DEFAULT_PHYSICS_SIMULATOR_PARAMS["catch_plane"],
+            **physics_cfg.get("catch_plane", {}),
+        }
+        self._physics_simulator_params = {
+            **DEFAULT_PHYSICS_SIMULATOR_PARAMS,
+            **physics_cfg,
+            "catch_plane": catch_plane_cfg,
+        }
 
         # Randomizer params that used to be hard-coded in _add_randomizers().
         # Merged per key so a spec that overrides only one role still picks up
@@ -1161,6 +1175,16 @@ class BinPickingWorker:
                 verbose=self._physics_simulator_params["verbose"],
                 use_volume_com=self._physics_simulator_params["use_volume_com"],
                 clean_up_scene=self._physics_simulator_params["clean_up_scene"],
+                physics_catch_plane={
+                    **self._physics_simulator_params["catch_plane"],
+                    "container_names": self._model_supercatgory_map[
+                        "container"
+                    ],
+                    "tracked_object_names": [
+                        *self._model_supercatgory_map.get("part", []),
+                        *self._distractor_names,
+                    ],
+                },
             )
             remaining_images -= current_shard_size
 

@@ -553,6 +553,10 @@ class MaterialManager:
         self._materials = {}
         self._asset_dir = resolve_asset_dir(asset_dir)
 
+    def get_asset_dir(self) -> Path:
+        """Return the root used for PBR and surface-imperfection assets."""
+        return self._asset_dir
+
     def update_materials(
         self,
         types: Sequence[str] | None = None,

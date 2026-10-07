@@ -1,7 +1,7 @@
 """Material targeting, source adapters and assignment for Blender scenes."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias
 
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
@@ -14,6 +14,11 @@ from blenderproc.python.material.MaterialLoaderUtility import (
 )
 from blenderproc.python.types.MaterialUtility import Material
 
+from telekinesis.illusion.randomizer.surface_imperfections import (
+    apply_imperfections,
+    clean_imperfection_images,
+    discover_imperfections,
+)
 from telekinesis.illusion.types.material import (
     PARAMETERS,
     PrincipledMaterial,
@@ -140,9 +145,17 @@ class PBRMaterial:
 @dataclass(frozen=True)
 class _PrincipledSource:
     recipe: PrincipledMaterial
+    _imperfection_maps: tuple = field(default=(), init=False, repr=False)
 
     def prepare(self, manager):
-        pass
+        settings = self.recipe.surface_imperfections
+        if settings.enabled:
+            directory = manager.get_asset_dir() / settings.directory
+            object.__setattr__(
+                self,
+                "_imperfection_maps",
+                discover_imperfections(directory.resolve()),
+            )
 
     def generate(self, manager, rng) -> Material:
         values = self.recipe.sample(rng)
@@ -151,11 +164,20 @@ class _PrincipledSource:
             shader = material.get_the_one_node_with_type("BsdfPrincipled")
             for name, value in values.items():
                 shader.inputs[PARAMETERS[name][0]].default_value = value
+            if self.recipe.surface_imperfections.enabled:
+                apply_imperfections(
+                    material.blender_obj,
+                    shader,
+                    self.recipe.surface_imperfections,
+                    self._imperfection_maps,
+                    rng,
+                )
             # Only materials owned by this generator may be reclaimed.
             material.blender_obj["illusion_generated_material"] = True
             return material
         except Exception:
             bpy.data.materials.remove(material.blender_obj)
+            clean_imperfection_images()
             raise
 
 
@@ -184,7 +206,11 @@ def material_choices_from_config(choices):
     result = []
     for choice in choices:
         if isinstance(choice, Mapping):
-            unknown = set(choice) - {"preset", "parameters"}
+            unknown = set(choice) - {
+                "preset",
+                "parameters",
+                "surface_imperfections",
+            }
             if unknown:
                 raise ValueError(
                     f"Unknown Principled configuration keys: {unknown}."
@@ -192,7 +218,13 @@ def material_choices_from_config(choices):
             parameters = choice.get("parameters", {})
             if not isinstance(parameters, Mapping):
                 raise TypeError("Principled parameters must be a mapping.")
-            choice = PrincipledMaterial(choice.get("preset"), **parameters)
+            choice = PrincipledMaterial(
+                choice.get("preset"),
+                surface_imperfections=choice.get(
+                    "surface_imperfections", False
+                ),
+                **parameters,
+            )
         result.append(choice)
     return result
 
@@ -250,6 +282,8 @@ def assign_material(
     obj: "Object", indices: tuple[int, ...], material: Material
 ):
     """Override object slots without editing shared mesh data or shaders."""
+    if material.blender_obj.get("illusion_imperfection_map"):
+        obj.ensure_uv_mapping()
     blender_obj = obj.get_object().blender_obj
     if not blender_obj.material_slots:
         # Adding a slot changes mesh data, so make only this empty mesh private.
@@ -270,3 +304,4 @@ def clean_generated_materials():
     for material in list(bpy.data.materials):
         if material.get("illusion_generated_material") and material.users == 0:
             bpy.data.materials.remove(material)
+    clean_imperfection_images()

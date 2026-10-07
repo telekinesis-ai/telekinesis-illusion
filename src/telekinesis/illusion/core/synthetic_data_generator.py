@@ -3,20 +3,20 @@ Defines the SyntheticDataGenerator class that is the main orchestrator of the
 synthetic data generation process.
 """
 
-from loguru import logger
-from datetime import datetime
-from pathlib import Path
-from tqdm import tqdm
 import random
+from datetime import datetime
+
+from loguru import logger
+from tqdm import tqdm
 
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 # Must run before bpy is imported (blenderproc pulls it in). See blender_env.py.
 isolate_user_extensions()
 
-import blenderproc as bproc
-import bpy
+import numpy as np
 
+import blenderproc as bproc
 from telekinesis.illusion.core.context import Context
 from telekinesis.illusion.randomizer.randomizer import Randomizer
 from telekinesis.illusion.writer.writer import Writer
@@ -46,6 +46,117 @@ class SyntheticDataGenerator:
         logger.info("Cleaning up the scene...")
         bproc.clean_up()
 
+    @staticmethod
+    def _catch_plane_geometry(
+        container_bounds: np.ndarray,
+        distance_fraction: float,
+        minimum_distance: float,
+        size_factor: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return the location and scale of a plane below a container."""
+        bounds = np.asarray(container_bounds, dtype=float)
+        if bounds.shape != (8, 3):
+            raise ValueError("container_bounds must have shape (8, 3).")
+        if distance_fraction < 0:
+            raise ValueError("distance_fraction must be non-negative.")
+        if minimum_distance <= 0:
+            raise ValueError("minimum_distance must be positive.")
+        if size_factor <= 0:
+            raise ValueError("size_factor must be positive.")
+
+        lower = bounds.min(axis=0)
+        upper = bounds.max(axis=0)
+        extent = upper - lower
+        distance = max(extent[2] * distance_fraction, minimum_distance)
+        location = np.array(
+            [
+                (lower[0] + upper[0]) / 2,
+                (lower[1] + upper[1]) / 2,
+                lower[2] - distance,
+            ]
+        )
+        # Blender's plane primitive is two units wide, so its XY scale is
+        # half the desired footprint. Z scale is irrelevant for a plane.
+        scale = np.array(
+            [
+                max(extent[0] * size_factor / 2, minimum_distance),
+                max(extent[1] * size_factor / 2, minimum_distance),
+                1.0,
+            ]
+        )
+        return location, scale
+
+    def _create_physics_catch_plane(self, config: dict):
+        """Create an invisible passive plane beneath the visible container."""
+        container_prefixes = tuple(config.get("container_names", ()))
+        visible_names = self._context.get_visible_object_names()
+        container_name = next(
+            (
+                name
+                for name in visible_names
+                if name.startswith(container_prefixes)
+            ),
+            None,
+        )
+        if container_name is None:
+            raise RuntimeError(
+                "Cannot create a physics catch plane without a visible "
+                "container."
+            )
+
+        container = self._context.get_objects()[container_name]
+        location, scale = self._catch_plane_geometry(
+            container.get_bound_box(),
+            distance_fraction=float(config.get("distance_fraction", 0.25)),
+            minimum_distance=float(config.get("minimum_distance", 0.05)),
+            size_factor=float(config.get("size_factor", 6.0)),
+        )
+        plane = bproc.object.create_primitive(
+            "PLANE", location=location, scale=scale
+        )
+        plane.set_name("ILLUSION_PHYSICS_CATCH_PLANE")
+        plane.enable_rigidbody(active=False, collision_shape="BOX")
+        # Do not call Entity.hide(): hide_set() can remove the plane from
+        # dependency-graph evaluation. hide_render keeps its collision active.
+        plane.blender_obj.hide_render = True
+        logger.debug(
+            f"Created physics catch plane at z={location[2]:.4f} "
+            f"below '{container_name}'."
+        )
+        return plane, float(location[2])
+
+    def _cull_objects_on_catch_plane(
+        self, plane_z: float, config: dict
+    ) -> list[str]:
+        """Hide tracked objects whose bounding boxes touch the catch plane."""
+        tolerance = float(config.get("contact_tolerance", 0.05))
+        if tolerance < 0:
+            raise ValueError("contact_tolerance must be non-negative.")
+
+        tracked_prefixes = tuple(config.get("tracked_object_names", ()))
+        visible_names = list(self._context.get_visible_object_names())
+        objects = self._context.get_objects()
+        escaped = []
+        for name in visible_names:
+            if not name.startswith(tracked_prefixes):
+                continue
+            bounds = objects[name].get_bound_box()
+            if float(np.min(bounds[:, 2])) <= plane_z + tolerance:
+                objects[name].hide(True)
+                objects[name].disable_rigid_body()
+                escaped.append(name)
+
+        if escaped:
+            escaped_set = set(escaped)
+            self._context.set_visible_object_names(
+                [name for name in visible_names if name not in escaped_set]
+            )
+            logger.info(
+                f"Culled {len(escaped)} object(s) that escaped the bin: "
+                f"{escaped}"
+            )
+        return escaped
+
     def generate(
         self,
         num_images: int = 5,
@@ -63,6 +174,7 @@ class SyntheticDataGenerator:
         clean_up_scene: bool = True,
         render_max_retries: int = 2,
         render_verbose: bool = False,
+        physics_catch_plane: dict | None = None,
     ) -> None:
         """
         Main method for generating the synthetic data. On every iteration, the
@@ -113,6 +225,10 @@ class SyntheticDataGenerator:
                 render failure before raising the error.
             render_verbose: bool
                 Show Blender's live frame and sample progress while rendering.
+            physics_catch_plane: dict or None
+                Optional catch-plane configuration. A passive, render-invisible
+                plane is placed beneath the visible container before physics;
+                tracked objects resting on it are hidden before rendering.
         """
         # Record the start time
         start_time = datetime.now()
@@ -154,17 +270,32 @@ class SyntheticDataGenerator:
                 max_simulation_time = random.uniform(
                     max_simulation_time_range[0], max_simulation_time_range[1]
                 )
-                bproc.object.simulate_physics_and_fix_final_poses(
-                    min_simulation_time,
-                    max_simulation_time,
-                    check_object_interval,
-                    object_stopped_location_threshold,
-                    object_stopped_rotation_threshold,
-                    substeps_per_frame,
-                    solver_iters,
-                    verbose,
-                    use_volume_com,
-                )
+                catch_plane = None
+                catch_plane_z = None
+                catch_config = physics_catch_plane or {}
+                if catch_config.get("active", False):
+                    catch_plane, catch_plane_z = (
+                        self._create_physics_catch_plane(catch_config)
+                    )
+                try:
+                    bproc.object.simulate_physics_and_fix_final_poses(
+                        min_simulation_time,
+                        max_simulation_time,
+                        check_object_interval,
+                        object_stopped_location_threshold,
+                        object_stopped_rotation_threshold,
+                        substeps_per_frame,
+                        solver_iters,
+                        verbose,
+                        use_volume_com,
+                    )
+                    if catch_plane_z is not None:
+                        self._cull_objects_on_catch_plane(
+                            catch_plane_z, catch_config
+                        )
+                finally:
+                    if catch_plane is not None:
+                        catch_plane.delete()
 
             # Render the context
             progress_bar.set_postfix_str("Rendering...")

@@ -1,9 +1,11 @@
 """Validated, Blender-independent distributions for procedural materials."""
 
+import math
 import random
 from collections.abc import Mapping
 from dataclasses import dataclass
 from numbers import Real
+from pathlib import Path
 from types import MappingProxyType
 from typing import TypeAlias
 
@@ -38,8 +40,6 @@ PARAMETERS = MappingProxyType(
 
 def _bounds(name: str, value: Parameter) -> tuple[tuple, tuple]:
     """Normalize fixed values, tuple ranges and the existing Uniform type."""
-    import math
-
     if name not in PARAMETERS:
         raise ValueError(f"Unknown Principled parameter {name!r}.")
     _, size, minimum, maximum = PARAMETERS[name]
@@ -153,6 +153,69 @@ MATERIAL_PRESETS = MappingProxyType(
 )
 
 
+@dataclass(frozen=True)
+class SurfaceImperfections:
+    """Optional mask-based roughness and bump detail on procedural recipes.
+
+    Relative directories are resolved against the context's asset directory.
+    Numeric settings accept a fixed value or a uniform (minimum, maximum).
+    """
+
+    enabled: bool = True
+    directory: str | Path = "surface_imperfections"
+    roughness_strength: Scalar = (0.1, 0.3)
+    bump_strength: Scalar = (0.05, 0.2)
+    bump_distance: Scalar = 0.0001
+    scale: Scalar = (1.0, 3.0)
+
+    def __post_init__(self):
+        if not isinstance(self.enabled, bool):
+            raise TypeError("surface_imperfections.enabled must be a bool.")
+        if not isinstance(self.directory, (str, Path)) or not str(
+            self.directory
+        ):
+            raise ValueError("surface_imperfections.directory needs a path.")
+        object.__setattr__(self, "directory", Path(self.directory))
+        for name in (
+            "roughness_strength",
+            "bump_strength",
+            "bump_distance",
+            "scale",
+        ):
+            value = getattr(self, name)
+            bounds = (value, value) if isinstance(value, Real) else value
+            maximum = 1.0 if name.endswith("strength") else _BLENDER_FLOAT_MAX
+            if (
+                not isinstance(bounds, (tuple, list))
+                or len(bounds) != 2
+                or any(
+                    isinstance(x, bool)
+                    or not isinstance(x, Real)
+                    or not math.isfinite(x)
+                    or not 0 <= x <= maximum
+                    for x in bounds
+                )
+                or bounds[0] > bounds[1]
+                or (name == "scale" and bounds[0] == 0)
+            ):
+                raise ValueError(
+                    f"Invalid surface_imperfections.{name}: {value!r}."
+                )
+            object.__setattr__(self, name, tuple(float(x) for x in bounds))
+
+    def sample(self, rng) -> dict[str, float]:
+        return {
+            name: low if low == high else rng.uniform(low, high)
+            for name in (
+                "roughness_strength",
+                "bump_strength",
+                "bump_distance",
+                "scale",
+            )
+            for low, high in [getattr(self, name)]
+        }
+
+
 @dataclass(frozen=True, init=False)
 class PrincipledMaterial:
     """A procedural material recipe, e.g. ``roughness=(0.2, 0.6)``.
@@ -162,10 +225,13 @@ class PrincipledMaterial:
     """
 
     preset: MaterialPreset
+    surface_imperfections: SurfaceImperfections
 
     def __init__(
         self,
         preset: str | MaterialPreset | None = None,
+        *,
+        surface_imperfections: bool | SurfaceImperfections | Mapping = False,
         **parameters: Parameter,
     ):
         if isinstance(preset, str):
@@ -179,7 +245,20 @@ class PrincipledMaterial:
             preset = MaterialPreset("principled", {})
         if not isinstance(preset, MaterialPreset):
             raise TypeError("preset must be a name or MaterialPreset.")
+        if isinstance(surface_imperfections, bool):
+            surface_imperfections = SurfaceImperfections(
+                enabled=surface_imperfections
+            )
+        elif isinstance(surface_imperfections, Mapping):
+            surface_imperfections = SurfaceImperfections(
+                **surface_imperfections
+            )
+        if not isinstance(surface_imperfections, SurfaceImperfections):
+            raise TypeError(
+                "surface_imperfections must be a bool, mapping or SurfaceImperfections."
+            )
         object.__setattr__(self, "preset", preset.with_overrides(**parameters))
+        object.__setattr__(self, "surface_imperfections", surface_imperfections)
 
     def sample(self, rng=None) -> dict[str, float | tuple[float, ...]]:
         return self.preset.sample(rng)

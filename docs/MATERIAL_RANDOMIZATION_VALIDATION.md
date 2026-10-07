@@ -3,6 +3,28 @@
 Validated on 2026-10-06 with Python 3.11 and the repository's external
 `bpy 4.2.17 LTS` / BlenderProc environment.
 
+## Surface imperfections (2026-10-07)
+
+- The material test module reports **87 passed**, including imperfection
+  configuration, shader wiring, seeded sampling, image isolation and cleanup.
+  UV checks cover single/multiple existing layers, smart projection when
+  missing, repeated assignment, hidden objects and linked-mesh isolation.
+- The current shader uses UV coordinates and flat image projection. The
+  public-API plastic-bin example rendered clean, scratched and worn bins to
+  `output/material_preview/plastic_bin_uv/images/000000.png`.
+- The initial box-projection implementation rendered all eight sets from
+  `E:/telekinesis-illusion/assets/surface_imperfections` alongside a clean
+  procedural material. The preview, `.blend` scene and map inventory are under
+  `output/surface_imperfections/`.
+- Ruff checks and formatting passed for the changed material/test modules;
+  `git diff --check` passed.
+- The test and render processes exited with status 1 after completing their
+  work. An isolated `import bpy; import blenderproc` process also printed its
+  completion marker and exited with status 1. This remains an environment
+  shutdown limitation; the successful test report is not a clean process exit.
+- The test run required access outside the Windows sandbox because pytest's
+  temporary directory was inaccessible inside it.
+
 ## Current scope
 
 Input models must contain **one mesh object without empties**. The experimental

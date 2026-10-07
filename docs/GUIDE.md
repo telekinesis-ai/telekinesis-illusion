@@ -154,6 +154,11 @@ Reference shape: [`configs/example_bin_picking_gearwheel_2.yaml`](../configs/exa
 | `background_randomizer.categories` | list of string | HDRI categories to sample the background from. |
 | `physics_simulator.active` | bool | Whether to run a physics simulation before rendering each scene. |
 | `physics_simulator.min_simulation_time_range` / `max_simulation_time_range` | `[float, float]` | Simulated-seconds range sampled per scene. |
+| `physics_simulator.catch_plane.active` | bool | Add an invisible passive plane below the selected bin and cull parts or distractors that land on it (default `true` for bin-picking workers). |
+| `physics_simulator.catch_plane.distance_fraction` | float | Distance below the bin as a fraction of its height (default `0.25`). |
+| `physics_simulator.catch_plane.minimum_distance` | float | Minimum absolute distance below the bin (default `0.05`). |
+| `physics_simulator.catch_plane.size_factor` | float | Catch-plane footprint relative to the bin footprint (default `6.0`). |
+| `physics_simulator.catch_plane.contact_tolerance` | float | Maximum distance above the plane at which a part is considered escaped (default `0.05`). |
 | `output.shard_name_template` | string | Supports `{date}` and `{uuid}`. |
 | `output.write_manifest` | bool | Whether to write a manifest. |
 | `output.max_size_gb` | number | Early-stop threshold for total dataset-dir size (default `10`). |

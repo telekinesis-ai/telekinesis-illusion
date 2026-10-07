@@ -14,7 +14,6 @@ import bpy
 from blenderproc.python.types.MeshObjectUtility import MeshObject
 
 import blenderproc as bproc
-from telekinesis.illusion.core.context import Context
 from telekinesis.illusion.randomizer.materials import (
     MaterialTarget,
 )
@@ -27,27 +26,11 @@ from telekinesis.illusion.types.material import (
     PARAMETERS,
     MaterialPreset,
     PrincipledMaterial,
+    SurfaceImperfections,
 )
 from telekinesis.illusion.types.object import Object
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-@pytest.fixture(scope="module")
-def initialized_blender():
-    bproc.init()
-
-
-@pytest.fixture
-def context(initialized_blender, monkeypatch):
-    # Applications construct one Context per process. Reuse BlenderProc's
-    # initializer in tests while still getting a fresh Context and scene.
-    monkeypatch.setattr(
-        bproc, "init", lambda: bproc.clean_up(clean_up_camera=True)
-    )
-    ctx = Context()
-    yield ctx
-    bproc.clean_up()
 
 
 def mesh(context, name="Body_INSTANCE_0", slots=("paint", "trim", "glass")):
@@ -136,6 +119,7 @@ def test_whole_object_and_all_slots(context, mode):
             "OUTPUT_MATERIAL",
         }
         assert len(material.node_tree.links) == 1
+    assert len(obj.get_object().blender_obj.data.uv_layers) == 0
 
 
 def test_legacy_active_slot_and_pbr(context):
@@ -403,6 +387,307 @@ def test_invalid_principled_ranges(kwargs):
         PrincipledMaterial(**kwargs)
 
 
+@pytest.mark.parametrize(
+    "settings",
+    [
+        1,
+        "true",
+        {"enabled": "false"},
+        {"typo": 1},
+        {"directory": ""},
+        {"roughness_strength": [-0.1, 0.2]},
+        {"bump_strength": 1.1},
+        {"scale": 0},
+        {"scale": [3, 1]},
+        {"bump_distance": float("nan")},
+        {"bump_distance": 1e100},
+        {"scale": True},
+    ],
+)
+def test_invalid_surface_imperfections(settings):
+    with pytest.raises((ValueError, TypeError)):
+        PrincipledMaterial(surface_imperfections=settings)
+
+
+@pytest.fixture
+def imperfection_dir(tmp_path):
+    # Small real images exercise Blender's loading and shader API, including
+    # a scratches-only set and a set with separate roughness/height maps.
+    for name, channels in (
+        ("Scratches", ["Opacity", "NormalGL", "Color"]),
+        ("Smudges", ["Opacity", "Roughness", "Displacement"]),
+    ):
+        folder = tmp_path / name
+        folder.mkdir()
+        for channel in channels:
+            image = bpy.data.images.new("test_map", width=2, height=2)
+            image.pixels[:] = [0.2, 0.2, 0.2, 1, 0.8, 0.8, 0.8, 1] * 2
+            image.filepath_raw = str(folder / f"{name}_{channel}.png")
+            image.file_format = "PNG"
+            image.save()
+            bpy.data.images.remove(image)
+    return tmp_path
+
+
+@pytest.mark.parametrize("family", ["Scratches", "Smudges"])
+def test_surface_imperfections_shader_and_image_reuse(
+    context, imperfection_dir, family
+):
+    obj = mesh(context)
+    # Keep an imported image alive and verify its sRGB interpretation is intact.
+    path = imperfection_dir / family / f"{family}_Opacity.png"
+    imported = bpy.data.images.load(str(path), check_existing=False)
+    imported.use_fake_user = True
+    imported.colorspace_settings.name = "sRGB"
+    config = {
+        "seed": 12,
+        "material_slots": {
+            "paint": [
+                {
+                    "preset": "metal",
+                    "parameters": {"roughness": 0.25, "alpha": 0.8},
+                    "surface_imperfections": {
+                        "directory": str(imperfection_dir / family),
+                        "roughness_strength": 0.2,
+                        "bump_strength": 0.1,
+                        "bump_distance": 0.0001,
+                        "scale": 2,
+                    },
+                }
+            ]
+        },
+    }
+    original = assigned(obj)
+    node = MaterialRandomizer.from_config(["Body"], context, config)
+    for _ in range(4):
+        node.randomize(context)
+        material = assigned(obj)[0]
+        nodes = material.node_tree.nodes
+        shader = nodes.get("Principled BSDF")
+        assert assigned(obj)[1:] == original[1:]
+        assert shader.inputs["Roughness"].is_linked
+        assert shader.inputs["Normal"].is_linked
+        assert shader.inputs["Alpha"].default_value == pytest.approx(0.8)
+        assert not shader.inputs["Alpha"].is_linked
+        assert not shader.inputs["Base Color"].is_linked
+        assert shader.inputs["Metallic"].default_value == 1
+        assert not nodes.get("Material Output").inputs["Displacement"].is_linked
+        textures = [n for n in nodes if n.type == "TEX_IMAGE"]
+        assert len(textures) == (3 if family == "Smudges" else 1)
+        assert all(
+            n.image.colorspace_settings.name == "Non-Color" for n in textures
+        )
+        assert all(n.projection == "FLAT" for n in textures)
+        assert (
+            nodes["Imperfections Mapping"]
+            .inputs["Vector"]
+            .links[0]
+            .from_socket.name
+            == "UV"
+        )
+        assert nodes["Imperfections Bump"].invert == (family == "Scratches")
+        assert (
+            nodes["Imperfections Roughness"].inputs[1].default_value[0] == 0.25
+        )
+        owned = [
+            i for i in bpy.data.images if i.get("illusion_imperfection_path")
+        ]
+        assert len(owned) == len(textures)
+        assert imported.colorspace_settings.name == "sRGB"
+    # A later plain recipe also reclaims all imperfection image datablocks.
+    MaterialRandomizer(
+        ["Body"], context, materials=[PrincipledMaterial()]
+    ).randomize(context)
+    assert not [
+        i for i in bpy.data.images if i.get("illusion_imperfection_path")
+    ]
+    assert imported in list(bpy.data.images)
+
+
+@pytest.mark.parametrize("layer_count", [1, 2])
+def test_surface_imperfections_preserve_existing_uvs(
+    context, imperfection_dir, layer_count
+):
+    obj = mesh(context)
+    data = obj.get_object().blender_obj.data
+    for index in range(layer_count):
+        layer = data.uv_layers.new(name=f"Authored_{index}")
+        for corner, uv in enumerate(layer.data):
+            uv.uv = (corner * 0.1 + index, corner * 0.05)
+    data.uv_layers.active_index = layer_count - 1
+    data.uv_layers[0].active_render = True
+
+    def snapshot():
+        return [
+            (
+                layer.name,
+                layer.active_render,
+                [tuple(uv.uv) for uv in layer.data],
+            )
+            for layer in data.uv_layers
+        ]
+
+    before = snapshot()
+    node = MaterialRandomizer(
+        ["Body"],
+        context,
+        material_slots="all",
+        materials=[
+            PrincipledMaterial(
+                surface_imperfections={"directory": imperfection_dir}
+            )
+        ],
+    )
+    for _ in range(3):
+        node.randomize(context)
+        assert obj.get_object().blender_obj.data == data
+        assert snapshot() == before
+        assert data.uv_layers.active_index == layer_count - 1
+
+
+def test_surface_imperfections_smart_uv_fallback_once_and_private(
+    context, imperfection_dir, monkeypatch
+):
+    obj = mesh(context)
+    duplicate = obj.create_linked_duplicate()
+    shared = duplicate.get_object().blender_obj.data
+    original_materials = assigned(duplicate)
+    blender_obj = obj.get_object().blender_obj
+    other = mesh(context, name="Other").get_object().blender_obj
+    bpy.ops.object.select_all(action="DESELECT")
+    other.select_set(True)
+    bpy.context.view_layer.objects.active = other
+    blender_obj.hide_viewport = True
+    obj.hide(True)
+    project = MeshObject.add_uv_mapping
+    calls = []
+
+    def record_projection(self, projection, overwrite=False):
+        calls.append((projection, overwrite))
+        return project(self, projection, overwrite=overwrite)
+
+    monkeypatch.setattr(MeshObject, "add_uv_mapping", record_projection)
+    node = MaterialRandomizer(
+        ["Body"],
+        context,
+        material_slots="all",
+        materials=[
+            PrincipledMaterial(
+                surface_imperfections={"directory": imperfection_dir}
+            )
+        ],
+    )
+    for _ in range(3):
+        node.randomize(context)
+        assert blender_obj.data != shared
+        assert len(blender_obj.data.uv_layers) == 1
+        coords = np.array(
+            [uv.uv[:] for uv in blender_obj.data.uv_layers.active.data]
+        )
+        assert np.isfinite(coords).all() and np.ptp(coords) > 0
+        assert calls == [("smart", False)]
+        assert not shared.uv_layers
+        assert assigned(duplicate) == original_materials
+        assert blender_obj.hide_viewport and blender_obj.hide_get()
+        assert obj.is_hidden()
+        assert bpy.context.view_layer.objects.active == other
+        assert bpy.context.selected_objects == [other]
+
+
+def test_surface_imperfections_seed_and_asset_root(
+    context, imperfection_dir, monkeypatch
+):
+    obj = mesh(context)
+    monkeypatch.setattr(
+        context.material_manager,
+        "get_asset_dir",
+        lambda: imperfection_dir.parent,
+    )
+    recipe = PrincipledMaterial(
+        "plastic",
+        surface_imperfections=SurfaceImperfections(
+            directory=imperfection_dir.name
+        ),
+    )
+    random.seed(45)
+    state = random.getstate()
+
+    def run():
+        node = MaterialRandomizer(
+            ["Body"], context, materials=[recipe], seed=93
+        )
+        samples = []
+        for _ in range(6):
+            node.randomize(context)
+            material = assigned(obj)[0]
+            nodes = material.node_tree.nodes
+            mapping = nodes["Imperfections Mapping"]
+            samples.append(
+                (
+                    material["illusion_imperfection_map"],
+                    tuple(mapping.inputs["Scale"].default_value),
+                    tuple(mapping.inputs["Location"].default_value),
+                    tuple(mapping.inputs["Rotation"].default_value),
+                    nodes["Imperfections Roughness Mask"]
+                    .inputs[1]
+                    .default_value,
+                    nodes["Imperfections Bump"]
+                    .inputs["Strength"]
+                    .default_value,
+                )
+            )
+        return samples
+
+    first = run()
+    assert first == run()
+    assert len(set(first)) > 1
+    assert random.getstate() == state
+
+
+def test_surface_imperfections_default_directory_and_disabled(
+    context, imperfection_dir, monkeypatch
+):
+    obj = mesh(context)
+    monkeypatch.setattr(
+        context.material_manager, "get_asset_dir", lambda: imperfection_dir
+    )
+    (imperfection_dir / "Scratches").rename(
+        imperfection_dir / "surface_imperfections"
+    )
+    MaterialRandomizer.from_config(
+        ["Body"],
+        context,
+        {"materials": [{"preset": "plastic", "surface_imperfections": True}]},
+    ).randomize(context)
+    assert "illusion_imperfection_map" in assigned(obj)[0]
+    for settings in (False, {"enabled": False, "directory": "missing"}):
+        node = MaterialRandomizer(
+            ["Body"],
+            context,
+            materials=[PrincipledMaterial(surface_imperfections=settings)],
+            seed=7,
+        )
+        node.randomize(context)
+        assert len(assigned(obj)[0].node_tree.nodes) == 2
+
+
+def test_surface_imperfections_missing_and_empty(context, tmp_path):
+    for path, error in (
+        (tmp_path / "missing", FileNotFoundError),
+        (tmp_path, ValueError),
+    ):
+        with pytest.raises(error):
+            MaterialRandomizer(
+                ["Body"],
+                context,
+                materials=[
+                    PrincipledMaterial(
+                        surface_imperfections={"directory": str(path)}
+                    )
+                ],
+            )
+
+
 def test_config_parser(context):
     obj = mesh(context)
     config = {
@@ -479,28 +764,20 @@ def test_default_preprocessing_policy_is_legacy():
         inspect.signature(Object).parameters["material_preprocessing"].default
         == "replace"
     )
-    assert (
-        inspect.signature(Object).parameters["uv_mapping"].default == "smart"
-    )
+    assert inspect.signature(Object).parameters["uv_mapping"].default == "smart"
 
 
-@pytest.mark.parametrize(
-    "projection", ["smart", "cube", "cylinder", "sphere"]
-)
+@pytest.mark.parametrize("projection", ["smart", "cube", "cylinder", "sphere"])
 def test_uv_mapping_projection_is_configurable(
     context, tmp_path, monkeypatch, projection
 ):
     path = tmp_path / "triangle.obj"
-    path.write_text(
-        "o test\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
-    )
+    path.write_text("o test\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
     calls = []
     monkeypatch.setattr(
         MeshObject,
         "add_uv_mapping",
-        lambda self, method, overwrite=False: calls.append(
-            (method, overwrite)
-        ),
+        lambda self, method, overwrite=False: calls.append((method, overwrite)),
     )
 
     context.add_model(str(path), "part", uv_mapping=projection)
