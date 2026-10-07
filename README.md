@@ -111,6 +111,17 @@ object and material-slot selection, procedural Principled materials and presets.
 Run `python examples/preview_material_randomization.py`
 to save reproducible material previews without generating a dataset.
 
+To compare clean, scratched and worn plastic bins using only the public
+Illusion API:
+
+```bash
+python examples/preview_bin_surface_imperfections.py --asset-dir E:/telekinesis-illusion/assets
+```
+
+The comparison PNG and COCO annotations are written under
+`output/material_preview/plastic_bin_imperfections/`. Use `--no-render` to
+check scene setup without rendering.
+
 Find the documentation for Illusion at: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.ai/).
 
 ## Citation
