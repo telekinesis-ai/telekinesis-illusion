@@ -1,27 +1,38 @@
 """Generate a bin-picking dataset."""
 
+import argparse
+
 import numpy as np
 
+from telekinesis.illusion.core.context import Context
 from telekinesis.illusion.core.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
-from telekinesis.illusion.core.context import Context
-from telekinesis.illusion.types.object import Object
-from telekinesis.illusion.sampler.camera_pose_sampler import volume_sampler
 from telekinesis.illusion.randomizer.randomizer import Randomizer
 from telekinesis.illusion.randomizer.randomizer_node import (
-    ObjectPoseRandomizer,
-    ObjectInstanceRandomizer,
     BackgroundRandomizer,
-    MaterialRandomizer,
     CameraPoseRandomizer,
+    MaterialRandomizer,
+    ObjectInstanceRandomizer,
+    ObjectPoseRandomizer,
 )
-from telekinesis.illusion.writer.writer import CocoWriter
-from telekinesis.illusion.viewer.shard_viewer import view_coco
+from telekinesis.illusion.sampler.camera_pose_sampler import volume_sampler
+from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.utils.assets import resolve_asset_dir
+from telekinesis.illusion.viewer.shard_viewer import view_coco
+from telekinesis.illusion.writer.writer import CocoWriter
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--preview",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Open the generated dataset in the interactive viewer.",
+    )
+    args = parser.parse_args()
+
     # Create the context
     context = Context()
 
@@ -36,6 +47,7 @@ def main():
         object_name="part_1",
         min_number_instances=1,
         max_number_instances=3,
+        uv_mapping="cube",
         active_in_simulation=True,
     )
 
@@ -47,6 +59,8 @@ def main():
         object_name="part_2",
         min_number_instances=0,
         max_number_instances=1,
+        uv_mapping="cube",
+        shading="SMOOTH",
         active_in_simulation=True,
     )
 
@@ -56,6 +70,7 @@ def main():
         object_name="crate_2",
         min_number_instances=1,
         max_number_instances=1,
+        uv_mapping="cube",
         collision_shape="MESH",
     )
 
@@ -162,8 +177,8 @@ def main():
         num_images=5, simulate_physics=True, save_blender_scene=False
     )
 
-    # View data
-    view_coco(writer.get_output_dir())
+    if args.preview:
+        view_coco(writer.get_output_dir())
 
 
 if __name__ == "__main__":

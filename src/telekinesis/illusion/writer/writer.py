@@ -154,9 +154,28 @@ class CocoWriter(Writer):
         supercategory_map: Optional[Dict] = None,
         compose_parent_masks: bool = False,
         include_camera_metadata: bool = False,
+        color_file_format: str = "JPEG",
+        jpg_quality: int = 90,
     ) -> None:
         """Add info, licenses and supercategory info from the specs if present"""
         super().__init__(create_output_dir_on_init, output_dir)
+        if not isinstance(color_file_format, str):
+            raise TypeError(
+                "color_file_format must be 'PNG', 'JPG', or 'JPEG'."
+            )
+        color_file_format = color_file_format.upper()
+        if color_file_format == "JPG":
+            color_file_format = "JPEG"
+        if color_file_format not in ("PNG", "JPEG"):
+            raise ValueError(
+                "color_file_format must be 'PNG', 'JPG', or 'JPEG'."
+            )
+        if isinstance(jpg_quality, bool) or not isinstance(jpg_quality, int):
+            raise TypeError("jpg_quality must be an integer from 0 to 100.")
+        if not 0 <= jpg_quality <= 100:
+            raise ValueError("jpg_quality must be an integer from 0 to 100.")
+        self._color_file_format = color_file_format
+        self._jpg_quality = jpg_quality
         if info:
             self._info = info
         else:
@@ -238,14 +257,14 @@ class CocoWriter(Writer):
             instance_segmaps=data["instance_segmaps"],
             instance_attribute_maps=data["instance_attribute_maps"],
             colors=data["colors"],
-            color_file_format="PNG",
+            color_file_format=self._color_file_format,
             mask_encoding_format="rle",
             supercategory=None,
             supercategory_map=self._supercategory_map,
             info=self._info,
             licenses=self._licenses,
             append_to_existing_output=True,
-            jpg_quality=95,
+            jpg_quality=self._jpg_quality,
             label_mapping=categories,
             file_prefix="",
             indent=None,

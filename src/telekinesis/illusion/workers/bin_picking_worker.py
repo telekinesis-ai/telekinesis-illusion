@@ -192,11 +192,14 @@ class BinPickingWorker:
 
         # Create the writer
         self._output_base = None
+        renderer = self._specs.get("renderer", {})
         self._writer = CocoWriter(
             create_output_dir_on_init=False,
             info=self._info,
             licenses=self._licenses,
             supercategory_map=self._id_supercategory_map,
+            color_file_format=renderer.get("image_format", "JPEG"),
+            jpg_quality=renderer.get("jpg_quality", 90),
         )
 
         # Create the data generator with context, randomizer and writer
@@ -435,6 +438,7 @@ class BinPickingWorker:
                 material_preprocessing=model.get(
                     "material_preprocessing", "replace"
                 ),
+                uv_mapping=model.get("uv_mapping", "smart"),
                 shading=model.get("shading", "FLAT"),
             )
             model_supercategory_map[model["supercategory"]].append(
@@ -472,6 +476,7 @@ class BinPickingWorker:
                 material_preprocessing=distractor.get(
                     "material_preprocessing", "replace"
                 ),
+                uv_mapping=distractor.get("uv_mapping", "smart"),
                 shading=distractor.get("shading", "FLAT"),
             )
             self._distractor_names.append(distractor["name"])

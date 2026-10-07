@@ -134,7 +134,8 @@ camera:
   image_height: 640
 
 renderer:
-  image_format: "PNG"
+  image_format: "JPEG"
+  jpg_quality: 90
 
 camera_pose_randomizer:
   sampler: volume_sampler

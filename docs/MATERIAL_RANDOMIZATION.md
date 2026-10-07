@@ -230,18 +230,19 @@ configuration order. Recipe parameter sampling uses canonical socket order.
 Keep object names and configuration ordering fixed to reproduce results.
 
 ```bash
-python examples/preview_heavy_duty_wheel.py
-python examples/preview_heavy_duty_wheel.py --no-render
+python examples/preview_material_randomization.py
+python examples/preview_material_randomization.py --no-render
 pytest tests/test_material_randomization.py --material-model path/to/model.glb
 ```
 
 The example defaults to `assets/models/mechanical_parts/heavy_duty_wheel.glb`;
 use `--model` if that file is elsewhere. Its three slots are `Stahl` (steel),
 `Alu` (aluminum), and `Gumi`
-(rubber). The seven previews show the original, blue plastic on `Alu`, procedural
-and PBR metal on `Stahl`/`Alu`, metal/rubber on `Alu`/`Gumi`, all-slot
-randomization, and whole-object PBR metal. Each case restores the original
-materials first. Outputs go to `output/material_preview/heavy_duty_wheel/`;
+(rubber). The seven side-by-side models show the original, blue plastic on
+`Alu`, procedural and PBR metal on `Stahl`/`Alu`, metal/rubber on `Alu`/`Gumi`,
+all-slot randomization, and whole-object PBR metal. The combined render is
+written to
+`output/material_preview/heavy_duty_wheel/material_variants.png`;
 the inventory records the material assigned to each original slot in every case.
 Use `--seed 7` to change the random choices, `--output-dir` for a separate output
 directory, or `--no-render` to check assignments without producing images.

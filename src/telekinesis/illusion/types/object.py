@@ -15,6 +15,9 @@ from blenderproc.python.types.MeshObjectUtility import MeshObject
 from telekinesis.illusion.loader.object_loader import load_obj
 
 
+UV_MAPPING_METHODS = ("smart", "cube", "cylinder", "sphere")
+
+
 class Object:
     """
     Every instance of this class is a mesh which can be rendered in the scene.
@@ -38,6 +41,7 @@ class Object:
         max_number_instances: int = 1,
         shading: str = "FLAT",
         material_preprocessing: str = "replace",
+        uv_mapping: str = "smart",
     ):
         """
         Initialize the internal parameters.
@@ -83,12 +87,21 @@ class Object:
             material_preprocessing: str
                 "replace" keeps legacy dummy-material preprocessing;
                 "preserve" keeps imported slots for slot-level randomization.
+            uv_mapping: str
+                UV projection used during preprocessing. One of "smart",
+                "cube", "cylinder", or "sphere". Defaults to "smart".
         """
         if material_preprocessing not in ("replace", "preserve"):
             raise ValueError(
                 "material_preprocessing must be 'replace' or 'preserve'."
             )
         self._material_preprocessing = material_preprocessing
+        if uv_mapping not in UV_MAPPING_METHODS:
+            raise ValueError(
+                f"uv_mapping must be one of {UV_MAPPING_METHODS}; "
+                f"got {uv_mapping!r}."
+            )
+        self._uv_mapping = uv_mapping
         self._material_slots_collapsed = False
         self._object = None
         self._category_name = category_name
@@ -369,7 +382,7 @@ class Object:
             logger.info("Preprocessing model...")
             uv_layer_count = len(self._object.blender_obj.data.uv_layers)
             if uv_layer_count <= 1:
-                self._object.add_uv_mapping("smart", overwrite=True)
+                self._object.add_uv_mapping(self._uv_mapping, overwrite=True)
             else:
                 logger.info(
                     f"Model already has {uv_layer_count} UV layers — "
@@ -492,6 +505,7 @@ class Object:
             min_number_instances=self._min_number_instances,
             max_number_instances=self._max_number_instances,
             material_preprocessing=self._material_preprocessing,
+            uv_mapping=self._uv_mapping,
         )
 
         new_illusion_obj._model_path = self._model_path

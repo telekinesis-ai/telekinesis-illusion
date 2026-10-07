@@ -479,6 +479,38 @@ def test_default_preprocessing_policy_is_legacy():
         inspect.signature(Object).parameters["material_preprocessing"].default
         == "replace"
     )
+    assert (
+        inspect.signature(Object).parameters["uv_mapping"].default == "smart"
+    )
+
+
+@pytest.mark.parametrize(
+    "projection", ["smart", "cube", "cylinder", "sphere"]
+)
+def test_uv_mapping_projection_is_configurable(
+    context, tmp_path, monkeypatch, projection
+):
+    path = tmp_path / "triangle.obj"
+    path.write_text(
+        "o test\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
+    )
+    calls = []
+    monkeypatch.setattr(
+        MeshObject,
+        "add_uv_mapping",
+        lambda self, method, overwrite=False: calls.append(
+            (method, overwrite)
+        ),
+    )
+
+    context.add_model(str(path), "part", uv_mapping=projection)
+
+    assert calls == [(projection, True)]
+
+
+def test_uv_mapping_projection_is_validated():
+    with pytest.raises(ValueError, match="uv_mapping must be one of"):
+        Object("part", "part", uv_mapping="planar")
 
 
 def test_real_asset_modes(context, material_model_path):

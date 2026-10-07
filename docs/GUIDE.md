@@ -73,8 +73,8 @@ What `BinPickingWorker.__init__` and `generate()` do, in order:
 
 ### Output dataset format and shard layout
 
-- Output format is **COCO with RLE-encoded instance-segmentation masks** (`metadata.annotation_format: coco_instances_rle`). Written by `CocoWriter` in [src/telekinesis/illusion/writer/writer.py](../src/telekinesis/illusion/writer/writer.py), which delegates to `bproc.writer.write_coco_annotations(..., mask_encoding_format="rle", color_file_format="PNG")`.
-- A **shard** is a self-contained mini-COCO dataset on disk: one `coco_annotations.json` plus an `images/` subdirectory of rendered PNGs. Multiple shards let the worker checkpoint progress and stop early on size limits without losing finished work.
+- Output format is **COCO with RLE-encoded instance-segmentation masks** (`metadata.annotation_format: coco_instances_rle`). Written by `CocoWriter` in [src/telekinesis/illusion/writer/writer.py](../src/telekinesis/illusion/writer/writer.py), which writes JPEG color images at quality 90 by default.
+- A **shard** is a self-contained mini-COCO dataset on disk: one `coco_annotations.json` plus an `images/` subdirectory of rendered color images (JPEG by default). Multiple shards let the worker checkpoint progress and stop early on size limits without losing finished work.
 - `num_shards = ceil(metadata.num_images / shard.size)`; the total number of scenes generated across all shards always equals `metadata.num_images` exactly. Each scene yields `camera_pose_randomizer.number_of_views` rendered images; `shard.size` counts scenes, not images.
 - Output root: `metadata.base_output_directory / metadata.dataset_name / <shard_name>`. If `base_output_directory` is empty/null, falls back to `./output/<dataset_name>` relative to the directory you run from.
 - Shard directory name comes from `output.shard_name_template`; placeholders are `{date}` (`YYYYMMDD_HHMMSS`) and `{uuid}` (8-hex). Default: `shard_{date}_{uuid}`.
@@ -126,6 +126,7 @@ Reference shape: [`configs/example_bin_picking_gearwheel_2.yaml`](../configs/exa
 | `models[].simulation.collision_shape` | `CONVEX_HULL` \| `MESH` | Collider type. |
 | `models[].scale` | float | Uniform scale. |
 | `models[].preprocess_model` | bool | Run import-time preprocessing. |
+| `models[].uv_mapping` | `smart` \| `cube` \| `cylinder` \| `sphere` | UV projection used during preprocessing (default `smart`). |
 | `pose_sampling.strategy` | `random` \| `grid` | Placement strategy for target objects on the container's upper face. |
 | `pose_sampling.params.min_height` / `max_height` | float | Vertical band above the container's upper face within which object centres are sampled. |
 | `pose_sampling.params.face_sample_range` | `[float, float]` | Fractional inset on the container's upper face used by `upper_region_sampler` (default `[0.25, 0.75]`). |
@@ -139,7 +140,8 @@ Reference shape: [`configs/example_bin_picking_gearwheel_2.yaml`](../configs/exa
 | `camera.pixel_aspect_x` / `pixel_aspect_y` | float | Pixel aspect ratio. |
 | `camera.shift_x` / `shift_y` | float | Lens shift. |
 | `camera.image_width` / `image_height` | int | Output resolution. |
-| `renderer.image_format` | string | E.g. `PNG`. |
+| `renderer.image_format` | `PNG` \| `JPG` \| `JPEG` | Shard RGB image format (default `JPEG`). |
+| `renderer.jpg_quality` | int | JPEG quality from 0 to 100 (default `90`; ignored for PNG). |
 | `camera_pose_randomizer.sampler` | string | Camera-pose sampler key (e.g. `volume_sampler`). |
 | `camera_pose_randomizer.number_of_views` | int | Rendered images per scene. |
 | `camera_pose_randomizer.params.distance_range` | `[float, float]` | Min/max camera distance from the point of interest. |
@@ -161,6 +163,14 @@ Reference shape: [`configs/example_bin_picking_gearwheel_2.yaml`](../configs/exa
 | `output.seed` | int | RNG seed for the split (default `42`). |
 
 ### Common modifications
+
+- **Write JPEG shard images** - configure the encoding under `renderer`:
+
+  ```yaml
+  renderer:
+    image_format: JPEG
+    jpg_quality: 90
+  ```
 
 - **Add a new target part** - append an entry to `models:` with `supercategory: object`, a unique `name`, a `.glb` `path`, an `id` + `category_name` (reuse an existing id to fold into an existing class, or pick a new id for a new class), and the `instances`, `simulation`, `scale`, `preprocess_model` fields.
 - **Map several meshes to one category** - give every entry the same `id` and `category_name`; the worker registers them as separate assets but COCO groups them under one category.

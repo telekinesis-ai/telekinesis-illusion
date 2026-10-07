@@ -60,6 +60,7 @@ class ProceduralSceneWorker:
             "dataset_name", "procedural_scene"
         )
         writer = self.spec.get("writer", {})
+        renderer = self.spec.get("renderer", {})
         self._seed_metadata_key = writer.get(
             "seed_metadata_key", "arrangement_seed"
         )
@@ -72,6 +73,8 @@ class ProceduralSceneWorker:
             include_camera_metadata=writer.get(
                 "include_camera_metadata", False
             ),
+            color_file_format=renderer.get("image_format", "JPEG"),
+            jpg_quality=renderer.get("jpg_quality", 90),
         )
 
     def _camera_config(self) -> CameraConfig:

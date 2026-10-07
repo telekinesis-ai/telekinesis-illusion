@@ -91,13 +91,13 @@ Run the examples from the `examples` folder. Note: running an example for the fi
 python examples/quickstart_flying_things.py
 ```
 
-Runs the low-level API to build a "flying things" scene: gearwheels and pipes are scattered in mid-air (no physics simulation) against randomized industrial/studio backgrounds. Generates a COCO instance-segmentation dataset of 5 images and opens it in the interactive dataset viewer.
+Runs the low-level API to build a "flying things" scene: gearwheels and pipes are scattered in mid-air (no physics simulation) against randomized industrial/studio backgrounds. Generates a COCO instance-segmentation dataset of 5 images and opens it in the interactive dataset viewer. Pass `--no-preview` to suppress the viewer.
 
 ```bash
 python examples/quickstart_parts_in_bin.py
 ```
 
-Runs the low-level API to build a bin-picking scene: gearwheels and a pipe fixture are dropped into a bin and settled with physics simulation. Generates a COCO instance-segmentation dataset of 5 images and opens it in the interactive dataset viewer.
+Runs the low-level API to build a bin-picking scene: gearwheels and a pipe fixture are dropped into a bin and settled with physics simulation. Generates a COCO instance-segmentation dataset of 5 images and opens it in the interactive dataset viewer. Pass `--no-preview` to suppress the viewer.
 
 ```bash
 python examples/generate_synthetic_data_with_bin_picking_worker.py
@@ -108,7 +108,7 @@ Launches synthetic data generation for a bin-picking use case with the default a
 
 See [Material randomization](docs/MATERIAL_RANDOMIZATION.md) for whole-object,
 object and material-slot selection, procedural Principled materials and presets.
-Run `python examples/preview_heavy_duty_wheel.py`
+Run `python examples/preview_material_randomization.py`
 to save reproducible material previews without generating a dataset.
 
 Find the documentation for Illusion at: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.ai/).

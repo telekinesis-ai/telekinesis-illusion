@@ -23,6 +23,10 @@ import blenderproc as bproc  # type: ignore
 from blenderproc.python.utility.LabelIdMapping import LabelIdMapping  # type: ignore
 from blenderproc.python.types.MeshObjectUtility import MeshObject  # type: ignore
 from blenderproc.python.types.MaterialUtility import Material
+from blenderproc.python.utility.Initializer import clean_temp_dir
+from blenderproc.python.utility.SetupUtility import (
+    is_using_external_bpy_module,
+)
 
 from telekinesis.illusion.loader.material_loader import load_ccmaterials
 from telekinesis.illusion.types.object import Object
@@ -88,6 +92,12 @@ class Context:
         from.
         """
         return self._asset_dir
+
+    def clean_up(self) -> None:
+        """Release scene and temporary resources owned by the context."""
+        bproc.clean_up()
+        if is_using_external_bpy_module():
+            clean_temp_dir()
 
     def get_camera(self) -> Camera:
         """
@@ -355,6 +365,7 @@ class Context:
         preprocess_model: bool = True,
         shading: str = "FLAT",
         material_preprocessing: str = "replace",
+        uv_mapping: str = "smart",
     ) -> None:
         """
         Add a 3D model to the scene and assign it to a COCO category.
@@ -392,6 +403,9 @@ class Context:
             material_preprocessing: str
                 "replace" removes slots and adds one dummy material;
                 "preserve" keeps imported material assignments.
+            uv_mapping: str
+                UV projection used during preprocessing. One of "smart",
+                "cube", "cylinder", or "sphere". Defaults to "smart".
 
         Returns:
             None
@@ -436,6 +450,7 @@ class Context:
             max_number_instances=max_number_instances,
             shading=shading,
             material_preprocessing=material_preprocessing,
+            uv_mapping=uv_mapping,
         )
 
         # Add object to the objects dictionary

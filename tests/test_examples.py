@@ -1,7 +1,7 @@
 """Smoke tests that run the example scripts and check they don't crash.
 
 These invoke the real examples end-to-end. The dataset examples require
-Blender rendering and a GPU; the two quickstarts also open a GUI viewer.
+Blender rendering and a GPU. Interactive viewers are disabled by CLI flags.
 The heavy-duty wheel material preview uses --no-render and runs headlessly.
 """
 
@@ -15,18 +15,9 @@ import pytest
 
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
 
-# quickstart_flying_things.py and quickstart_parts_in_bin.py always end by
-# opening a blocking Tkinter viewer once generation succeeds, so they never
-# exit on their own. We give them enough time to finish rendering and reach
-# the viewer, then treat "still running" as success.
-BLOCKING_ON_VIEWER = {
-    "quickstart_flying_things.py": 300,
-    "quickstart_parts_in_bin.py": 300,
-}
-
-# This example accepts a flag to skip its interactive preview, so it can run
-# to a normal, timely exit.
 RUNS_TO_COMPLETION = {
+    "quickstart_flying_things.py": (["--no-preview"], 300),
+    "quickstart_parts_in_bin.py": (["--no-preview"], 300),
     "generate_synthetic_data_with_bin_picking_worker.py": (
         ["--no-preview"],
         300,
@@ -66,14 +57,6 @@ def _assert_ran_successfully(result: subprocess.CompletedProcess) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("script,timeout", BLOCKING_ON_VIEWER.items())
-def test_example_reaches_viewer_without_crashing(script, timeout):
-    result = _run_example(script, timeout=timeout)
-    if result is not None:
-        # The script exited on its own instead of blocking in the viewer.
-        _assert_ran_successfully(result)
-
-
 @pytest.mark.parametrize("script,spec", RUNS_TO_COMPLETION.items())
 def test_example_runs_to_completion(script, spec):
     args, timeout = spec
@@ -98,7 +81,7 @@ def test_view_dataset_importable():
 
 def test_material_preview_runs_to_completion(tmp_path):
     result = _run_example(
-        "preview_heavy_duty_wheel.py",
+        "preview_material_randomization.py",
         ["--no-render", "--output-dir", str(tmp_path)],
         timeout=60,
     )
@@ -109,8 +92,16 @@ def test_material_preview_runs_to_completion(tmp_path):
     inventory = json.loads((tmp_path / "inventory.json").read_text())
     assert Path(inventory["model"]).name == "heavy_duty_wheel.glb"
     assert inventory["objects"] == {
-        "wheel_INSTANCE_0": ["Stahl", "Alu", "Gumi"]
+        f"wheel_INSTANCE_{index}": ["Stahl", "Alu", "Gumi"]
+        for index in range(7)
     }
+    centers = list(inventory["centers"].values())
+    assert [center[0] for center in centers] == sorted(
+        center[0] for center in centers
+    )
+    assert len({center[0] for center in centers}) == 7
+    assert all(abs(center[1]) < 1e-9 for center in centers)
+    assert all(abs(center[2]) < 1e-9 for center in centers)
     assert inventory["seed"] == 42
     assert inventory["rendered"] is False
     previews = inventory["previews"]
@@ -124,6 +115,7 @@ def test_material_preview_runs_to_completion(tmp_path):
         "06_whole_object_pbr_metal": set(original),
     }
     assert set(previews) == {"00_original", *expected_changes}
+    assert inventory["left_to_right"] == list(previews)
     for name, expected in expected_changes.items():
         assert set(previews[name]) == set(original)
         changed = {
