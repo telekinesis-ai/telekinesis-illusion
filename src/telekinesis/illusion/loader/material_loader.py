@@ -119,11 +119,20 @@ def load_ccmaterials(
                     continue
             current_path = os.path.join(folder_path, asset)
             if os.path.isdir(current_path):
-                base_image_path = os.path.join(
-                    current_path, f"{asset}_Color.png"
+                base_image_path = next(
+                    (
+                        os.path.join(current_path, f"{asset}_Color{suffix}")
+                        for suffix in (".png", ".jpg", ".jpeg")
+                        if os.path.exists(
+                            os.path.join(
+                                current_path, f"{asset}_Color{suffix}"
+                            )
+                        )
+                    ),
+                    None,
                 )
 
-                if not os.path.exists(base_image_path):
+                if base_image_path is None:
                     continue
 
                 # construct all image paths

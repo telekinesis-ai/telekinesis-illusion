@@ -14,7 +14,6 @@ eggs/
 synthetic data/
 deprecated/
 data/
-*.obj
 datasets/
 # Default output directory when a spec sets no base_output_directory
 output/

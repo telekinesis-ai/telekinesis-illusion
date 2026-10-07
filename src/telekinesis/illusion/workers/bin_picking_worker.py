@@ -4,6 +4,7 @@ Worker class for generating shards for the bin picking use case.
 
 import math
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
@@ -251,10 +252,37 @@ class BinPickingWorker:
         # Randomizer params that used to be hard-coded in _add_randomizers().
         # Merged per key so a spec that overrides only one role still picks up
         # the defaults for the others.
-        self._material_cfg = {
-            **DEFAULT_MATERIAL_RANDOMIZER_CFG,
-            **self._specs.get("material_randomizer", {}),
-        }
+        material_cfg = self._specs.get("material_randomizer", {})
+        self._material_rules = None
+        if isinstance(material_cfg, Mapping) and "rules" in material_cfg:
+            unknown = set(material_cfg) - {"active", "rules"}
+            if unknown:
+                raise ValueError(
+                    "Rule-based material_randomizer only accepts 'active' "
+                    f"and 'rules'; unknown keys: {sorted(unknown)}."
+                )
+            if material_cfg.get("active", True):
+                rules = material_cfg["rules"]
+                if not isinstance(rules, list) or not rules:
+                    raise ValueError(
+                        "An active rule-based material_randomizer requires "
+                        "a non-empty 'rules' list."
+                    )
+                self._material_rules = rules
+            # Rules replace role-level defaults, preventing a second material
+            # assignment from overwriting a carefully randomized slot.
+            self._material_cfg = {
+                "part": [],
+                "container": [],
+                "distractor": [],
+            }
+        else:
+            if not isinstance(material_cfg, Mapping):
+                raise TypeError("material_randomizer must be a mapping.")
+            self._material_cfg = {
+                **DEFAULT_MATERIAL_RANDOMIZER_CFG,
+                **material_cfg,
+            }
         self._background_cfg = {
             **DEFAULT_BACKGROUND_RANDOMIZER_CFG,
             **self._specs.get("background_randomizer", {}),
@@ -412,7 +440,12 @@ class BinPickingWorker:
             model_supercategory_map[model["supercategory"]].append(
                 model["name"]
             )
-            id_supercategory_map[model["id"]] = model["supercategory"]
+            # category_id may be auto-assigned by Context when the spec uses
+            # null. Record the resolved ID that rendering will actually emit.
+            resolved_id = self._context.get_object_group(model["name"])[
+                0
+            ].get_category_id()
+            id_supercategory_map[resolved_id] = model["supercategory"]
         # Convert from defaultdict back to normal dict
         self._model_supercatgory_map = dict(model_supercategory_map)
         self._id_supercategory_map = dict(id_supercategory_map)
@@ -442,7 +475,10 @@ class BinPickingWorker:
                 shading=distractor.get("shading", "FLAT"),
             )
             self._distractor_names.append(distractor["name"])
-            self._id_supercategory_map[distractor["id"]] = distractor[
+            resolved_id = self._context.get_object_group(
+                distractor["name"]
+            )[0].get_category_id()
+            self._id_supercategory_map[resolved_id] = distractor[
                 "supercategory"
             ]
 
@@ -581,26 +617,44 @@ class BinPickingWorker:
                 # one installed.
                 pose_node.pose_sampling_function = self._make_sample_pose()
 
-        # Materials: the type list is baked into the context's loaded
-        # materials, so a change needs a fresh randomizer.
-        for role, node_name in (
-            ("part", "material_randomizer_parts"),
-            ("container", "material_randomizer_crate"),
-            ("distractor", "material_randomizer_distractors"),
-        ):
-            node = self._randomizer.get_randomizer_node(node_name)
-            types = self._material_cfg.get(role)
-            if node is None or not types:
-                continue
-            if types != node.configuration:
+        # Materials: source catalogs and procedural recipes are baked into the
+        # nodes, so edited configurations need fresh randomizers.
+        if self._material_rules is not None:
+            for index, rule in enumerate(self._material_rules):
+                name, targets, config = self._parse_material_rule(index, rule)
+                if self._randomizer.get_randomizer_node(name) is None:
+                    needs_reload.append(
+                        f"material rule '{name}' was added or renamed - "
+                        "reload assets to apply it"
+                    )
+                    continue
                 self._randomizer.replace_randomizer(
-                    node_name,
+                    name,
                     MaterialRandomizer.from_config(
-                        target_objects=node.target_objects,
-                        config=types,
+                        target_objects=targets,
+                        config=config,
                         context=self._context,
                     ),
                 )
+        else:
+            for role, node_name in (
+                ("part", "material_randomizer_parts"),
+                ("container", "material_randomizer_crate"),
+                ("distractor", "material_randomizer_distractors"),
+            ):
+                node = self._randomizer.get_randomizer_node(node_name)
+                types = self._material_cfg.get(role)
+                if node is None or not types:
+                    continue
+                if types != node.configuration:
+                    self._randomizer.replace_randomizer(
+                        node_name,
+                        MaterialRandomizer.from_config(
+                            target_objects=node.target_objects,
+                            config=types,
+                            context=self._context,
+                        ),
+                    )
 
         # Background: the hdri catalog is built at construction.
         background_node = self._randomizer.get_randomizer_node(
@@ -806,6 +860,27 @@ class BinPickingWorker:
 
         return sample_pose_grid
 
+    @staticmethod
+    def _parse_material_rule(index: int, rule: Mapping):
+        """Return a validated rule name, targets and node configuration."""
+        if not isinstance(rule, Mapping):
+            raise TypeError(
+                f"material_randomizer.rules[{index}] must be a mapping."
+            )
+        target_objects = list(rule.get("target_objects", []))
+        if not target_objects:
+            raise ValueError(
+                f"material_randomizer.rules[{index}] requires "
+                "'target_objects'."
+            )
+        name = rule.get("name", f"material_rule_{index}")
+        config = {
+            key: value
+            for key, value in rule.items()
+            if key not in ("name", "target_objects")
+        }
+        return name, target_objects, config
+
     def _add_randomizers(
         self,
     ) -> None:
@@ -918,7 +993,22 @@ class BinPickingWorker:
                 node_config=NodeConfig(stage=STAGE_POSE),
             )
 
-        # Add matrial randomizer
+        # Add material randomizers. Rule mode permits models with different
+        # imported slot layouts to receive independent material assignments.
+        if self._material_rules is not None:
+            for index, rule in enumerate(self._material_rules):
+                name, targets, config = self._parse_material_rule(index, rule)
+                self._randomizer.add_randomizer(
+                    randomizer_node=MaterialRandomizer.from_config(
+                        target_objects=targets,
+                        config=config,
+                        context=self._context,
+                    ),
+                    node_name=name,
+                    node_config=NodeConfig(stage=STAGE_APPEARANCE),
+                )
+
+        # Add legacy role-level material randomizers.
         # An empty type list means "do not randomize the material for this
         # role" - MaterialRandomizer would otherwise load no materials and
         # fail later in get_random_material().
@@ -942,22 +1032,23 @@ class BinPickingWorker:
                 node_config=NodeConfig(stage=STAGE_APPEARANCE),
             )
 
-        add_material_randomizer(
-            "part",
-            self._model_supercatgory_map["part"],
-            "material_randomizer_parts",
-        )
-        add_material_randomizer(
-            "container",
-            self._model_supercatgory_map["container"],
-            "material_randomizer_crate",
-        )
-        if self._distractor_names:
+        if self._material_rules is None:
             add_material_randomizer(
-                "distractor",
-                self._distractor_names,
-                "material_randomizer_distractors",
+                "part",
+                self._model_supercatgory_map["part"],
+                "material_randomizer_parts",
             )
+            add_material_randomizer(
+                "container",
+                self._model_supercatgory_map["container"],
+                "material_randomizer_crate",
+            )
+            if self._distractor_names:
+                add_material_randomizer(
+                    "distractor",
+                    self._distractor_names,
+                    "material_randomizer_distractors",
+                )
 
         # Add background randomizer
         background_categories = self._background_cfg.get("categories")

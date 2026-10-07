@@ -558,7 +558,9 @@ class MaterialManager:
                 # Load missing material
                 materials_directory = assets_path / "materials" / material
                 self._materials[material] = load_ccmaterials(
-                    str(materials_directory), preload=False
+                    str(materials_directory),
+                    preload=False,
+                    use_all_materials=True,
                 )
         else:
             # Load all the available materials
@@ -570,7 +572,7 @@ class MaterialManager:
                 if material_type in self._materials:
                     continue
                 self._materials[material_type] = load_ccmaterials(
-                    str(iter_dir), preload=False
+                    str(iter_dir), preload=False, use_all_materials=True
                 )
         available = types or list(self._materials)
         if not available:
