@@ -11,7 +11,7 @@ from pathlib import Path
 import time
 import inspect
 import json
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 
 import bpy
 import numpy as np
@@ -689,6 +689,19 @@ def get_file_descriptor(file_or_fd: Union[int, IO]) -> int:
 
 
 @contextmanager
+def _duplicate_output_stream(fd: int, **kwargs) -> IO:
+    """Own the duplicate even when Windows console wrappers do not close it."""
+    duplicate_fd = os.dup(fd)
+    try:
+        # _WindowsConsoleIO ignores closefd=True for supplied descriptors.
+        # Keep ownership here for consoles, pipes and regular files alike.
+        with os.fdopen(duplicate_fd, "w", closefd=False, **kwargs) as stream:
+            yield stream
+    finally:
+        os.close(duplicate_fd)
+
+
+@contextmanager
 def stdout_redirected(
     to: Union[int, IO, str] = os.devnull, enabled: bool = True
 ) -> IO:
@@ -703,47 +716,29 @@ def stdout_redirected(
     if enabled:
         stdout = sys.stdout
         stdout_fd = get_file_descriptor(stdout)
-        # copy stdout_fd before it is overwritten
-        # NOTE: `copied` is inheritable on Windows when duplicating a standard stream
-        with (
-            os.fdopen(os.dup(stdout_fd), "w") as copied
-        ):  # Duplicate stdout fd to only temporarly redirected the outputs
-            stdout.flush()  # flush library buffers that dup2 knows nothing about
+        stdout.flush()
+        # Save stdout until restoration is complete, then release its duplicate.
+        with _duplicate_output_stream(stdout_fd) as copied:
             try:
-                os.dup2(get_file_descriptor(to), stdout_fd)  # $ exec >&to
-            except AttributeError:  # filename
-                with open(to, "wb") as to_file:
-                    os.dup2(
-                        to_file.fileno(), stdout_fd
-                    )  # $ exec > to # If to is os.devnull, then the outputs is redirected to 'nul' and hence supressed
-            try:
-                yield copied
+                try:
+                    os.dup2(get_file_descriptor(to), stdout_fd)
+                except AttributeError:  # filename
+                    with open(to, "wb") as to_file:
+                        os.dup2(to_file.fileno(), stdout_fd)
+                # Windows console streams use WriteConsoleW, which cannot write
+                # to a descriptor redirected to NUL/a file. Give Python writes
+                # a file stream too, while dup2 handles native Blender output.
+                with (
+                    _duplicate_output_stream(
+                        stdout_fd,
+                        encoding=stdout.encoding,
+                        errors=stdout.errors,
+                    ) as redirected,
+                    redirect_stdout(redirected),
+                ):
+                    yield copied
             finally:
-                # restore stdout to its previous value
-                # NOTE: dup2 makes stdout_fd inheritable unconditionally
-                stdout.flush()
-                os.dup2(
-                    copied.fileno(), stdout_fd
-                )  # $ exec >&copied # The copied file descriptor is automatically closed when exiting the 'with'
+                # Restore even if rendering or flushing the target failed.
+                os.dup2(copied.fileno(), stdout_fd)
     else:
         yield sys.stdout
-    # Not sure if correct...
-    # if enabled:
-    #     stdout = sys.stdout
-    #     stdout_fd = get_file_descriptor(stdout)
-    #     copied_fd = os.dup(stdout_fd)
-    #     print('--------------------- copied_fd=', copied_fd)
-    #     try:
-    #         stdout.flush()
-    #         try:
-    #             os.dup2(get_file_descriptor(to), stdout_fd)
-    #         except AttributeError:
-    #             with open(to, 'wb') as to_file:
-    #                 os.dup2(to_file.fileno(), stdout_fd)
-    #         yield os.fdopen(copied_fd, 'w', closefd=False)
-    #     finally:
-    #         stdout.flush()
-    #         os.dup2(copied_fd, stdout_fd)
-    #         os.close(copied_fd)
-    # else:
-    #     yield sys.stdout

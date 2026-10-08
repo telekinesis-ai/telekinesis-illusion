@@ -557,6 +557,8 @@ def enable_segmentation_output(
     can not be stored in the image itself an instance image has to be generated. The output then will contain a
     dictionary mapping the instance ids to the attributes of the objects.
 
+    Repeated calls for the same output reuse its compositor nodes and update the mapping and object indices.
+
     :param map_by: Map by keys, either a single str or a list of str.
     :param default_values: A dictionary offering a default value for objects which do not provide a value
                            for a certain key
@@ -584,10 +586,7 @@ def enable_segmentation_output(
     if output_dir is None:
         output_dir = Utility.get_temporary_directory()
 
-    output_node = tree.nodes.new("CompositorNodeOutputFile")
-    output_node.base_path = output_dir
-    output_node.format.file_format = "OPEN_EXR"
-    output_node.file_slots.values()[0].path = file_prefix
+    # Validate/register before creating nodes, including on conflicting keys or paths.
     Utility.add_output_entry(
         {
             "key": output_key,
@@ -600,10 +599,25 @@ def enable_segmentation_output(
         }
     )
 
+    def segmentation_node(node_type):
+        # Store ownership on the nodes themselves so reuse also survives physics undo.
+        key = "blenderproc_segmentation_output_key"
+        for node in tree.nodes:
+            if node.bl_idname == node_type and node.get(key) == output_key:
+                return node
+        node = tree.nodes.new(node_type)
+        node[key] = output_key
+        return node
+
+    output_node = segmentation_node("CompositorNodeOutputFile")
+    output_node.base_path = output_dir
+    output_node.format.file_format = "OPEN_EXR"
+    output_node.file_slots.values()[0].path = file_prefix
+
     # Feed the output through 'Combine Color' node, to create 3 channel RGB grayscale image as a lot of
     # EXR readers don't support single float channel EXR files and Blender writes depth as a single
     # channel since version 4.1.1 by default
-    combine_color = tree.nodes.new("CompositorNodeCombineColor")
+    combine_color = segmentation_node("CompositorNodeCombineColor")
     combine_color.mode = "HSV"
     links.new(render_layer_node.outputs["IndexOB"], combine_color.inputs[2])
 
@@ -884,33 +898,19 @@ def render(
 
         # As frame_end is pointing to the next free frame, decrease it by one, as
         # blender will render all frames in [frame_start, frame_ned]
-        bpy.context.scene.frame_end -= 1
-
-        # Define pipe to communicate blenders debug messages to progress bar
-        # pipe_out, pipe_in = os.pipe()
-        # begin = time.time()
-        # with stdout_redirected(pipe_in, enabled=not verbose) as stdout:
-        #     with _render_progress_bar(pipe_out, pipe_in, stdout, total_frames, enabled=not verbose):
-        #         bpy.ops.render.render(animation=True, write_still=True)
-
-        # # Close Pipes to prevent having unclosed file handles
-        # try:
-        #     os.close(pipe_out)
-        # except OSError:
-        #     pass
-        # try:
-        #     os.close(pipe_in)
-        # except OSError:
-        #     pass
+        frame_end = bpy.context.scene.frame_end
+        bpy.context.scene.frame_end = frame_end - 1
         begin = time.time()
-        with stdout_redirected(enabled=not verbose):
-            bpy.ops.render.render(animation=True, write_still=True)
+        try:
+            with stdout_redirected(enabled=not verbose):
+                bpy.ops.render.render(animation=True, write_still=True)
+        finally:
+            # A failed render must not consume camera frames on each retry.
+            bpy.context.scene.frame_end = frame_end
 
         logger.info(
             f"Finished rendering after {time.time() - begin:.3f} seconds"
         )
-        # Revert changes
-        bpy.context.scene.frame_end += 1
     else:
         raise RuntimeError(
             "No camera poses have been registered, therefore nothing can be rendered. A camera "
@@ -1002,8 +1002,9 @@ def render_init():
 
     bpy.context.scene.cycles.debug_bvh_type = "STATIC_BVH"
     bpy.context.scene.cycles.debug_use_spatial_splits = True
-    # Setting use_persistent_data to True makes the rendering getting slower and slower (probably a blender bug)
-    bpy.context.scene.render.use_persistent_data = True
+    # Randomized scenes replace geometry, materials and HDRIs between renders.
+    # Release Cycles' scene cache instead of retaining it across the dataset.
+    bpy.context.scene.render.use_persistent_data = False
 
 
 def disable_all_denoiser():
