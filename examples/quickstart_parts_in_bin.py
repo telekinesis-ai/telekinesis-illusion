@@ -12,11 +12,17 @@ from telekinesis.illusion.randomizer.randomizer import Randomizer
 from telekinesis.illusion.randomizer.randomizer_node import (
     BackgroundRandomizer,
     CameraPoseRandomizer,
+    LightPoseRandomizer,
+    LightRandomizer,
     MaterialRandomizer,
     ObjectInstanceRandomizer,
     ObjectPoseRandomizer,
 )
-from telekinesis.illusion.sampler.camera_pose_sampler import volume_sampler
+from telekinesis.illusion.sampler.camera_pose_sampler import (
+    shell_sampler,
+    volume_sampler,
+)
+from telekinesis.illusion.types.distribution import uniform
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.utils.assets import resolve_asset_dir
 from telekinesis.illusion.viewer.shard_viewer import view_coco
@@ -37,6 +43,9 @@ def main():
     context = Context()
 
     assets_dir = resolve_asset_dir()
+
+    context.add_light("softbox", "AREA", power=80.0, size=0.4)
+    context.add_light("spot", "SPOT", power=20.0, radius=0.03)
 
     # Add models to the context
     model_1_path = str(
@@ -152,6 +161,43 @@ def main():
 
     randomizer.add_randomizer(
         randomizer_node=background_randomizer, node_name="background_randomizer"
+    )
+
+    # Sample a softbox shape/size and a separate spotlight cone.
+    randomizer.add_randomizer(
+        LightRandomizer(
+            ["softbox"],
+            color=uniform((0.85, 0.85, 0.85), (1.0, 1.0, 1.0)),
+            power=uniform(40.0, 100.0),
+            shape=["SQUARE", "RECTANGLE", "DISK", "ELLIPSE"],
+            size=uniform(0.3, 0.6),
+            size_y=uniform(0.2, 0.4),
+        ),
+        node_name="area_light_properties",
+    )
+    randomizer.add_randomizer(
+        LightRandomizer(
+            ["spot"],
+            power=uniform(10.0, 30.0),
+            radius=uniform(0.02, 0.05),
+            spot_size=uniform(np.deg2rad(45), np.deg2rad(75)),
+            spot_blend=uniform(0.3, 0.7),
+        ),
+        node_name="spot_light_properties",
+    )
+    # Keep both emitters above and clear of the bin and parts.
+    randomizer.add_randomizer(
+        LightPoseRandomizer(
+            shell_sampler,
+            target_lights=["softbox", "spot"],
+            center=["crate_2"],
+            min_distance=0.3,
+            radius_min=1.2,
+            radius_max=1.6,
+            elevation_min=50.0,
+            elevation_max=80.0,
+        ),
+        node_name="light_poses",
     )
 
     # Add camera pose randomizer

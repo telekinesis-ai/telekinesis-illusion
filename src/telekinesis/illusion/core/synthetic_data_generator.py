@@ -25,6 +25,14 @@ from telekinesis.illusion.writer.writer import Writer
 class SyntheticDataGenerator:
     """
     Class for managing the synthetic data generation process.
+
+    GPU rendering uses CUDA by default.
+
+    Warning:
+        OptiX leaked approximately four Windows Timer/Semaphore handles per
+        rendered image in tests with bpy 4.2.17 and NVIDIA driver 591.86.
+        Scene cleanup did not release them, so long generation runs can
+        accumulate native resources. CUDA did not exhibit this specific leak.
     """
 
     def __init__(
@@ -236,7 +244,7 @@ class SyntheticDataGenerator:
 
         segmentation_config = self._writer.get_segmentation_output_config()
         bproc.renderer.enable_segmentation_output(**segmentation_config)
-        bproc.renderer.set_render_devices(desired_gpu_device_type="OPTIX")
+        bproc.renderer.set_render_devices(desired_gpu_device_type="CUDA")
         # Render the full frame in a single tile (no disk-spooled tile buffers).
         bproc.python.renderer.RendererUtility.set_tiling(
             use_auto_tile=False, tile_size=4096
@@ -296,6 +304,8 @@ class SyntheticDataGenerator:
                 finally:
                     if catch_plane is not None:
                         catch_plane.delete()
+
+                self._randomizer.randomize_light_poses(self._context)
 
             # Render the context
             progress_bar.set_postfix_str("Rendering...")

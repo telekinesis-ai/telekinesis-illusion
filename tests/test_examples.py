@@ -40,7 +40,10 @@ COMPLETION_MARKER = "Time elapsed (hh:mm:ss.ms)"
 
 
 def _run_example(
-    script: str, args: list[str] | None = None, timeout: float = 300
+    script: str,
+    args: list[str] | None = None,
+    timeout: float = 300,
+    cwd: Path = EXAMPLES_DIR,
 ) -> subprocess.CompletedProcess | None:
     """Run an example script; return the completed process, or None if it
     was still running when the timeout elapsed."""
@@ -48,7 +51,7 @@ def _run_example(
     try:
         return subprocess.run(
             cmd,
-            cwd=EXAMPLES_DIR,
+            cwd=cwd,
             timeout=timeout,
             capture_output=True,
             text=True,
@@ -62,6 +65,102 @@ def _assert_ran_successfully(result: subprocess.CompletedProcess) -> None:
     if COMPLETION_MARKER in result.stdout or COMPLETION_MARKER in result.stderr:
         return
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("no_render", [True, False])
+def test_light_preview_runs_to_completion(tmp_path, no_render):
+    from PIL import Image, ImageChops
+
+    args = ["--output-dir", ".", "--resolution", "128", "--seed", "7"]
+    if no_render:
+        args.append("--no-render")
+    result = _run_example(
+        "preview_light_randomization.py", args, timeout=120, cwd=tmp_path
+    )
+    assert result is not None, "Light preview did not finish within 120s"
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Light preview complete:" in result.stdout
+    inventory = json.loads((tmp_path / "inventory.json").read_text())
+    assert Path(inventory["model"]).name == "gearwheel_2.glb"
+    assert inventory["seed"] == 7
+    assert inventory["rendered"] is not no_render
+    previews = inventory["previews"]
+    assert inventory["row_major_order"] == list(previews)
+    assert len(previews) == 9
+    assert {p["type"] for p in previews.values()} == {
+        "POINT",
+        "SUN",
+        "SPOT",
+        "AREA",
+    }
+    for name, preview in previews.items():
+        assert preview["active_lights"] == [name]
+        if name != "08_area_pose":
+            assert (
+                preview["location"]
+                == previews["00_point_reference"]["location"]
+            )
+    reference = previews["00_point_reference"]["properties"]
+    assert (
+        previews["01_point_power"]["properties"]["power"]
+        >= reference["power"] * 2
+    )
+    assert (
+        previews["02_point_radius"]["properties"]["radius"]
+        > reference["radius"]
+    )
+    assert (
+        previews["03_point_color"]["properties"]["color"] != reference["color"]
+    )
+    assert (
+        previews["07_area_disk"]["properties"]
+        == previews["08_area_pose"]["properties"]
+    )
+    assert (
+        previews["07_area_disk"]["location"]
+        != previews["08_area_pose"]["location"]
+    )
+    if no_render:
+        assert not list(tmp_path.glob("*.png"))
+        assert all(p["image"] is None for p in previews.values())
+    else:
+        annotations = json.loads(
+            (tmp_path / "coco_annotations.json").read_text()
+        )
+        images = annotations["images"]
+        assert len(images) == 9
+        assert [image["light_variant"] for image in images] == list(previews)
+        assert all(
+            image["camera_matrix_world"] == images[0]["camera_matrix_world"]
+            for image in images
+        )
+        with Image.open(tmp_path / "light_variants.png") as sheet:
+            assert sheet.size == (128 * 3, (128 + 32) * 3)
+            for index, preview in enumerate(previews.values()):
+                with Image.open(tmp_path / preview["image"]) as panel:
+                    assert panel.size == (128, 128)
+                    x, y = (index % 3) * 128, (index // 3) * 160
+                    assert (
+                        ImageChops.difference(
+                            sheet.crop((x, y, x + 128, y + 128)),
+                            panel.convert("RGB"),
+                        ).getbbox()
+                        is None
+                    )
+        with (
+            Image.open(
+                tmp_path / previews["00_point_reference"]["image"]
+            ) as base,
+            Image.open(
+                tmp_path / previews["01_point_power"]["image"]
+            ) as brighter,
+        ):
+            assert (
+                ImageChops.difference(
+                    base.convert("RGB"), brighter.convert("RGB")
+                ).getbbox()
+                is not None
+            )
 
 
 @pytest.mark.parametrize("script,spec", RUNS_TO_COMPLETION.items())

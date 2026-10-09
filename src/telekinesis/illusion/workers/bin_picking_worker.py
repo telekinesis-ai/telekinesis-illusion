@@ -5,6 +5,7 @@ Worker class for generating shards for the bin picking use case.
 import math
 import shutil
 from collections.abc import Mapping
+from copy import deepcopy
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
@@ -28,6 +29,8 @@ from telekinesis.illusion.core.synthetic_data_generator import (
 from telekinesis.illusion.core.context import Context
 from telekinesis.illusion.types.camera import CameraConfig
 from telekinesis.illusion.types.object import Object
+from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.distribution import Uniform, uniform
 from telekinesis.illusion.sampler.camera_pose_sampler import (
     CAMERA_POSE_SAMPLERS,
 )
@@ -42,6 +45,8 @@ from telekinesis.illusion.randomizer.randomizer_node import (
     BackgroundRandomizer,
     MaterialRandomizer,
     CameraPoseRandomizer,
+    LightRandomizer,
+    LightPoseRandomizer,
     NodeConfig,
     STAGE_COMPOSITION,
     STAGE_POSE,
@@ -134,9 +139,7 @@ class BinPickingWorker:
     A wroker class for generating shard for the bin picking use case.
     """
 
-    # The stages randomize_geometry() re-runs. Defined here rather than at the
-    # call site so that a future stage (say a lighting randomizer that belongs
-    # with the camera) can be folded in without touching the callers.
+    # Geometry previews move objects, lights and cameras, retaining properties.
     GEOMETRY_STAGES = frozenset({STAGE_POSE, STAGE_CAMERA})
 
     def __init__(
@@ -308,6 +311,9 @@ class BinPickingWorker:
             **DEFAULT_INSTANCE_RANDOMIZER_CFG,
             **self._specs.get("instance_randomizer", {}),
         }
+        self._light_nodes = self._parse_light_randomizers(
+            self._specs.get("light_randomizer", {})
+        )
 
         # The grid hands out cell centers in order and starts over once it runs
         # out, so more parts than cells means parts share a center and only the
@@ -373,17 +379,15 @@ class BinPickingWorker:
 
     def randomize_geometry(self, context: Context) -> None:
         """
-        Re-sample object poses and camera poses only.
+        Re-sample object, light and camera poses.
 
-        Which instances are visible, their materials and the background are all
-        left exactly as they are, so the caller can iterate on the layout and
-        the framing without the scene changing underneath them. Interactive
+        Visible instances, materials, background and sampled light properties
+        are retained while the caller iterates on layout and framing. Interactive
         tools (the Blender spec editor's "Preview Scene") use this; a real
         generation run always calls randomize() unfiltered.
 
-        Note that the visible objects are the ones that get re-posed, so the
-        caller is responsible for having composed a scene first - on an empty
-        scene this is a no-op.
+        Visible objects are the ones that get re-posed, so the caller is
+        responsible for composing a scene before sampling poses.
 
         Args:
             context: Context
@@ -494,9 +498,9 @@ class BinPickingWorker:
                 shading=distractor.get("shading", "FLAT"),
             )
             self._distractor_names.append(distractor["name"])
-            resolved_id = self._context.get_object_group(
-                distractor["name"]
-            )[0].get_category_id()
+            resolved_id = self._context.get_object_group(distractor["name"])[
+                0
+            ].get_category_id()
             self._id_supercategory_map[resolved_id] = distractor[
                 "supercategory"
             ]
@@ -689,6 +693,26 @@ class BinPickingWorker:
                         categories=list(categories),
                     ),
                 )
+
+        light_config = self._specs.get("light_randomizer", {})
+        if light_config != self._loaded_light_config:
+            light_types = {
+                name: nodes[0] for name, nodes in self._light_nodes.items()
+            }
+            if light_types != self._loaded_light_types:
+                needs_reload.append(
+                    "Lights were added, removed, renamed, enabled/disabled, "
+                    "or changed type - reload assets to apply it"
+                )
+            else:
+                for name, (_, properties, pose) in self._light_nodes.items():
+                    self._randomizer.replace_randomizer(
+                        f"light_properties_{name}", properties
+                    )
+                    self._randomizer.replace_randomizer(
+                        f"light_pose_{name}", pose
+                    )
+                self._loaded_light_config = deepcopy(light_config)
 
         # Camera: sampler kwargs are captured at construction.
         camera_node = self._randomizer.get_randomizer_node(
@@ -889,8 +913,7 @@ class BinPickingWorker:
         target_objects = list(rule.get("target_objects", []))
         if not target_objects:
             raise ValueError(
-                f"material_randomizer.rules[{index}] requires "
-                "'target_objects'."
+                f"material_randomizer.rules[{index}] requires 'target_objects'."
             )
         name = rule.get("name", f"material_rule_{index}")
         config = {
@@ -899,6 +922,115 @@ class BinPickingWorker:
             if key not in ("name", "target_objects")
         }
         return name, target_objects, config
+
+    @staticmethod
+    def _parse_light_randomizers(config: Mapping) -> dict:
+        """Translate YAML ranges into the existing light and pose nodes."""
+        if not isinstance(config, Mapping):
+            raise TypeError("light_randomizer must be a mapping.")
+        unknown = set(config) - {"active", "lights"}
+        if unknown:
+            raise ValueError(
+                f"Unknown light_randomizer keys: {sorted(unknown)}"
+            )
+        if not isinstance(config.get("active", True), bool):
+            raise TypeError("light_randomizer.active must be a boolean.")
+        if not config or not config.get("active", True):
+            return {}
+        lights = config.get("lights")
+        if not isinstance(lights, list) or not lights:
+            raise ValueError(
+                "An active light_randomizer requires a non-empty lights list."
+            )
+        nodes = {}
+        for entry in lights:
+            if not isinstance(entry, Mapping):
+                raise TypeError(
+                    "Each light_randomizer light must be a mapping."
+                )
+            unknown = set(entry) - {
+                "name",
+                "type",
+                "seed",
+                "properties",
+                "pose",
+            }
+            if unknown:
+                raise ValueError(
+                    f"Unknown light configuration keys: {sorted(unknown)}"
+                )
+            name = entry.get("name")
+            if not isinstance(name, str) or not name.strip() or name in nodes:
+                raise ValueError(
+                    "Configured light names must be non-empty and unique."
+                )
+            light_type = entry.get("type", "POINT")
+            Light._validate_properties(light_type, {})
+            properties = entry.get("properties")
+            if not isinstance(properties, Mapping) or not properties:
+                raise ValueError(
+                    f"Light '{name}' requires a non-empty properties mapping."
+                )
+            properties = dict(properties)
+            for key, value in properties.items():
+                if isinstance(value, Mapping):
+                    if set(value) != {"min", "max"}:
+                        raise ValueError(
+                            f"Light '{name}' {key} range requires min and max."
+                        )
+                    value = properties[key] = uniform(
+                        value["min"], value["max"]
+                    )
+                if isinstance(value, Uniform):
+                    choices = (value.min.tolist(), value.max.tolist())
+                elif key == "shape" and isinstance(value, list):
+                    if not value:
+                        raise ValueError(
+                            f"Light '{name}' shape choices cannot be empty."
+                        )
+                    choices = value
+                else:
+                    choices = (value,)
+                for choice in choices:
+                    Light._validate_properties(light_type, {key: choice})
+
+            pose = entry.get("pose")
+            if not isinstance(pose, Mapping):
+                raise TypeError(f"Light '{name}' requires a pose mapping.")
+            unknown = set(pose) - {
+                "sampler",
+                "params",
+                "min_distance",
+                "max_tries",
+            }
+            if unknown:
+                raise ValueError(f"Unknown light pose keys: {sorted(unknown)}")
+            sampler = pose.get("sampler", "shell_sampler")
+            if sampler not in CAMERA_POSE_SAMPLERS:
+                raise ValueError(f"Unknown light pose sampler '{sampler}'.")
+            params = pose.get("params", {})
+            if not isinstance(params, Mapping):
+                raise TypeError(
+                    f"Light '{name}' pose.params must be a mapping."
+                )
+            params = dict(params)
+            center = params.get("center")
+            if isinstance(center, list) and all(
+                isinstance(v, (int, float)) for v in center
+            ):
+                params["center"] = np.asarray(center, dtype=float)
+            nodes[name] = (
+                light_type,
+                LightRandomizer([name], seed=entry.get("seed"), **properties),
+                LightPoseRandomizer(
+                    CAMERA_POSE_SAMPLERS[sampler],
+                    target_lights=[name],
+                    min_distance=pose.get("min_distance", 0.25),
+                    max_tries=pose.get("max_tries", 100),
+                    **params,
+                ),
+            )
+        return nodes
 
     def _add_randomizers(
         self,
@@ -1087,6 +1219,24 @@ class BinPickingWorker:
                 "No background categories configured - "
                 "skipping background_randomizer."
             )
+
+        self._loaded_light_types = {}
+        for name, (light_type, properties, pose) in self._light_nodes.items():
+            self._context.add_light(name, light_type)
+            self._loaded_light_types[name] = light_type
+            self._randomizer.add_randomizer(
+                properties,
+                node_name=f"light_properties_{name}",
+                node_config=NodeConfig(stage=STAGE_APPEARANCE),
+            )
+            self._randomizer.add_randomizer(
+                pose,
+                node_name=f"light_pose_{name}",
+                node_config=NodeConfig(stage=STAGE_POSE),
+            )
+        self._loaded_light_config = deepcopy(
+            self._specs.get("light_randomizer", {})
+        )
 
         # Add camera pose randomizer
         cpr_cfg = self._specs.get(

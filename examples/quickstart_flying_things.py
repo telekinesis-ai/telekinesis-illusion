@@ -12,11 +12,14 @@ from telekinesis.illusion.randomizer.randomizer import Randomizer
 from telekinesis.illusion.randomizer.randomizer_node import (
     BackgroundRandomizer,
     CameraPoseRandomizer,
+    LightPoseRandomizer,
+    LightRandomizer,
     MaterialRandomizer,
     ObjectInstanceRandomizer,
     ObjectPoseRandomizer,
 )
 from telekinesis.illusion.sampler.camera_pose_sampler import shell_sampler
+from telekinesis.illusion.types.distribution import uniform
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.utils.assets import resolve_asset_dir
 from telekinesis.illusion.viewer.shard_viewer import view_coco
@@ -37,6 +40,9 @@ def main():
     context = Context()
 
     assets_dir = resolve_asset_dir()
+
+    context.add_light("key", "POINT", power=40.0, radius=0.05)
+    context.add_light("sun", "SUN", power=0.2)
 
     # Add models to the context
     model_1_path = str(
@@ -111,6 +117,36 @@ def main():
 
     randomizer.add_randomizer(
         randomizer_node=background_randomizer, node_name="background_randomizer"
+    )
+
+    # Randomize point-light power/radius and sun strength/angular diameter.
+    randomizer.add_randomizer(
+        LightRandomizer(
+            ["key"],
+            color=uniform((0.8, 0.85, 0.9), (1.0, 1.0, 1.0)),
+            power=uniform(20.0, 60.0),
+            radius=uniform(0.02, 0.08),
+        ),
+        node_name="point_light_properties",
+    )
+    randomizer.add_randomizer(
+        LightRandomizer(
+            ["sun"], power=uniform(0.1, 0.4), angle=uniform(0.01, 0.1)
+        ),
+        node_name="sun_properties",
+    )
+    # Sample overhead poses aimed at the parts, keeping the emitter clear.
+    randomizer.add_randomizer(
+        LightPoseRandomizer(
+            shell_sampler,
+            target_lights=["key", "sun"],
+            min_distance=0.3,
+            radius_min=1.0,
+            radius_max=1.5,
+            elevation_min=35.0,
+            elevation_max=75.0,
+        ),
+        node_name="light_poses",
     )
 
     # Add camera pose randomizer

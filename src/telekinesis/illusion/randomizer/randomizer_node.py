@@ -29,10 +29,11 @@ from blenderproc.python.types.MeshObjectUtility import (
 from blenderproc.python.utility.CollisionUtility import CollisionUtility
 from blenderproc.python.types.EntityUtility import Entity
 
-from telekinesis.illusion.types.distribution import uniform
+from telekinesis.illusion.types.distribution import Uniform, uniform
 from telekinesis.illusion.core.context import Context
 from telekinesis.illusion.types.camera import Camera
 from telekinesis.illusion.types.object import Object
+from telekinesis.illusion.types.light import AREA_SHAPES, Light, _vector
 from telekinesis.illusion.utils.assets import resolve_asset_dir
 from telekinesis.illusion.randomizer.materials import (
     AllSlots,
@@ -1064,6 +1065,162 @@ class MaterialRandomizer(RandomizerNode):
             else tuple(range(len(mesh.material_slots)))
         )
         return [(indices or (0,), self._pool)]
+
+
+def _light_targets(context: Context, names) -> list[Light]:
+    available = context.get_lights()
+    names = (
+        tuple(available) if names is None else _names(names, "target_lights")
+    )
+    if not names or len(set(names)) != len(names):
+        raise ValueError(
+            "target_lights must select at least one light, without duplicates."
+        )
+    return [context.get_light(name) for name in names]
+
+
+class LightRandomizer(RandomizerNode):
+    """Sample properties independently for each named light.
+
+    None selects all registered lights; explicit names match exactly. Numeric
+    properties accept fixed values or ``uniform(min, max)`` (including RGB).
+    ``shape`` accepts a fixed area shape or a non-empty sequence of choices.
+    See Light for properties and units. Unsupported properties raise before
+    any target changes; use separate nodes for different light types.
+    """
+
+    def __init__(
+        self,
+        target_lights: Sequence[str] | None = None,
+        *,
+        seed: int | None = None,
+        **properties,
+    ) -> None:
+        self.target_lights = (
+            None
+            if target_lights is None
+            else _names(target_lights, "target_lights")
+        )
+        if seed is not None and (
+            isinstance(seed, bool) or not isinstance(seed, int)
+        ):
+            raise ValueError("seed must be an integer or None.")
+        if not properties:
+            raise ValueError("Supply at least one light property to randomize.")
+        self._rng = random if seed is None else random.Random(seed)
+        self._properties = deepcopy(properties)
+
+    def randomize(self, context: Context) -> None:
+        lights = _light_targets(context, self.target_lights)
+        # Validate range endpoints and all choices before sampling or mutation.
+        for light in lights:
+            for name, value in self._properties.items():
+                if isinstance(value, Uniform):
+                    choices = (value.min.tolist(), value.max.tolist())
+                elif name == "shape" and not isinstance(value, str):
+                    if not isinstance(value, Sequence) or not value:
+                        raise ValueError(
+                            f"shape needs choices from {AREA_SHAPES}."
+                        )
+                    choices = value
+                else:
+                    choices = (value,)
+                for choice in choices:
+                    Light._validate_properties(light.get_type(), {name: choice})
+        for light in lights:
+            sampled = {}
+            for name, value in self._properties.items():
+                if isinstance(value, Uniform):
+                    values = [
+                        self._rng.uniform(low, high)
+                        for low, high in zip(value.min.flat, value.max.flat)
+                    ]
+                    value = values if value.min.shape else values[0]
+                elif name == "shape" and not isinstance(value, str):
+                    value = self._rng.choice(value)
+                sampled[name] = value
+            light.set_properties(**sampled)
+
+
+class LightPoseRandomizer(RandomizerNode):
+    """Sample poses with clearance from every visible mesh in the scene.
+
+    The callable follows CameraPoseRandomizer: ``sampler(context=..., **kwargs)``
+    returns (location in meters, XYZ Euler radians). Existing shell_sampler
+    aims the light at its center; use positive elevations for overhead lights.
+    Run after object placement and LightRandomizer so the bounds and emitter
+    sizes are current. Clearance is checked at the time this node runs.
+
+    ``min_distance`` is measured from the emitter's enclosing sphere to each
+    mesh's world AABB, including containers and unregistered scene meshes.
+    SUN has no finite position and is exempt. An exhausted retry budget raises
+    RuntimeError and leaves every targeted light's pose unchanged.
+    """
+
+    def __init__(
+        self,
+        pose_sampling_function: Callable[..., tuple[np.ndarray, np.ndarray]],
+        target_lights: Sequence[str] | None = None,
+        min_distance: float = 0.25,
+        max_tries: int = 100,
+        **kwargs,
+    ) -> None:
+        if not callable(pose_sampling_function):
+            raise TypeError("pose_sampling_function must be callable.")
+        if not np.isfinite(min_distance) or min_distance < 0:
+            raise ValueError("min_distance must be finite and non-negative.")
+        if (
+            isinstance(max_tries, bool)
+            or not isinstance(max_tries, int)
+            or max_tries < 1
+        ):
+            raise ValueError("max_tries must be a positive integer.")
+        self.target_lights = (
+            None
+            if target_lights is None
+            else _names(target_lights, "target_lights")
+        )
+        self.min_distance = min_distance
+        self.max_tries = max_tries
+        self._pose_sampling_function = pose_sampling_function
+        self._kwargs = kwargs
+
+    def randomize(self, context: Context) -> None:
+        lights = _light_targets(context, self.target_lights)
+        bpy.context.view_layer.update()
+        # shortcut: AABBs over-reject; use mesh distances for tight placements.
+        bounds = [
+            obj.get_bound_box()
+            for obj in get_all_mesh_objects()
+            if not obj.is_hidden()
+        ]
+        boxes = [
+            (corners.min(axis=0), corners.max(axis=0)) for corners in bounds
+        ]
+        poses = []
+        for light in lights:
+            clearance = self.min_distance + light.get_emitter_radius()
+            for _ in range(self.max_tries):
+                location, rotation = self._pose_sampling_function(
+                    context=context, **self._kwargs
+                )
+                location = _vector(location, "sampled light location")
+                rotation = _vector(rotation, "sampled light rotation")
+                if light.get_type() == "SUN" or all(
+                    np.linalg.norm(location - np.clip(location, lower, upper))
+                    > clearance
+                    for lower, upper in boxes
+                ):
+                    poses.append((light, location, rotation))
+                    break
+            else:
+                raise RuntimeError(
+                    f"Could not place light {light.get_name()!r} with "
+                    f"{self.min_distance} m clearance after {self.max_tries} attempts."
+                )
+        for light, location, rotation in poses:
+            light.set_location(location)
+            light.set_rotation(rotation)
 
 
 class CameraPoseRandomizer(RandomizerNode):

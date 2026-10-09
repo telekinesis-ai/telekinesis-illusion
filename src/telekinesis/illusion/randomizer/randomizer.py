@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from telekinesis.illusion.randomizer.randomizer_node import (
     RandomizerNode,
+    LightPoseRandomizer,
     NodeConfig,
     STAGE_DEFAULT,
 )
@@ -312,3 +313,13 @@ class Randomizer:
 
             randomizer_node = node_entry["randomizer"]
             randomizer_node.randomize(context)
+
+    def randomize_light_poses(self, context: Context) -> None:
+        """Resample enabled light poses after physics changes mesh geometry."""
+        for name in self._topological_order():
+            entry = self._node[name]
+            node = entry["randomizer"]
+            if entry["config"].enabled and isinstance(
+                node, LightPoseRandomizer
+            ):
+                node.randomize(context)

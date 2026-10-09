@@ -32,6 +32,7 @@ from telekinesis.illusion.loader.material_loader import load_ccmaterials
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.types.background import Background
 from telekinesis.illusion.types.camera import Camera, CameraConfig
+from telekinesis.illusion.types.light import Light
 from telekinesis.illusion.utils.assets import (
     pick_default_hdri,
     resolve_asset_dir,
@@ -68,6 +69,7 @@ class Context:
 
         # Initialize internal data structures
         self._objects: Dict[str, Object] = {}
+        self._lights: dict[str, Light] = {}
         self._object_groups: Dict[str, List[Object]] = {}
         self._categories = LabelIdMapping()
         self._next_category_id = 1
@@ -104,6 +106,26 @@ class Context:
         Get the camera used for rendering.
         """
         return self._camera
+
+    def add_light(
+        self, light_name: str, light_type: str = "POINT", **kwargs
+    ) -> Light:
+        """Create a named light; kwargs are Light pose and property values."""
+        if light_name in self._lights:
+            raise ValueError(f"Light {light_name!r} already exists.")
+        light = Light(light_name, light_type, **kwargs)
+        self._lights[light_name] = light
+        return light
+
+    def get_lights(self) -> dict[str, Light]:
+        """Return lights by their exact registered names, separate from meshes."""
+        return self._lights
+
+    def get_light(self, light_name: str) -> Light:
+        """Return a registered light; raise ValueError for an unknown name."""
+        if light_name not in self._lights:
+            raise ValueError(f"No light with the name {light_name!r}.")
+        return self._lights[light_name]
 
     def get_categories(self) -> LabelIdMapping:
         """
