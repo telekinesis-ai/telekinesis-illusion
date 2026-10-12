@@ -104,12 +104,65 @@ python examples/generate_synthetic_data_with_bin_picking_worker.py
 ```
 Launches synthetic data generation for a bin-picking use case with the default assets. Generates a COCO instance-segmentation dataset of 20 images (gearwheels in an industrial bin, with pipes and pipe fixtures as distractors) and opens the result in the interactive dataset viewer.
 
+## Color transfer on existing COCO datasets
+
+Apply Reinhard-style Lab color transfer after generation, using a folder of
+real images as references:
+
+```powershell
+python examples/reinhard_transfer_shards.py `
+  --reference-dir "data/real_images/train" `
+  --synthetic-dir "output/bin_picking" `
+  --output-dir "output/bin_picking_reinhard" `
+  --seed 42
+```
+
+The reference folder is searched recursively for `.png`, `.jpg`, and `.jpeg`
+(case insensitive). Each synthetic image receives the Lab mean and standard
+deviation of one randomly selected reference. Reference statistics are cached;
+the same inputs and seed reproduce the selection. Use training references only.
+
+The input format is detected automatically; no format flag is needed:
+
+- Native shards: subdirectories containing `coco_annotations.json`.
+- Exported COCO: split directories such as `train`, `valid`, and `test`, each
+  containing `_annotations.coco.json` and its images.
+- An individual shard or exported split: either annotation file directly
+  inside `--synthetic-dir`.
+
+For an export, point `--synthetic-dir` at its dataset root or one split folder.
+The output retains that layout, including empty splits. Only images listed in
+the detected annotation files are transformed; image names, dimensions,
+annotations, masks, and other files inside those directories are preserved.
+An existing root `merged_coco_annotations.json` is copied too. When processing
+multiple shards/splits, other root files and unrelated directories are not
+copied. Mixed or ambiguous layouts are rejected.
+
+The destination must **not exist** and must be outside both input directories.
+The script publishes it only after all images finish successfully, leaving
+the inputs untouched. It requires space for a complete copy of the dataset.
+Uses the existing NumPy, OpenCV and tqdm dependencies; no Blender or
+`python-color-transfer` is needed.
+
+Inputs must be 8-bit images. Grayscale is converted to color; PNG alpha is
+preserved and fully transparent pixels are excluded from statistics. PNGs
+remain PNGs; JPEGs are re-encoded at quality 95. The transform matches global
+color statistics, so reference composition and clipping can affect results.
+
 ## Documentation
 
 See [Material randomization](docs/MATERIAL_RANDOMIZATION.md) for whole-object,
 object and material-slot selection, procedural Principled materials and presets.
+See [Light randomization](docs/LIGHT_RANDOMIZATION.md) for point, sun, spot,
+and area lights, sampled properties, and placement with clearance from meshes.
+Both quickstarts demonstrate light randomization alongside HDRI backgrounds.
 Run `python examples/preview_material_randomization.py`
 to save reproducible material previews without generating a dataset.
+
+Run `python examples/preview_light_randomization.py` to compare nine lighting
+setups on a fixed steel gearwheel. The labeled comparison, individual PNGs,
+and sampled settings are saved under `output/light_preview/gearwheel/`.
+Use `--no-render` to check scene setup, or `--seed` to try different samples.
 
 To compare clean, scratched and worn plastic bins using only the public
 Illusion API:
