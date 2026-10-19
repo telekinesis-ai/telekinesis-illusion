@@ -5,12 +5,12 @@ import os
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 
 import argparse
+import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from telekinesis.illusion.workers.bin_picking_worker import BinPickingWorker
 
-
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
 
     configs_dir = Path(__file__).resolve().parent.parent / "configs"
 
@@ -32,22 +32,96 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "--dataset-name", help="Dataset subdirectory name (overrides YAML)."
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Base output directory; writes OUTPUT_DIR/DATASET_NAME.",
+    )
+    parser.add_argument(
+        "--num-images", type=int, help="Override metadata.num_images."
+    )
+    parser.add_argument("--shard-size", type=int, help="Override shard.size.")
+    parser.add_argument("--dataset-format", choices=("coco", "yolo"))
+    parser.add_argument(
         "--preview",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Open the merged dataset in the FiftyOne viewer after merging.",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    for name in ("num_images", "shard_size"):
+        value = getattr(args, name)
+        if value is not None and value < 1:
+            parser.error(f"--{name.replace('_', '-')} must be positive")
+    if args.dataset_name is not None and (
+        not args.dataset_name.strip()
+        or args.dataset_name in (".", "..")
+        or Path(args.dataset_name).name != args.dataset_name
+    ):
+        parser.error("--dataset-name must be a directory name, not a path")
 
     spec_path: Path = args.spec_file
     if not spec_path.is_absolute() and not spec_path.exists():
         spec_path = configs_dir / spec_path
+    if not spec_path.is_file():
+        parser.error(f"Spec file does not exist: {spec_path}")
 
-    worker = BinPickingWorker(spec_path)
-    worker.generate()
-    worker.merge_shards(preview=args.preview)
+    import yaml
+
+    with spec_path.open(encoding="utf-8") as file:
+        specs = yaml.safe_load(file)
+    metadata = specs["metadata"]
+    if args.dataset_name is not None:
+        metadata["dataset_name"] = args.dataset_name
+    if args.output_dir is not None:
+        metadata["base_output_directory"] = str(args.output_dir.resolve())
+    if args.num_images is not None:
+        metadata["num_images"] = args.num_images
+    if args.shard_size is not None:
+        specs["shard"]["size"] = args.shard_size
+    if args.dataset_format is not None:
+        specs.setdefault("output", {})["dataset_format"] = args.dataset_format
+
+    # Keep asset paths anchored to the original YAML, not the temporary copy.
+    if metadata.get("asset_directory") is not None:
+        metadata["asset_directory"] = str(
+            (spec_path.resolve().parent / metadata["asset_directory"]).resolve()
+        )
+
+    dataset_dir = (
+        Path(metadata.get("base_output_directory") or "output")
+        / metadata["dataset_name"]
+    ).resolve()
+    dataset_format = specs.get("output", {}).get("dataset_format")
+    export_dir = dataset_dir / f"{dataset_format}_format"
+    if dataset_format and export_dir.exists():
+        parser.error(
+            f"Export already exists: {export_dir}. Use a new --dataset-name "
+            "or --output-dir to avoid overwriting it."
+        )
+
+    from telekinesis.illusion.workers.bin_picking_worker import BinPickingWorker
+
+    with TemporaryDirectory(prefix="illusion-spec-") as temporary_dir:
+        effective_spec = Path(temporary_dir) / spec_path.name
+        effective_spec.write_text(yaml.safe_dump(specs), encoding="utf-8")
+        worker = BinPickingWorker(effective_spec)
+        worker.generate()
+        worker.merge_shards(preview=args.preview)
+    print(f"Dataset ready: {export_dir if dataset_format else dataset_dir}")
 
 
 if __name__ == "__main__":
     main()
+    if sys.platform == "win32":
+        from blenderproc.python.utility.Initializer import clean_temp_dir
+
+        clean_temp_dir()
+        # shortcut: bpy 4.2 crashes during Windows teardown; remove when fixed.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)

@@ -149,6 +149,51 @@ preserved and fully transparent pixels are excluded from statistics. PNGs
 remain PNGs; JPEGs are re-encoded at quality 95. The transform matches global
 color statistics, so reference composition and clipping can affect results.
 
+## Generate a dataset and train RF-DETR on Windows
+
+Run `generate_and_train_rfdetr.bat` from this repository, or double-click it.
+It generates and exports a COCO dataset in the `telekinesis-illusion` conda
+environment, then trains using the sibling `telekinesis-iris` checkout and
+its `telekinesis-iris` environment. Both environments must already be installed.
+
+```bat
+generate_and_train_rfdetr.bat gearwheel_experiment_01
+```
+
+The optional argument sets both the dataset name and training run name. Without
+it, a random suffix gives each invocation a fresh name. Edit the settings at the
+top of the batch file for the YAML spec, image count, shard size, model variant,
+epochs, batch size, accumulation steps, learning rates, and checkpoint intervals.
+The current settings generate 20 scenes and train Seg Medium for 10 epochs.
+`NUM_IMAGES` uses the worker's existing scene count; multiple camera views can
+produce more image files. The YAML's output size limit still applies.
+
+Set `IRIS_REPO` if Iris is not next to this repository. The default conda path is
+`%USERPROFILE%\miniconda3\condabin\conda.bat`; edit `CONDA_BAT` or set it in your
+terminal if conda is installed elsewhere. The batch file uses `conda run` with
+live console output, and stops on either stage's nonzero exit code.
+After a successful export on Windows, the generator explicitly cleans its
+temporary files and exits before `bpy`'s faulty native interpreter shutdown.
+Generation and export exceptions still stop the pipeline.
+
+The dataset is written to `output/<run-name>/coco_format` and passed directly to
+training. Checkpoints and logs go to `telekinesis-iris/results/<run-name>`.
+Choose a fresh name for each pipeline run; existing exports/runs are rejected.
+The source YAML is never modified. Training prints the complete TensorBoard
+command at startup; run it in another terminal and open `http://localhost:6006`.
+
+Both scripts can also run independently:
+
+```bat
+conda run --no-capture-output -n telekinesis-illusion python examples/generate_synthetic_data_with_bin_picking_worker.py --spec-file example_bin_picking_gearwheel_2.yaml --dataset-name gearwheel_experiment_01 --output-dir output --num-images 100 --shard-size 10 --dataset-format coco --no-preview
+conda run --no-capture-output -n telekinesis-iris python ../telekinesis-iris/examples/train_rfdetr.py --dataset output/gearwheel_experiment_01/coco_format --run-name gearwheel_experiment_01 --epochs 50 --batch-size 4
+```
+
+Use `--help` on either script for all options. Training also supports
+`--output-dir`, `--resolution`, `--device`, `--no-mixed-precision`,
+`--no-pretrained`, `--seed`, and `--resume-from CHECKPOINT`. When resuming,
+`--epochs` is the total target epoch count, not additional epochs.
+
 ## Documentation
 
 See [Material randomization](docs/MATERIAL_RANDOMIZATION.md) for whole-object,
