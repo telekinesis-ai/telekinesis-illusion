@@ -4,11 +4,11 @@ setlocal
 rem Edit these settings. An optional first argument supplies the run/dataset name.
 set "RUN_NAME=gearwheel_synthetic_%RANDOM%%RANDOM%"
 if not "%~1"=="" set "RUN_NAME=%~1"
-set "ILLUSION_REPO=%~dp0"
-set "IRIS_REPO=%~dp0..\telekinesis-iris"
+for %%I in ("%~dp0..\..") do set "ILLUSION_REPO=%%~fI"
+for %%I in ("%ILLUSION_REPO%\..\telekinesis-iris") do set "IRIS_REPO=%%~fI"
 if not defined CONDA_BAT set "CONDA_BAT=%USERPROFILE%\miniconda3\condabin\conda.bat"
-set "SPEC_FILE=%ILLUSION_REPO%configs\example_bin_picking_gearwheel_2.yaml"
-set "OUTPUT_DIR=%ILLUSION_REPO%output"
+set "SPEC_FILE=%ILLUSION_REPO%\configs\example_bin_picking_gearwheel_2.yaml"
+set "OUTPUT_DIR=%ILLUSION_REPO%\output"
 set "NUM_IMAGES=20"
 set "SHARD_SIZE=10"
 set "VARIANT=seg-medium"
@@ -37,8 +37,8 @@ if exist "%IRIS_REPO%\results\%RUN_NAME%" (
 
 echo Generating dataset: %RUN_NAME%
 pushd "%ILLUSION_REPO%" || exit /b 1
-set "PYTHONPATH=%ILLUSION_REPO%src"
-call "%CONDA_BAT%" run --no-capture-output -n telekinesis-illusion python -u examples\generate_synthetic_data_with_bin_picking_worker.py ^
+set "PYTHONPATH=%ILLUSION_REPO%\src"
+call "%CONDA_BAT%" run --no-capture-output -n telekinesis-illusion python -u examples\bat_scripts\generate_synthetic_data_with_bin_picking_worker.py ^
     --spec-file "%SPEC_FILE%" --dataset-name "%RUN_NAME%" ^
     --output-dir "%OUTPUT_DIR%" --num-images %NUM_IMAGES% ^
     --shard-size %SHARD_SIZE% --dataset-format coco --no-preview

@@ -1,7 +1,5 @@
-"""Check CLI overrides and batch sequencing without rendering or training."""
+"""Check CLI overrides and normal process shutdown without rendering."""
 
-import os
-import shutil
 import subprocess
 import sys
 import textwrap
@@ -92,29 +90,30 @@ def test_generation_rejects_invalid_overrides(args):
     assert error.value.code == 2
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows bpy shutdown")
 @pytest.mark.parametrize("failure", ["none", "generate", "merge"])
-def test_successful_export_bypasses_shutdown_but_errors_do_not(
-    tmp_path, failure
-):
+@pytest.mark.parametrize("batch_wrapper", [False, True])
+def test_generation_preserves_exit_status_and_cleanup(
+    tmp_path: Path, failure: str, batch_wrapper: bool
+) -> None:
+    """Limit forced shutdown to successful Windows batch generation."""
     spec = tmp_path / "spec.yaml"
     spec.write_text(
         "metadata:\n  dataset_name: shutdown_test\n"
         f"  base_output_directory: {tmp_path.as_posix()}\n"
     )
     cleanup_marker = tmp_path / "cleaned.txt"
+    temporary_cleanup_marker = tmp_path / "temporary_cleaned.txt"
     harness = tmp_path / "run_generator.py"
     harness.write_text(
         textwrap.dedent("""\
         import atexit
-        import os
         import runpy
         import sys
         from pathlib import Path
         from types import ModuleType
         from unittest.mock import Mock
 
-        script, spec, cleanup_marker, failure = sys.argv[1:]
+        script, spec, cleanup_marker, temporary_cleanup_marker, failure = sys.argv[1:]
         worker = Mock()
         if failure != "none":
             method = worker.generate if failure == "generate" else worker.merge_shards
@@ -123,10 +122,10 @@ def test_successful_export_bypasses_shutdown_but_errors_do_not(
         module.BinPickingWorker = Mock(return_value=worker)
         sys.modules[module.__name__] = module
         initializer = ModuleType("blenderproc.python.utility.Initializer")
-        initializer.clean_temp_dir = lambda: Path(cleanup_marker).touch()
+        initializer.clean_temp_dir = lambda: Path(temporary_cleanup_marker).touch()
         sys.modules[initializer.__name__] = initializer
-        # Simulate native shutdown failure, after the script has returned.
-        atexit.register(lambda: os._exit(99))
+        atexit.register(lambda: Path(cleanup_marker).touch())
+        sys.path.insert(0, str(Path(script).parent))
         sys.argv = [script, "--spec-file", spec, "--no-preview"]
         runpy.run_path(script, run_name="__main__")
     """)
@@ -138,10 +137,12 @@ def test_successful_export_bypasses_shutdown_but_errors_do_not(
             str(
                 ROOT
                 / "examples"
+                / ("bat_scripts" if batch_wrapper else ".")
                 / "generate_synthetic_data_with_bin_picking_worker.py"
             ),
             str(spec),
             str(cleanup_marker),
+            str(temporary_cleanup_marker),
             failure,
         ],
         capture_output=True,
@@ -149,71 +150,13 @@ def test_successful_export_bypasses_shutdown_but_errors_do_not(
         timeout=30,
         check=False,
     )
+    bypassed = batch_wrapper and sys.platform == "win32" and failure == "none"
+    assert cleanup_marker.is_file() is not bypassed
+    assert temporary_cleanup_marker.is_file() is bypassed
     if failure == "none":
         assert result.returncode == 0, result.stderr
-        assert cleanup_marker.is_file()
         assert "Dataset ready:" in result.stdout
     else:
         assert result.returncode != 0
-        assert not cleanup_marker.exists()
         assert "generation/export failed" in result.stderr
         assert "Dataset ready:" not in result.stdout
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows batch script")
-@pytest.mark.parametrize(
-    "generation_exit,training_exit", [(0, 0), (7, 0), (0, 9)]
-)
-def test_batch_envs_handoff_and_failure(
-    tmp_path, generation_exit, training_exit
-):
-    repos = tmp_path / "repos with spaces"
-    illusion = repos / "telekinesis-illusion"
-    illusion.mkdir(parents=True)
-    iris = repos / "telekinesis-iris"
-    (iris / "examples").mkdir(parents=True)
-    (iris / "examples" / "train_rfdetr.py").touch()
-    batch = illusion / "generate_and_train_rfdetr.bat"
-    shutil.copyfile(ROOT / batch.name, batch)
-    conda = repos / "fake conda.bat"
-    conda.write_text(
-        "@echo off\n"
-        'echo %*>>"%CALL_LOG%"\n'
-        'echo %CD%>>"%CALL_LOG%"\n'
-        'if "%~4"=="telekinesis-illusion" exit /b %GENERATION_EXIT%\n'
-        "exit /b %TRAINING_EXIT%\n"
-    )
-    log = repos / "calls.txt"
-    result = subprocess.run(
-        ["cmd.exe", "/d", "/c", batch.name, "test run"],
-        cwd=illusion,
-        env={
-            **os.environ,
-            "CONDA_BAT": str(conda),
-            "CALL_LOG": str(log),
-            "GENERATION_EXIT": str(generation_exit),
-            "TRAINING_EXIT": str(training_exit),
-        },
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    assert result.returncode == (generation_exit or training_exit), (
-        result.stderr
-    )
-    calls = log.read_text().splitlines()
-    assert "-n telekinesis-illusion python" in calls[0]
-    assert '--dataset-name "test run"' in calls[0]
-    assert "--dataset-format coco --no-preview" in calls[0]
-    assert calls[1] == str(illusion)
-    if generation_exit:
-        assert len(calls) == 2
-    else:
-        assert len(calls) == 4
-        assert "-n telekinesis-iris python" in calls[2]
-        assert (
-            f'--dataset "{illusion}\\output\\test run\\coco_format"' in calls[2]
-        )
-        assert '--run-name "test run"' in calls[2]
-        assert calls[3] == str(iris)

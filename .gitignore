@@ -36,3 +36,6 @@ inference/
 .venv/
 .pytest_cache/
 pytest-cache-files-*/
+
+# Codex
+AGENTS.md

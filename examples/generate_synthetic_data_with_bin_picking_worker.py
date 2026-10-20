@@ -5,7 +5,6 @@ import os
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 
 import argparse
-import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -117,11 +116,3 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-    if sys.platform == "win32":
-        from blenderproc.python.utility.Initializer import clean_temp_dir
-
-        clean_temp_dir()
-        # shortcut: bpy 4.2 crashes during Windows teardown; remove when fixed.
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(0)
