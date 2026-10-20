@@ -14,7 +14,8 @@ isolate_user_extensions()
 
 import bpy
 from mathutils import Matrix, Vector, Euler
-import blenderproc as bproc  # type: ignore
+from telekinesis.illusion.blender.camera import settings as camera_settings
+from telekinesis.illusion.blender import math as blender_math
 
 
 @dataclass
@@ -299,8 +300,8 @@ class Camera:
                 f"got type {type(rotation_matrix)}"
             )
 
-        cam2world_matrix = bproc.math.build_transformation_mat(
+        cam2world_matrix = blender_math.build_transformation_mat(
             location, rotation_matrix
         )
-        bproc.camera.add_camera_pose(cam2world_matrix, frame=frame)
+        camera_settings.add_camera_pose(cam2world_matrix, frame=frame)
         return cam2world_matrix

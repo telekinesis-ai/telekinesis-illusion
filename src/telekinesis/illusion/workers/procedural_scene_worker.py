@@ -13,7 +13,7 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 isolate_user_extensions()
 
-import blenderproc as bproc
+from telekinesis.illusion.blender.rendering import renderer as render_helpers
 import bpy
 
 from telekinesis.illusion.core.context import Context
@@ -197,12 +197,12 @@ class ProceduralSceneWorker:
             self.layout_builder(context, seed, layout_config)
             samples = int(self.spec.get("renderer", {}).get("samples", 32))
             renderer = self.spec.get("renderer", {})
-            bproc.renderer.set_max_amount_of_samples(samples)
-            bproc.renderer.set_noise_threshold(
+            render_helpers.set_max_amount_of_samples(samples)
+            render_helpers.set_noise_threshold(
                 float(renderer.get("noise_threshold", 0.05))
             )
             if renderer.get("denoiser", "OPTIX"):
-                bproc.renderer.set_denoiser(
+                render_helpers.set_denoiser(
                     renderer.get("denoiser", "OPTIX"), {}
                 )
             bpy.context.scene.render.use_persistent_data = renderer.get(
@@ -220,7 +220,7 @@ class ProceduralSceneWorker:
             # One randomized arrangement; CameraPoseRandomizer creates all
             # configured views as Blender frames in that render call.
             generator.generate(
-                num_images=1,
+                num_samples=1,
                 clean_up_scene=True,
                 render_verbose=renderer.get("verbose", True),
             )

@@ -7,11 +7,16 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 isolate_user_extensions()
 
 import bpy
-from blenderproc.python.renderer import RendererUtility as renderer
-from blenderproc.python.utility.GlobalStorage import GlobalStorage
-from blenderproc.python.utility.Utility import UndoAfterExecution, Utility
+from telekinesis.illusion.blender.rendering import renderer as renderer
+from telekinesis.illusion.blender.storage import GlobalStorage
+from telekinesis.illusion.blender.undo import UndoAfterExecution
+from telekinesis.illusion.blender.utility import Utility
 
-import blenderproc as bproc
+from telekinesis.illusion.blender.types import mesh_object
+from telekinesis.illusion.blender import physics
+from telekinesis.illusion.blender.camera import settings as camera_settings
+from telekinesis.illusion.blender import math as blender_math
+from telekinesis.illusion.blender.rendering import renderer
 
 
 @pytest.fixture(autouse=True)
@@ -33,12 +38,12 @@ def isolated_render_outputs(context, monkeypatch):
 
 
 def test_segmentation_setup_reuses_nodes_and_updates_objects(context):
-    first = bproc.object.create_primitive("CUBE").blender_obj
+    first = mesh_object.create_primitive("CUBE").blender_obj
     renderer.enable_segmentation_output(map_by="instance")
     tree = bpy.context.scene.node_tree
     nodes = {node.as_pointer() for node in tree.nodes}
     links = len(tree.links)
-    second = bproc.object.create_primitive("CUBE").blender_obj
+    second = mesh_object.create_primitive("CUBE").blender_obj
 
     for _ in range(50):
         renderer.enable_segmentation_output(
@@ -66,7 +71,7 @@ def test_segmentation_setup_reuses_nodes_and_updates_objects(context):
 
 
 def test_segmentation_reuse_survives_physics_undo(context):
-    bproc.object.create_primitive("CUBE")
+    mesh_object.create_primitive("CUBE")
     renderer.enable_segmentation_output(map_by="instance")
     for _ in range(3):
         with UndoAfterExecution():
@@ -78,7 +83,7 @@ def test_segmentation_reuse_survives_physics_undo(context):
 
 
 def test_segmentation_outputs_remain_independent(context):
-    bproc.object.create_primitive("CUBE")
+    mesh_object.create_primitive("CUBE")
     renderer.enable_segmentation_output(map_by="instance")
     tree = bpy.context.scene.node_tree
     unrelated = tree.nodes.new("CompositorNodeOutputFile")
@@ -101,11 +106,11 @@ def test_segmentation_outputs_remain_independent(context):
 
 
 def test_repeated_segmentation_setup_renders_valid_masks(context, tmp_path):
-    cube = bproc.object.create_primitive("CUBE")
+    cube = mesh_object.create_primitive("CUBE")
     cube.set_cp("category_id", 7)
-    bproc.camera.set_resolution(32, 32)
-    bproc.camera.add_camera_pose(
-        bproc.math.build_transformation_mat([0, 0, 5], [0, 0, 0]), frame=0
+    camera_settings.set_resolution(32, 32)
+    camera_settings.add_camera_pose(
+        blender_math.build_transformation_mat([0, 0, 5], [0, 0, 0]), frame=0
     )
     renderer.set_max_amount_of_samples(1)
     renderer.disable_all_denoiser()

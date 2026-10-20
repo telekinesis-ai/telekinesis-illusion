@@ -10,7 +10,7 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 isolate_user_extensions()
 
 import bpy
-from blenderproc.python.types.LightUtility import Light as BlenderLight
+from telekinesis.illusion.blender.types.light import Light as BlenderLight
 
 LIGHT_TYPES = ("POINT", "SUN", "SPOT", "AREA")
 AREA_SHAPES = ("SQUARE", "RECTANGLE", "DISK", "ELLIPSE")

@@ -12,9 +12,9 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 isolate_user_extensions()
 
-from blenderproc.python.renderer import RendererUtility as renderer
-from blenderproc.python.utility import Utility as utility_module
-from blenderproc.python.utility.Utility import stdout_redirected
+from telekinesis.illusion.blender.rendering import renderer as renderer
+from telekinesis.illusion.blender import utility as utility_module
+from telekinesis.illusion.blender.utility import stdout_redirected
 
 
 @pytest.mark.parametrize("views", [1, 2])

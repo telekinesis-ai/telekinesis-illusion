@@ -76,6 +76,10 @@ def test_generation_overrides_preserve_yaml_and_asset_paths(
         "7",
         "--dataset-format",
         "coco",
+        "--resolution",
+        "64",
+        "--samples",
+        "2",
         "--no-preview",
     ]
     MAIN(args)
@@ -86,6 +90,8 @@ def test_generation_overrides_preserve_yaml_and_asset_paths(
     assert captured["metadata"]["num_images"] == 21
     assert captured["shard"]["size"] == 7
     assert captured["output"]["dataset_format"] == "coco"
+    assert captured["camera"] == {"image_width": 64, "image_height": 64}
+    assert captured["renderer"]["samples"] == 2
     assert spec.read_text() == original
     assert worker.mock_calls == [
         call.generate(),
@@ -148,7 +154,7 @@ def test_generation_preserves_exit_status_and_cleanup(
         module = ModuleType("telekinesis.illusion.workers.bin_picking_worker")
         module.BinPickingWorker = Mock(return_value=worker)
         sys.modules[module.__name__] = module
-        initializer = ModuleType("blenderproc.python.utility.Initializer")
+        initializer = ModuleType("telekinesis.illusion.blender.initialization")
         initializer.clean_temp_dir = lambda: Path(temporary_cleanup_marker).touch()
         sys.modules[initializer.__name__] = initializer
         atexit.register(lambda: Path(cleanup_marker).touch())

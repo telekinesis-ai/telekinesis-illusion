@@ -9,10 +9,10 @@ isolate_user_extensions()
 
 import bpy
 from mathutils import Vector, Matrix
-import blenderproc as bproc
-from blenderproc.python.types.MeshObjectUtility import MeshObject
 
-from telekinesis.illusion.loader.object_loader import load_obj
+from telekinesis.illusion.blender.types.mesh_object import MeshObject
+
+from telekinesis.illusion.blender.loaders.object_loader import load_obj
 
 
 UV_MAPPING_METHODS = ("smart", "cube", "cylinder", "sphere")
@@ -37,8 +37,6 @@ class Object:
         collision_shape: str = "CONVEX_HULL",
         scale: float | np.ndarray = 1.0,
         preprocess_model: bool = True,
-        min_number_instances: int = 1,
-        max_number_instances: int = 1,
         shading: str = "FLAT",
         material_preprocessing: str = "replace",
         uv_mapping: str = "smart",
@@ -76,10 +74,6 @@ class Object:
             preprocess_model: bool
                 Whether to preprocess the model upon loading.
                 Applies UV/material preprocessing, shading and initial hiding.
-            min_number_instances: int
-                Minimum number of instances for objects of this type.
-            max_number_instances: int
-                Maximum number of instances for objects of this type.
             shading: str
                 Shading mode applied to the mesh when it is loaded. One of
                 "FLAT", "SMOOTH", "AUTO_SMOOTH". Only applied when
@@ -113,8 +107,6 @@ class Object:
         self._active_in_simulation = active_in_simulation
         self._collision_shape = collision_shape
         self._scale = scale
-        self._min_number_instances = min_number_instances
-        self._max_number_instances = max_number_instances
 
         # If model_path is provided, load the model. Else assign the provided
         # MeshObject
@@ -189,13 +181,9 @@ class Object:
         )
         return representation
 
-    @property
-    def min_number_instances(self) -> int:
-        return self._min_number_instances
 
-    @property
-    def max_number_instances(self) -> int:
-        return self._max_number_instances
+
+
 
     def get_object(self) -> MeshObject:
         return self._object
@@ -293,16 +281,14 @@ class Object:
         self._object_name = object_name
 
     def get_category_name(self) -> str:
-        """Returns the category name (semantic name for annotations)."""
-        return self._object.get_name()
+        return self._category_name
 
     def get_model_path(self) -> str:
         """Returns the original model file path."""
         return self._model_path
 
     def set_category_name(self, category_name: str | None = None) -> None:
-        """Set the category name and update both the Blender object name and internal tracking."""
-        self._object.set_name(category_name)
+        self._category_name = category_name
 
     def set_category_id(self, category_id: int) -> None:
         """
@@ -536,8 +522,6 @@ class Object:
             object=new_entity,
             collision_shape=self._collision_shape,
             scale=self.get_scale(),
-            min_number_instances=self._min_number_instances,
-            max_number_instances=self._max_number_instances,
             material_preprocessing=self._material_preprocessing,
             uv_mapping=self._uv_mapping,
         )

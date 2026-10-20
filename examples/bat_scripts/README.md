@@ -34,8 +34,8 @@ directory and writes to its `results/<run-name>` directory. The pipeline stops
 on either stage's nonzero exit code. Use a fresh name; existing exports and
 training runs are rejected. The source YAML is never modified.
 
-`NUM_IMAGES` uses the worker's scene count; multiple camera views can produce
-more image files. The YAML's output size limit still applies.
+`NUM_IMAGES` sets the requested image count. The YAML's output size limit
+still applies.
 
 ## Run a batch-specific example directly
 

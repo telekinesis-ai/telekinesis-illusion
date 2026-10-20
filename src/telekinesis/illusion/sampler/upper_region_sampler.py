@@ -14,7 +14,7 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 # Must run before bpy is imported (blenderproc pulls it in). See blender_env.py.
 isolate_user_extensions()
 
-import blenderproc as bproc  # type: ignore
+
 from mathutils import Vector  # Only importable once bpy is loaded
 
 from telekinesis.illusion.core.context import Context

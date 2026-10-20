@@ -1,212 +1,235 @@
-<div align="center">
-  <p>
-    <a href="https://gitlab.com/telekinesis/illusion">
-      <img width="100%" src="https://assets.telekinesis.ai/logo/telekinesis-banner.png" />
-    </a>
-  </p>
+# bpy-illusion
 
-  <p align="center">
-    <a href="https://docs.telekinesis.ai">
-      <img src="https://img.shields.io/badge/docs-telekinesis.ai-blue" />
-    </a>
-    <a href="LICENSE">
-      <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-green" />
-    </a>
-    <a href="https://www.blender.org/download/releases/4-2/">
-      <img src="https://img.shields.io/badge/Blender-4.2%20LTS-orange" />
-    </a>
-    <a href="#requirements">
-      <img src="https://img.shields.io/badge/platform-Windows%20x64-lightgrey" />
-    </a>
-  </p>
+A BlenderProc-free revision of telekinesis-illusion. It uses the standalone
+`bpy==4.2.17` package and retains the modified BlenderProc algorithms for
+rendering, physics, object wrappers, and undo/reference restoration.
 
-  <p>
-    <a href="https://docs.telekinesis.ai/data-engine/synthetic-data-generation/overview.html">Docs</a>
-    &nbsp;•&nbsp;
-    <a href="https://github.com/telekinesis-ai/telekinesis-illusion">GitHub</a>
-    &nbsp;•&nbsp;
-    <a href="https://discord.gg/S5v8bYAnc6">Discord</a>
-    &nbsp;•&nbsp;
-    <a href="https://www.linkedin.com/company/telekinesis-ai/">LinkedIn</a>
-    &nbsp;•&nbsp;
-    <a href="https://x.com/telekinesis_ai">X</a>
-    &nbsp;•&nbsp;
-    <a href="https://telekinesis.ai/">Website</a>
-  </p>
-</div>
+The Python namespace remains `telekinesis.illusion` so existing samplers,
+material recipes, workers, and dataset tooling keep their imports. Install this
+distribution in its own environment; do not install both implementations into
+the same namespace in one environment.
 
-#  `telekinesis-illusion`
+## Install and run
 
-`telekinesis-illusion` is a python package for procedurally generating physically simulated synthetic datasets for training computer vision models in robotics applications.
-
-Open source under [GPL-3.0-or-later](LICENSE).
-
-Full documentation: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.ai/data-engine/synthetic-datasets/overview.html).
-
-## Installation
-
-It is highly recommended to install a Miniconda environment before setting up the project. You can install Miniconda by following instructions from [here](https://docs.conda.io/en/latest/miniconda.html#installing).
-
-```bash
-conda create -n telekinesis-illusion python=3.11
-conda activate telekinesis-illusion
-```
-
-Clone the repository:
-
-```bash
-git clone https://github.com/telekinesis-ai/telekinesis-illusion
-cd telekinesis-illusion
-```
-
-This repository comes with a modified BlenderProc 2.8.0 package that uses an external `bpy` package (4.2.17 (LTS)) - see [BlenderProc/NOTICE.md](BlenderProc/NOTICE.md) for the list of modifications. Install it in editable mode:
-
-```bash
-cd BlenderProc
-pip install -e .
-```
-
-Then install `telekinesis-illusion` from the repository root:
-
-```bash
-cd ..
-pip install -e .
-```
-
-`telekinesis-illusion` comes with a small collection of default assets and models for running the examples.
-
-In case you want to use your own assets, make sure to organize them in the expected layout as described in [docs/GUIDE.md](docs/GUIDE.md#assets).
-
-## Blender Extension
-
-To ease the parameter tuning of the `telekinesis-illusion` randomizer tree, we have additionally developed a Blender node-graph editor, with a live preview. 
-
-You can install the `telekinesis-illusion` Blender extension from our [GitHub](https://github.com/telekinesis-ai/telekinesis-illusion-blender-extension).
-
-## Quickstart
-
-Run the examples from the `examples` folder. Note: running an example for the first time might take a few minutes and you might see `Loading render kernels (may take a few minutes the first time)` in the terminal. The quickstart examples demonstarte the following use cases:
-
-```bash
-python examples/quickstart_flying_things.py
-```
-
-Runs the low-level API to build a "flying things" scene: gearwheels and pipes are scattered in mid-air (no physics simulation) against randomized industrial/studio backgrounds. Generates a COCO instance-segmentation dataset of 5 images and opens it in the interactive dataset viewer. Pass `--no-preview` to suppress the viewer.
-
-```bash
-python examples/quickstart_parts_in_bin.py
-```
-
-Runs the low-level API to build a bin-picking scene: gearwheels and a pipe fixture are dropped into a bin and settled with physics simulation. Generates a COCO instance-segmentation dataset of 5 images and opens it in the interactive dataset viewer. Pass `--no-preview` to suppress the viewer.
-
-```bash
-python examples/generate_synthetic_data_with_bin_picking_worker.py
-```
-Loads `configs/example_bin_picking_gearwheel_2.yaml`, generates the bin-picking dataset, and merges its shards. Edit the YAML for dataset settings or change `spec_file` in the example to use another configuration. Set `preview=True` in `merge_shards()` to open the merged dataset in the viewer.
-
-## Color transfer on existing COCO datasets
-
-Apply Reinhard-style Lab color transfer after generation, using a folder of
-real images as references:
+Use Python 3.11 and a supported Blender rendering device. The examples default
+to CUDA; `BlenderEngine(RenderConfig(device="CPU"))` selects CPU rendering:
 
 ```powershell
-python examples/reinhard_transfer_shards.py `
-  --reference-dir "data/real_images/train" `
-  --synthetic-dir "output/bin_picking" `
-  --output-dir "output/bin_picking_reinhard" `
-  --seed 42
+conda create -n telekinesis-illusion python=3.11
+conda activate telekinesis-illusion
+python -m pip install -e .
 ```
 
-The reference folder is searched recursively for `.png`, `.jpg`, and `.jpeg`
-(case insensitive). Each synthetic image receives the Lab mean and standard
-deviation of one randomly selected reference. Reference statistics are cached;
-the same inputs and seed reproduce the selection. Use training references only.
-
-The input format is detected automatically; no format flag is needed:
-
-- Native shards: subdirectories containing `coco_annotations.json`.
-- Exported COCO: split directories such as `train`, `valid`, and `test`, each
-  containing `_annotations.coco.json` and its images.
-- An individual shard or exported split: either annotation file directly
-  inside `--synthetic-dir`.
-
-For an export, point `--synthetic-dir` at its dataset root or one split folder.
-The output retains that layout, including empty splits. Only images listed in
-the detected annotation files are transformed; image names, dimensions,
-annotations, masks, and other files inside those directories are preserved.
-An existing root `merged_coco_annotations.json` is copied too. When processing
-multiple shards/splits, other root files and unrelated directories are not
-copied. Mixed or ambiguous layouts are rejected.
-
-The destination must **not exist** and must be outside both input directories.
-The script publishes it only after all images finish successfully, leaving
-the inputs untouched. It requires space for a complete copy of the dataset.
-Uses the existing NumPy, OpenCV and tqdm dependencies; no Blender or
-`python-color-transfer` is needed.
-
-Inputs must be 8-bit images. Grayscale is converted to color; PNG alpha is
-preserved and fully transparent pixels are excluded from statistics. PNGs
-remain PNGs; JPEGs are re-encoded at quality 95. The transform matches global
-color statistics, so reference composition and clipping can affect results.
-
-## Generate a dataset from the command line
-
-Use the batch entrypoint in the environment where this package is installed.
-Its CLI options override the YAML settings without modifying the source file:
-
-```bash
-python examples/bat_scripts/generate_synthetic_data_with_bin_picking_worker.py --spec-file example_bin_picking_gearwheel_2.yaml --dataset-name gearwheel_experiment_01 --output-dir output --num-images 100 --shard-size 10 --dataset-format coco --no-preview
+Run the exmamples:
+```powershell
+python examples/quickstart_flying_things.py --no-preview
+```
+```powershell
+python examples/quickstart_parts_in_bin.py --no-preview
+```
+```powershell
+python examples/generate_synthetic_data_with_bin_picking_worker.py
 ```
 
-This writes the dataset to `output/gearwheel_experiment_01/coco_format`.
-Choose a fresh dataset name or output directory; existing exports are rejected.
-`--num-images` sets the worker's scene count, so multiple camera views can
-produce more image files. The YAML's output size limit still applies.
+The bin-worker example reads `configs/example_bin_picking_gearwheel_2.yaml`
+directly. Edit that YAML for dataset settings or change `spec_file` in the
+example. Set `preview=True` in `merge_shards()` to open the viewer.
+For command-line overrides, use
+`python examples/bat_scripts/generate_synthetic_data_with_bin_picking_worker.py --help`.
 
-Use `--preview` to open the merged dataset in FiftyOne; preview is disabled by
-default. Run the script with `--help` for all options.
+The checkout includes the original example assets. For another asset tree,
+pass `asset_dir` to `Scene`, or set `metadata.asset_directory` in the worker
+YAML. Relative YAML asset paths resolve against that YAML file. Interactive
+FiftyOne previews are optional: `python -m pip install -e ".[viewer]"`.
 
-For the optional Windows generation-and-training pipeline, see
+For a short real render:
+
+```powershell
+python examples/quickstart_parts_in_bin.py --no-preview --num-images 3 --resolution 64 --samples 2 --seed 17 --output-dir output/smoke
+```
+
+## Windows batch pipeline
+
+For the optional generation-and-training pipeline, see
 [the batch examples](examples/bat_scripts/README.md). Its dedicated entrypoints
 retain the Windows forced-exit workaround; the standard examples use normal
 Python shutdown.
 
-## Documentation
+## Build one dataset run
 
-See [Material randomization](docs/MATERIAL_RANDOMIZATION.md) for whole-object,
-object and material-slot selection, procedural Principled materials and presets.
-See [Light randomization](docs/LIGHT_RANDOMIZATION.md) for point, sun, spot,
-and area lights, sampled properties, and placement with clearance from meshes.
-Both quickstarts demonstrate light randomization alongside HDRI backgrounds.
-Run `python examples/preview_material_randomization.py`
-to save reproducible material previews without generating a dataset.
+Register models on a scene, configure the existing randomization DAG, then
+pass the scene, randomizer, engine and writer to the generator. Instance counts
+are configured on the DAG's composition nodes, independently of model metadata.
 
-Run `python examples/preview_light_randomization.py` to compare nine lighting
-setups on a fixed steel gearwheel. The labeled comparison, individual PNGs,
-and sampled settings are saved under `output/light_preview/gearwheel/`.
-Use `--no-render` to check scene setup, or `--seed` to try different samples.
+```python
+from telekinesis.illusion.core.scene import Scene
+from telekinesis.illusion.core.engine import BlenderEngine, RenderConfig
+from telekinesis.illusion.core.synthetic_data_generator import SyntheticDataGenerator
+from telekinesis.illusion.randomizer.randomizer import Randomizer
+from telekinesis.illusion.randomizer.randomizer_node import (
+    ObjectInstanceRandomizer, ObjectPoseRandomizer, CameraPoseRandomizer,
+)
+from telekinesis.illusion.sampler.camera_pose_sampler import shell_sampler
+from telekinesis.illusion.writer.writer import CocoWriter
 
-To compare clean, scratched and worn plastic bins using only the public
-Illusion API:
+scene = Scene()
+scene.add_model("assets/models/mechanical_parts/gearwheel_1.glb",
+                object_name="gear", category_name="gear", category_id=1)
 
-```bash
-python examples/preview_bin_surface_imperfections.py --asset-dir E:/telekinesis-illusion/assets
+randomizer = Randomizer()
+randomizer.add_randomizer(ObjectInstanceRandomizer({"gear": (1, 3)}), "counts")
+randomizer.add_randomizer(
+    CameraPoseRandomizer(shell_sampler, number_of_views=2,
+                         radius_min=0.5, radius_max=0.7), "camera"
+)
+# Add ObjectPoseRandomizer, materials, background and lights as shown in the
+# quickstarts. DAG dependencies and stage filtering retain their existing API.
+
+generator = SyntheticDataGenerator(
+    scene=scene,
+    randomizer=randomizer,
+    engine=BlenderEngine(RenderConfig(samples=32)),
+    writer=CocoWriter(output_dir="output/gears"),
+)
+generator.generate(num_images=100)
 ```
 
-The comparison PNG and COCO annotations are written under
-`output/material_preview/plastic_bin_imperfections/`. Use `--no-render` to
-check scene setup without rendering.
+`generate()` prepares automatically. Call `generator.prepare()` explicitly if
+you need to inspect instantiated objects or set fixed transforms first. Before
+preparation, `scene.get_assets()` contains immutable `ModelAsset` definitions
+and `scene.get_objects()` contains no imported model instances. Afterward, the
+flat object dictionary and per-model groups refer to the same `Object` wrappers.
 
-Find the documentation for Illusion at: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.ai/).
+`num_images` is an exact number of camera views. `num_samples` instead counts
+randomized scenes and renders all configured camera views. This removes the old
+image-count overshoot when the last batch contained multiple views. The
+procedural worker uses `num_samples=1` for each arrangement.
 
-## Citation
+## Ownership and lifecycle
 
-```bibtex
-@software{telekinesis_illusion,
-  author = {Telekinesis GmbH},
-  title  = {Telekinesis-Illusion: Synthetic Data Generation for Robotics},
-  year   = {2026},
-  url    = {https://gitlab.com/telekinesis/illusion},
-  note   = {GPL-3.0-or-later}
-}
+```mermaid
+flowchart TD
+    Generator[SyntheticDataGenerator] --> Scene
+    Generator --> Randomizer[Randomizer DAG]
+    Generator --> Engine[BlenderEngine]
+    Generator --> Writer[CocoWriter]
+    Randomizer -->|finite capacity before preparation| Scene
+    Randomizer -->|activity, poses, materials, camera| Scene
+    Scene --> Assets[ModelAsset definitions]
+    Scene --> Objects[Object wrappers and linked pools]
+    Objects --> Wrappers[MeshObject / Entity / Struct]
+    Engine -->|simulate and capture| Scene
+    Engine --> Result[RenderResult: arrays, categories, captures]
+    Result --> Writer
 ```
+
+The generation loop lives in `core/synthetic_data_generator.py`: prepare,
+reset pool activity, execute the DAG, simulate if requested, update light poses,
+render, and write. Simulation settings and rendering details live in
+`core/engine.py`. The generator cleans up in `finally` unless a worker requests
+that the pool remain available for the next shard.
+
+- `Scene` owns model definitions, instance pools, the category mapping, lights,
+  camera, background, and material cache. Blender owns transforms and materials;
+  they are accessed through wrappers rather than copied into parallel state.
+- Camera pose randomization follows BlenderProc: it reuses the camera's action
+  and curves, overwriting poses at the same frame indices across samples. It
+  does not clear animation data or reset the frame range. Use a fixed view
+  count within a scene; reducing it leaves earlier views and their keys in place.
+- `Randomizer.required_instances()` sums enabled DAG nodes once in topological
+  order. Multiple composition nodes requesting one asset reserve additive
+  capacity and activate distinct available objects. Modifier nodes request no
+  capacity. Custom nodes must declare finite integer upper bounds; pool growth
+  inside the sample loop is unsupported.
+- `Scene.activate()` and `deactivate()` keep rendering visibility, rigid-body
+  participation and the active-name index consistent. Low-level wrapper `hide()`
+  remains available, but is not the activity API. The engine reuses one invisible
+  physics catch plane across samples and shards, repositioning it beneath the
+  current bin. It is collidable only during simulation, then hidden and disabled
+  even on failure. Final generator cleanup releases the plane and its mesh.
+- Linked instances share mesh data. Material slots use object-level overrides,
+  so replacing an instance's material does not replace its siblings' slots.
+  Existing material and UV preprocessing behavior is retained.
+- `RenderResult` has pass arrays, a category snapshot, and per-view capture
+  metadata. The writer can operate after Blender cleanup. It validates taxonomy
+  compatibility before appending and retains registered categories even when
+  they are absent in a particular image.
+
+Register assets before preparation. A prepared scene can reuse its pool for
+smaller count ranges; a larger capacity requires a new scene. There is no dirty
+configuration graph or implicit scene rebuild. The process has one active bpy
+scene; constructing another `Scene` replaces it. The current importer continues
+to assume a single mesh per model.
+
+`Context` is a compatibility import for `Scene`. The former instance-count
+arguments to `Context.add_model()` have moved to `ObjectInstanceRandomizer`.
+Legacy generator physics keywords remain accepted for existing workers; new
+scripts should pass a `PhysicsConfig` to their engine.
+
+## Shards and restarts
+
+`BinPickingWorker` prepares once and reuses its linked pools between shards.
+Each shard has a UUID in its directory name. Restarting with the same dataset
+name adds shards, and `merge_shards()` writes `merged_coco_annotations.json`.
+The merger validates category ID/name compatibility. Keep explicit category IDs
+stable between runs. Format export directories retain the existing overwrite
+protection; set `output.dataset_format: null` for repeated accumulation and
+perform export after generation.
+
+## Modules
+
+```text
+src/telekinesis/illusion/
+  core/          scene, engine, synthetic_data_generator, context compatibility
+  types/         model_asset, render_result, object, camera, light, material recipes
+  randomizer/    existing DAG and nodes, pure instance_counts, material sampling
+  blender/
+    types/       struct, entity, mesh_object, material, light, reference tracking
+    loaders/     object and material loaders, material helpers
+    camera/      settings, projection, validation, lens_distortion
+    rendering/   renderer, output loading, segmentation, optical_flow
+    undo.py      undo checkpoints and wrapper reference restoration
+    physics.py   simulation and final-pose extraction
+    collision.py filters.py postprocessing.py
+    initialization.py utility.py utils.py storage.py
+  writer/        Blender-independent COCO writing and parent-mask annotations
+  workers/       bin-picking shards and procedural arrangements
+  sampler/       existing pose samplers
+  dataset/       shard merger and format conversion
+  viewer/        optional dataset preview
+```
+
+Camera projection/validation, lens distortion, filters, depth/distance conversion,
+noise postprocessing, optical flow, and the separate recoloring segmentation
+renderer remain available in `blender/`. The normal engine segmentation path
+continues to use the object-index pass. These are the existing algorithms with
+local imports, not replacements invented for this revision. Source attribution
+and the upstream license are in `blender/NOTICE.md` and `LICENSE.BlenderProc`.
+
+Undo retains the modified BlenderProc approach: collect valid weakly tracked
+`Struct` wrappers, push a Blender checkpoint, undo on exit (also on exceptions),
+and rebind wrappers by their saved names. `Material` and `Background` refresh
+their cached shader references too. Undo covers Blender state; it does not roll
+back arbitrary Python lists or configuration objects. Wrappers created inside
+an undone block must not escape it.
+
+## Tests
+
+```powershell
+python -m pip install -e ".[test]"
+python tools/run_tests.py -q
+```
+
+The runner preserves pytest's real exit code while avoiding the known standalone
+bpy 4.2 Windows interpreter-teardown crash. Library methods never force process
+exit. The bin-picking CLI and both quickstarts use normal Python shutdown,
+allowing exit handlers to run.
+The underlying native shutdown crash may still occur after a successful export.
+
+Tests reject every `blenderproc` import. They exercise the three requested example
+scripts in subprocesses, decode their COCO masks, check image/capture alignment,
+and restart the shard worker. Other coverage includes linked mesh/material
+behavior, repeated physics/undo, failed renders, capacity planning, inactive
+objects, category compatibility, depth/normals, optical flow, recoloring
+segmentation, camera projection and lens remapping. Example smoke tests use
+64-pixel images and two Cycles samples to keep actual rendering inexpensive.

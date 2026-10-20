@@ -7,19 +7,14 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+from uuid import uuid4
 from loguru import logger
 import atexit
 
-from telekinesis.illusion.utils.blender_env import isolate_user_extensions
-
-# Must run before bpy is imported (blenderproc pulls it in). See blender_env.py.
-isolate_user_extensions()
-
-import blenderproc as bproc
-import bpy
-from blenderproc.python.utility.LabelIdMapping import LabelIdMapping
+from telekinesis.illusion.blender.labels import LabelIdMapping
 
 from telekinesis.illusion.writer.coco_writer import write_coco_annotations
+from telekinesis.illusion.types.render_result import RenderResult
 
 
 class Writer(ABC):
@@ -50,7 +45,7 @@ class Writer(ABC):
             output_dir: str
                 Output directory for writing generated images and annotations.
                 If none is provided, the output is written in the directory
-                Path.cwd() / "output" / f"synthetic_data_{timestamp}".
+                Path.cwd() / "output" / f"synthetic_data_{timestamp}_{uuid4().hex[:8]}".
         Returns:
             Returns the output directory as a pathlib.Path() object.
 
@@ -66,7 +61,11 @@ class Writer(ABC):
                 # directory. Where output is written is deliberately unrelated
                 # to where assets are read from.
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                path = Path.cwd() / "output" / f"synthetic_data_{timestamp}"
+                path = (
+                    Path.cwd()
+                    / "output"
+                    / f"synthetic_data_{timestamp}_{uuid4().hex[:8]}"
+                )
 
                 if path.exists():
                     logger.info(f"Using existing output directory {path}.")
@@ -134,8 +133,7 @@ class Writer(ABC):
     @abstractmethod
     def write(
         self,
-        data: Dict[str, Any],
-        categories: Dict[int, str],
+        result: RenderResult,
     ) -> int:
         pass
 
@@ -219,9 +217,12 @@ class CocoWriter(Writer):
 
     def write(
         self,
-        data: Dict[str, Any],
-        categories: LabelIdMapping,
+        result: RenderResult,
     ) -> int:
+        data = result.data
+        categories = LabelIdMapping.from_dict(
+            {name: cid for cid, name in result.categories.items()}
+        )
         required_keys = {
             "instance_segmaps",
             "instance_attribute_maps",
@@ -232,25 +233,16 @@ class CocoWriter(Writer):
         if missing:
             raise KeyError(f"Missing required data keys: {missing}")
 
+        if any(len(data[key]) != len(result) for key in required_keys):
+            raise ValueError(
+                "Render passes and capture metadata must have equal lengths."
+            )
         image_metadata = []
-        current_frame = bpy.context.scene.frame_current
-        for frame in range(
-            bpy.context.scene.frame_start, bpy.context.scene.frame_end
-        ):
+        for capture in result.captures:
             metadata = dict(self._next_image_metadata)
             if self._include_camera_metadata:
-                bpy.context.scene.frame_set(frame)
-                camera = bpy.context.scene.camera
-                metadata.update(
-                    {
-                        "camera_matrix_world": [
-                            list(row) for row in camera.matrix_world
-                        ],
-                        "camera_lens_mm": camera.data.lens,
-                    }
-                )
+                metadata.update(capture)
             image_metadata.append(metadata)
-        bpy.context.scene.frame_set(current_frame)
 
         write_coco_annotations(
             output_dir=str(self._output_dir),

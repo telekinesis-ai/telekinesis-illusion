@@ -4,7 +4,13 @@ import argparse
 
 import numpy as np
 
-from telekinesis.illusion.core.context import Context
+from telekinesis.illusion.core.scene import Scene
+from telekinesis.illusion.core.engine import (
+    BlenderEngine,
+    RenderConfig,
+    PhysicsConfig,
+)
+from telekinesis.illusion.types.camera import CameraConfig
 from telekinesis.illusion.core.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
@@ -22,7 +28,6 @@ from telekinesis.illusion.sampler.camera_pose_sampler import shell_sampler
 from telekinesis.illusion.types.distribution import uniform
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.utils.assets import resolve_asset_dir
-from telekinesis.illusion.viewer.shard_viewer import view_coco
 from telekinesis.illusion.writer.writer import CocoWriter
 
 
@@ -34,36 +39,46 @@ def main():
         default=True,
         help="Open the generated dataset in the interactive viewer.",
     )
+    parser.add_argument("--num-images", type=int, default=5)
+    parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument("--resolution", type=int, default=720)
+    parser.add_argument("--samples", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     args = parser.parse_args()
+    if args.seed is not None:
+        import random
+
+        random.seed(args.seed)
+        np.random.seed(args.seed)
 
     # Create the context
-    context = Context()
+    scene = Scene(
+        camera_config=CameraConfig(
+            image_width=args.resolution, image_height=args.resolution
+        )
+    )
 
     assets_dir = resolve_asset_dir()
 
-    context.add_light("key", "POINT", power=40.0, radius=0.05)
-    context.add_light("sun", "SUN", power=0.2)
+    scene.add_light("key", "POINT", power=40.0, radius=0.05)
+    scene.add_light("sun", "SUN", power=0.2)
 
     # Add models to the context
     model_1_path = str(
         assets_dir / "models" / "mechanical_parts" / "gearwheel_1.glb"
     )
-    context.add_model(
+    scene.add_model(
         model_1_path,
         object_name="part_1",
-        min_number_instances=1,
-        max_number_instances=3,
         uv_mapping="cube",
     )
 
     model_2_path = str(
         assets_dir / "models" / "mechanical_parts" / "pipe_1.glb"
     )
-    context.add_model(
+    scene.add_model(
         model_2_path,
         object_name="part_2",
-        min_number_instances=1,
-        max_number_instances=1,
         uv_mapping="cube",
     )
 
@@ -72,7 +87,7 @@ def main():
 
     # Add obect instance randomizer
     object_instance_randomizer = ObjectInstanceRandomizer(
-        target_objects=["part_1", "part_2"],
+        counts={"part_1": (1, 3), "part_2": (1, 1)},
         min_num_total_objects=2,
         max_num_total_objects=4,
     )
@@ -103,7 +118,7 @@ def main():
 
     # Add matrial randomizer
     material_randomizer = MaterialRandomizer(
-        target_objects=["part_1", "part_2"], types=["metal"], context=context
+        target_objects=["part_1", "part_2"], types=["metal"]
     )
 
     randomizer.add_randomizer(
@@ -163,17 +178,26 @@ def main():
     )
 
     # Create the writer
-    writer = CocoWriter()
+    writer = CocoWriter(
+        output_dir=args.output_dir, include_camera_metadata=True
+    )
 
     # Create the data generator with context, randomizer and writer
     data_generator = SyntheticDataGenerator(
-        context=context, randomizer=randomizer, writer=writer
+        scene=scene,
+        randomizer=randomizer,
+        writer=writer,
+        engine=BlenderEngine(
+            RenderConfig(samples=args.samples), PhysicsConfig(active=False)
+        ),
     )
 
     # Generate data
-    data_generator.generate(num_images=5, save_blender_scene=False)
+    data_generator.generate(num_images=args.num_images)
 
     if args.preview:
+        from telekinesis.illusion.viewer.shard_viewer import view_coco
+
         view_coco(writer.get_output_dir())
 
 

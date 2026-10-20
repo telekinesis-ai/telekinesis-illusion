@@ -9,10 +9,8 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 isolate_user_extensions()
 
 import bpy
-from blenderproc.python.material.MaterialLoaderUtility import (
-    create,
-)
-from blenderproc.python.types.MaterialUtility import Material
+from telekinesis.illusion.blender.loaders.material_utils import create
+from telekinesis.illusion.blender.types.material import Material
 
 from telekinesis.illusion.randomizer.surface_imperfections import (
     apply_imperfections,

@@ -12,7 +12,8 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 # Must run before bpy is imported (blenderproc pulls it in). See blender_env.py.
 isolate_user_extensions()
 
-import blenderproc as bproc  # type: ignore
+from telekinesis.illusion.blender.camera import settings as camera_settings
+from telekinesis.illusion.blender.sampling.shell import shell as sample_shell
 from mathutils import Matrix  # Only importable once bpy is loaded
 
 from telekinesis.illusion.core.context import Context
@@ -85,7 +86,7 @@ def shell_sampler(
     else:
         raise TypeError("`center` must be None, list[str], or np.ndarray.")
 
-    location = bproc.sampler.shell(
+    location = sample_shell(
         center=center,
         radius_min=radius_min,
         radius_max=radius_max,
@@ -100,7 +101,7 @@ def shell_sampler(
     inplane_rot = np.deg2rad(
         np.random.uniform(inplane_rot_min, inplane_rot_max)
     )
-    rotation_matrix = bproc.camera.rotation_from_forward_vec(
+    rotation_matrix = camera_settings.rotation_from_forward_vec(
         forward_vec, inplane_rot=inplane_rot
     )
     rotation_euler = Matrix(rotation_matrix.tolist()).to_euler("XYZ")
@@ -216,7 +217,7 @@ def volume_sampler(
     inplane_rot = np.deg2rad(
         np.random.uniform(inplane_rot_min, inplane_rot_max)
     )
-    rotation_matrix = bproc.camera.rotation_from_forward_vec(
+    rotation_matrix = camera_settings.rotation_from_forward_vec(
         forward_vec, inplane_rot=inplane_rot
     )
     rotation_euler = Matrix(rotation_matrix.tolist()).to_euler("XYZ")

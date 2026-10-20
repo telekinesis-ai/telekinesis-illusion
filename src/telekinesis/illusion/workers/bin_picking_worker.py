@@ -26,7 +26,8 @@ from loguru import logger
 from telekinesis.illusion.core.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
-from telekinesis.illusion.core.context import Context
+from telekinesis.illusion.core.scene import Scene as Context
+from telekinesis.illusion.core.engine import BlenderEngine, RenderConfig
 from telekinesis.illusion.types.camera import CameraConfig
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.types.light import Light
@@ -176,6 +177,9 @@ class BinPickingWorker:
         self._parse_tunable_cfg()
 
         # Prepare configs from spec
+        # TODO: Reuse blender.camera.settings.set_intrinsics_from_K_matrix
+        # for measured camera calibration and add_depth_of_field for the
+        # target lens's aperture and focus distance.
         self._camera_config = CameraConfig(**self._specs.get("camera", {}))
 
         # Create the context
@@ -201,6 +205,11 @@ class BinPickingWorker:
         self._add_randomizers()
 
         # Create the writer
+        # TODO: Reuse blender.camera.lens_distortion.set_lens_distortion
+        # before rendering and apply_lens_distortion on captured RGB and
+        # instance maps before COCO writing. Use the same mapping for both,
+        # nearest-neighbor interpolation for IDs, and derive masks/boxes
+        # from the remapped instance maps.
         self._output_base = None
         renderer = self._specs.get("renderer", {})
         self._writer = CocoWriter(
@@ -213,10 +222,21 @@ class BinPickingWorker:
         )
 
         # Create the data generator with context, randomizer and writer
+        # TODO: For RGB-D datasets, enable RenderConfig.depth and reuse
+        # blender.postprocessing.add_kinect_azure_noise/add_gaussian_shifts
+        # only when they match the target sensor. Preserve clean depth and
+        # write noisy sensor depth separately; CocoWriter writes neither.
         self._data_generator = SyntheticDataGenerator(
             context=self._context,
             randomizer=self._randomizer,
             writer=self._writer,
+            engine=BlenderEngine(
+                RenderConfig(
+                    samples=renderer.get("samples"),
+                    noise_threshold=renderer.get("noise_threshold"),
+                    device=renderer.get("device", "CUDA"),
+                )
+            ),
         )
 
         # Create shard merger and arguments for splitter
@@ -434,6 +454,24 @@ class BinPickingWorker:
         for k, v in md.items():
             logger.info(f"{k:<{width}} : {v}")
 
+    def _counts_for(self, names: list[str]) -> dict[str, tuple[int, int]]:
+        entries = {
+            entry["name"]: entry
+            for entry in self._specs.get("models", [])
+            + self._specs.get("distractors", [])
+        }
+        return {
+            name: (
+                entries[name]["instances"]["min"],
+                entries[name]["instances"]["max"],
+            )
+            for name in names
+        }
+
+    def prepare(self) -> None:
+        """Prepare linked pools before an interactive preview or generation."""
+        self._data_generator.prepare()
+
     def _add_models_to_context(self) -> None:
         """
         Add the listed models from the specs to the context.
@@ -447,8 +485,6 @@ class BinPickingWorker:
                 object_name=model["name"],
                 category_name=model["category_name"],
                 category_id=model["id"],
-                min_number_instances=model["instances"]["min"],
-                max_number_instances=model["instances"]["max"],
                 active_in_simulation=model["simulation"]["active"],
                 collision_shape=model["simulation"]["collision_shape"],
                 scale=model["scale"],
@@ -464,9 +500,7 @@ class BinPickingWorker:
             )
             # category_id may be auto-assigned by Context when the spec uses
             # null. Record the resolved ID that rendering will actually emit.
-            resolved_id = self._context.get_object_group(model["name"])[
-                0
-            ].get_category_id()
+            resolved_id = self._context.get_assets()[model["name"]].category_id
             id_supercategory_map[resolved_id] = model["supercategory"]
         # Convert from defaultdict back to normal dict
         self._model_supercatgory_map = dict(model_supercategory_map)
@@ -485,8 +519,6 @@ class BinPickingWorker:
                 object_name=distractor["name"],
                 category_name=distractor["category_name"],
                 category_id=distractor["id"],
-                min_number_instances=distractor["instances"]["min"],
-                max_number_instances=distractor["instances"]["max"],
                 active_in_simulation=distractor["simulation"]["active"],
                 collision_shape=distractor["simulation"]["collision_shape"],
                 scale=distractor["scale"],
@@ -498,9 +530,9 @@ class BinPickingWorker:
                 shading=distractor.get("shading", "FLAT"),
             )
             self._distractor_names.append(distractor["name"])
-            resolved_id = self._context.get_object_group(distractor["name"])[
-                0
-            ].get_category_id()
+            resolved_id = self._context.get_assets()[
+                distractor["name"]
+            ].category_id
             self._id_supercategory_map[resolved_id] = distractor[
                 "supercategory"
             ]
@@ -558,27 +590,17 @@ class BinPickingWorker:
 
         needs_reload = self._apply_model_scales()
 
-        # Per-asset instance counts are baked in at import: add_model() creates
-        # max-1 linked duplicates and refuses to re-import a name, so a changed
-        # count can only take effect by rebuilding the worker. Reported rather
-        # than applied, otherwise a raised maximum looks like it worked until
-        # ObjectInstanceRandomizer trips over the instances that don't exist.
+        # Capacity cannot grow in a prepared scene. Existing pools remain
+        # usable for appearance/pose edits and smaller instance ranges.
         for entry in self._specs.get("models", []) + self._specs.get(
             "distractors", []
         ):
             group = self._context.get_object_group(entry["name"])
-            if not group:
-                # Already reported by _apply_model_scales().
-                continue
-            loaded_min = group[0].min_number_instances
-            loaded_max = group[0].max_number_instances
-            wanted = entry["instances"]
-            if wanted["min"] != loaded_min or wanted["max"] != loaded_max:
+            if self._context._prepared and entry["instances"]["max"] > len(
+                group
+            ):
                 needs_reload.append(
-                    f"'{entry['name']}' instance count changed "
-                    f"({loaded_min}-{loaded_max} loaded, "
-                    f"{wanted['min']}-{wanted['max']} configured) - "
-                    "reload assets to apply it"
+                    f"'{entry['name']}' capacity increased; reload assets to apply it"
                 )
 
         # Instance counts - plain attributes, re-read on every randomize().
@@ -602,6 +624,12 @@ class BinPickingWorker:
             if node is None:
                 continue
             minimum, maximum = self._instance_bounds(role, *(legacy or ()))
+            wanted_counts = self._counts_for(node.target_objects)
+            if not self._context._prepared or all(
+                bounds[1] <= len(self._context.get_object_group(name))
+                for name, bounds in wanted_counts.items()
+            ):
+                node.counts = wanted_counts
             node.min_num_total_objects = minimum
             node.max_num_total_objects = maximum
 
@@ -1043,7 +1071,7 @@ class BinPickingWorker:
             "part", "min_number_visible_models", "max_number_visible_models"
         )
         object_instance_randomizer = ObjectInstanceRandomizer(
-            target_objects=self._model_supercatgory_map["part"],
+            counts=self._counts_for(self._model_supercatgory_map["part"]),
             min_num_total_objects=min_parts,
             max_num_total_objects=max_parts,
         )
@@ -1057,7 +1085,7 @@ class BinPickingWorker:
         # Add container instance ranodmizer
         min_containers, max_containers = self._instance_bounds("container")
         container_instance_randomizer = ObjectInstanceRandomizer(
-            target_objects=self._model_supercatgory_map["container"],
+            counts=self._counts_for(self._model_supercatgory_map["container"]),
             min_num_total_objects=min_containers,
             max_num_total_objects=max_containers,
         )
@@ -1124,7 +1152,7 @@ class BinPickingWorker:
                 "max_number_visible_distractors",
             )
             distractor_instance_randomizer = ObjectInstanceRandomizer(
-                target_objects=self._distractor_names,
+                counts=self._counts_for(self._distractor_names),
                 min_num_total_objects=min_distractors,
                 max_num_total_objects=max_distractors,
             )
@@ -1146,6 +1174,11 @@ class BinPickingWorker:
 
         # Add material randomizers. Rule mode permits models with different
         # imported slot layouts to receive independent material assignments.
+        # TODO: Use the existing material rules with PrincipledMaterial and
+        # SurfaceImperfections for plausible roughness, scratches and wear;
+        # see examples/preview_bin_surface_imperfections.py. Reuse the local
+        # Material.infuse_texture/infuse_material helpers for further layers,
+        # duplicating shared materials before per-instance shader edits.
         if self._material_rules is not None:
             for index, rule in enumerate(self._material_rules):
                 name, targets, config = self._parse_material_rule(index, rule)
@@ -1202,6 +1235,9 @@ class BinPickingWorker:
                 )
 
         # Add background randomizer
+        # TODO: Extend HDRI variation using Background's existing mapping
+        # rotation and background strength nodes, alongside image selection,
+        # to vary reflection direction and illumination without new loaders.
         background_categories = self._background_cfg.get("categories")
         if background_categories:
             background_randomizer = BackgroundRandomizer(
@@ -1239,6 +1275,23 @@ class BinPickingWorker:
         )
 
         # Add camera pose randomizer
+        # TODO: Run camera validation in the generator after physics settles
+        # and before rendering. Refresh evaluated geometry and reuse
+        # blender.types.mesh_object.create_bvh_tree_multi_objects for the
+        # visible parts, bin and distractors. Exclude inactive pool instances
+        # and invisible physics helpers from all visibility checks.
+        # TODO: Recompute object-relative look-at targets from settled poses
+        # before evaluating each camera view.
+        # TODO: Reuse blender.camera.validation.perform_obstacle_in_view_check
+        # for minimum viewing distance and visible_objects to check whether
+        # target parts are visible from each candidate camera pose.
+        # TODO: Make acceptance follow the intended visibility, cropping and
+        # occlusion distribution; do not require every part to be fully
+        # visible. Ray-grid checks are approximate: use rendered instance
+        # masks when exact visible pixel areas are required.
+        # TODO: Resample only failed camera views with a bounded retry budget
+        # and report exhaustion. Preserve the settled arrangement and accepted
+        # views; randomized views of one arrangement remain separate images.
         cpr_cfg = self._specs.get(
             "camera_pose_randomizer", DEFAULT_CAMERA_POSE_RANDOMIZER_CFG
         )
@@ -1286,74 +1339,82 @@ class BinPickingWorker:
         else:
             self._output_base = Path.cwd() / "output" / dataset_name
 
-        for i in range(self._num_shards):
-            current_shard_size = min(shard_size, remaining_images)
-            shard_name = name_template.format(
-                date=datetime.now().strftime("%Y%m%d_%H%M%S"),
-                uuid=uuid4().hex[:8],
-            )
-            shard_dir = self._output_base / shard_name
-            self._writer.set_output_dir(shard_dir)
-
-            logger.info(
-                f"[shard {i + 1}/{self._num_shards}] "
-                f"Generating {current_shard_size} scenes -> {shard_dir.name}"
-            )
-
-            self._data_generator.generate(
-                num_images=current_shard_size,
-                simulate_physics=self._physics_simulator_params["active"],
-                min_simulation_time_range=tuple(
-                    self._physics_simulator_params["min_simulation_time_range"]
-                ),
-                max_simulation_time_range=tuple(
-                    self._physics_simulator_params["max_simulation_time_range"]
-                ),
-                check_object_interval=self._physics_simulator_params[
-                    "check_object_interval"
-                ],
-                object_stopped_location_threshold=self._physics_simulator_params[
-                    "object_stopped_location_threshold"
-                ],
-                object_stopped_rotation_threshold=self._physics_simulator_params[
-                    "object_stopped_rotation_threshold"
-                ],
-                substeps_per_frame=self._physics_simulator_params[
-                    "substeps_per_frame"
-                ],
-                solver_iters=self._physics_simulator_params["solver_iters"],
-                verbose=self._physics_simulator_params["verbose"],
-                use_volume_com=self._physics_simulator_params["use_volume_com"],
-                clean_up_scene=self._physics_simulator_params["clean_up_scene"],
-                physics_catch_plane={
-                    **self._physics_simulator_params["catch_plane"],
-                    "container_names": self._model_supercatgory_map[
-                        "container"
-                    ],
-                    "tracked_object_names": [
-                        *self._model_supercatgory_map.get("part", []),
-                        *self._distractor_names,
-                    ],
-                },
-            )
-            remaining_images -= current_shard_size
-
-            output_size = self._get_output_size_bytes()
-            logger.info(
-                f"[shard {i + 1}/{self._num_shards}] "
-                f"Current output size: {output_size / (1024**3):.2f} GB "
-                f"(limit: {self._max_output_size_bytes / (1024**3):.1f} GB)"
-            )
-            if output_size >= self._max_output_size_bytes:
-                logger.warning(
-                    f"Output size limit reached "
-                    f"({output_size / (1024**3):.2f} GB >= "
-                    f"{self._max_output_size_bytes / (1024**3):.1f} GB). "
-                    f"Stopping after shard {i + 1}/{self._num_shards}."
+        try:
+            for i in range(self._num_shards):
+                current_shard_size = min(shard_size, remaining_images)
+                shard_name = name_template.format(
+                    date=datetime.now().strftime("%Y%m%d_%H%M%S"),
+                    uuid=uuid4().hex[:8],
                 )
-                break
+                shard_dir = self._output_base / shard_name
+                self._writer.set_output_dir(shard_dir)
 
-        self._data_generator.clean_up()
+                logger.info(
+                    f"[shard {i + 1}/{self._num_shards}] "
+                    f"Generating {current_shard_size} scenes -> {shard_dir.name}"
+                )
+
+                self._data_generator.generate(
+                    num_images=current_shard_size,
+                    simulate_physics=self._physics_simulator_params["active"],
+                    min_simulation_time_range=tuple(
+                        self._physics_simulator_params[
+                            "min_simulation_time_range"
+                        ]
+                    ),
+                    max_simulation_time_range=tuple(
+                        self._physics_simulator_params[
+                            "max_simulation_time_range"
+                        ]
+                    ),
+                    check_object_interval=self._physics_simulator_params[
+                        "check_object_interval"
+                    ],
+                    object_stopped_location_threshold=self._physics_simulator_params[
+                        "object_stopped_location_threshold"
+                    ],
+                    object_stopped_rotation_threshold=self._physics_simulator_params[
+                        "object_stopped_rotation_threshold"
+                    ],
+                    substeps_per_frame=self._physics_simulator_params[
+                        "substeps_per_frame"
+                    ],
+                    solver_iters=self._physics_simulator_params["solver_iters"],
+                    verbose=self._physics_simulator_params["verbose"],
+                    use_volume_com=self._physics_simulator_params[
+                        "use_volume_com"
+                    ],
+                    clean_up_scene=False,
+                    physics_catch_plane={
+                        **self._physics_simulator_params["catch_plane"],
+                        "container_names": self._model_supercatgory_map[
+                            "container"
+                        ],
+                        "tracked_object_names": [
+                            *self._model_supercatgory_map.get("part", []),
+                            *self._distractor_names,
+                        ],
+                    },
+                )
+                remaining_images -= current_shard_size
+
+                output_size = self._get_output_size_bytes()
+                logger.info(
+                    f"[shard {i + 1}/{self._num_shards}] "
+                    f"Current output size: {output_size / (1024**3):.2f} GB "
+                    f"(limit: {self._max_output_size_bytes / (1024**3):.1f} GB)"
+                )
+                if output_size >= self._max_output_size_bytes:
+                    logger.warning(
+                        f"Output size limit reached "
+                        f"({output_size / (1024**3):.2f} GB >= "
+                        f"{self._max_output_size_bytes / (1024**3):.1f} GB). "
+                        f"Stopping after shard {i + 1}/{self._num_shards}."
+                    )
+                    break
+
+        finally:
+            self._data_generator.clean_up()
 
     def merge_shards(self, preview: bool = True) -> None:
         """

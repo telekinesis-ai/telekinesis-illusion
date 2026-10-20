@@ -21,13 +21,13 @@ isolate_user_extensions()
 import bpy
 import mathutils
 from mathutils import Matrix, Vector, Euler
-import blenderproc as bproc
-from blenderproc.python.types.MeshObjectUtility import (
+
+from telekinesis.illusion.blender.types.mesh_object import (
     MeshObject,
     get_all_mesh_objects,
 )
-from blenderproc.python.utility.CollisionUtility import CollisionUtility
-from blenderproc.python.types.EntityUtility import Entity
+from telekinesis.illusion.blender.collision import CollisionUtility
+from telekinesis.illusion.blender.types.entity import Entity
 
 from telekinesis.illusion.types.distribution import Uniform, uniform
 from telekinesis.illusion.core.context import Context
@@ -84,6 +84,13 @@ class RandomizerNode(ABC):
     """
     Declares the method for executing the randomization.
     """
+
+    def prepare(self, context: Context) -> None:
+        """Load resources needed by this node before the sample loop."""
+
+    def required_instances(self) -> dict[str, int]:
+        """Finite upper bounds for additional instances; modifiers return {}."""
+        return {}
 
     # NOTE: Maybe check whether it makes more sense to move the context
     # higher in the hierarchy, e.g. to the Randomizer class and provide the
@@ -181,6 +188,9 @@ class ObjectPoseRandomizer(RandomizerNode):
                 for obj in context.get_objects().values()
                 if not obj.is_hidden()
             ]
+
+        if not visible_target_objects:
+            return
 
         surface_name = self._sample_on_surface
         if surface_name is None and self._surface_name_resolver is not None:
@@ -319,7 +329,8 @@ class ObjectPoseRandomizer(RandomizerNode):
                     break
 
             # After placing an object, we will check collisions with it
-            cur_objects_to_check_collisions.append(mesh_obj)
+            if no_collision:
+                cur_objects_to_check_collisions.append(mesh_obj)
 
             if no_collision:
                 logger.info(
@@ -335,11 +346,7 @@ class ObjectPoseRandomizer(RandomizerNode):
                 logger.warning("Hiding object for this render.")
                 # Hide object, disable rigid body and remove from the visible
                 # object names
-                mesh_obj.hide()
-                obj.disable_rigid_body()
-                if obj.get_name() in visible_object_names:
-                    visible_object_names.remove(obj.get_name())
-                context.set_visible_object_names(visible_object_names)
+                context.deactivate(obj)
 
                 if mode_on_failure == "initial_pose":
                     obj.set_location(initial_location)
@@ -531,7 +538,7 @@ class ObjectPoseRandomizer(RandomizerNode):
 
             if not placed_successfully:
                 logger.info(f"Giving up on {obj.get_name()}, hiding...")
-                obj.hide(True)
+                context.deactivate(obj)
                 obj.set_local2world_mat(initial_pose)
 
         return placed_objects
@@ -646,148 +653,66 @@ class _OnSurfaceSampler:
 
 
 class ObjectInstanceRandomizer(RandomizerNode):
-    """
-    Class for randomizing the number of instances in the scene.
+    """Sample bounded counts and activate unused instances from scene pools.
+
+    Multiple nodes requesting the same model have additive capacity and select
+    disjoint instances. Pose/material nodes don't reserve additional objects.
     """
 
     def __init__(
         self,
-        target_objects: List[str] = [],
+        counts: Mapping[str, tuple[int, int]],
         min_num_total_objects: int | None = None,
         max_num_total_objects: int | None = None,
-    ) -> None:
-        """
-        Initialize the internal state.
+    ):
+        from telekinesis.illusion.randomizer.instance_counts import (
+            validate_counts,
+        )
 
-        Args:
-            target_objects: List[str]
-                A list of the target object names for which we want to randomize
-                the number of instances.
-            min_num_total_objects (int or None):
-                Minimum number of total objects visible in the scene. If None,
-                the minimum number of total objects consists of the sum of the
-                minimum number of the target_objects instances. Else, the
-                randomizer guarantees to make at least the provided minimum
-                number of total objects visible in the scene.
-            max_num_total_objects: int or None
-                Maximum number of total objects visible in the scene. If None,
-                the maximum number of total objects consists of the sum of the
-                maximum number of the target_objects instances. Else, the
-                randomizer guarantees to have maximum the provided number of
-                total objects visible in the scene.
-
-        """
-        if (
-            min_num_total_objects is not None
-            and max_num_total_objects is not None
-            and min_num_total_objects > max_num_total_objects
-        ):
-            raise ValueError(
-                "min_num_total_objects should be smaller than "
-                "max_num_total_objects"
-            )
-
-        self.target_objects = target_objects
+        self.counts = {name: tuple(bounds) for name, bounds in counts.items()}
+        self.target_objects = list(self.counts)
         self.min_num_total_objects = min_num_total_objects
         self.max_num_total_objects = max_num_total_objects
+        validate_counts(
+            self.counts, min_num_total_objects, max_num_total_objects
+        )
+
+    def required_instances(self) -> dict[str, int]:
+        from telekinesis.illusion.randomizer.instance_counts import (
+            validate_counts,
+        )
+
+        _, total_max = validate_counts(
+            self.counts, self.min_num_total_objects, self.max_num_total_objects
+        )
+        minimum_sum = sum(bounds[0] for bounds in self.counts.values())
+        return {
+            name: int(min(bounds[1], total_max - minimum_sum + bounds[0]))
+            for name, bounds in self.counts.items()
+        }
 
     def randomize(self, context: Context) -> None:
-        """
-        Randomized the pose of the target objects by sampling their pose with
-        'self.pose_sampling_function' and positioning them wihtout collision
-        in the scene.
+        from telekinesis.illusion.randomizer.instance_counts import (
+            sample_counts,
+        )
 
-        Args:
-            context: Context
-                The context where the target objects are.
-        """
-        if self.target_objects:
-            object_group = context._object_groups
-            target_object_group = {
-                target_name: list(object_group[target_name])
-                for target_name in self.target_objects
-            }
-            min_per_obj: dict[str, int] = {}
-            max_per_obj: dict[str, int] = {}
-
-            # Shuffle each object's instances so we sample uniformly within-object
-            for obj_name, instances in target_object_group.items():
-                # assuming these are identical across instances of the same object type
-                min_per_obj[obj_name] = instances[0].min_number_instances
-                # Equals len(instances): add_model() creates exactly
-                # max_number_instances-1 linked duplicates alongside the
-                # original.
-                max_per_obj[obj_name] = instances[0].max_number_instances
-                random.shuffle(instances)
-
-            objs = list(target_object_group.keys())
-
-            # Global total selection
-            min_total = (
-                self.min_num_total_objects
-                if self.min_num_total_objects is not None
-                else sum(min_per_obj.values())
-            )
-            max_total = (
-                self.max_num_total_objects
-                if self.max_num_total_objects is not None
-                else sum(max_per_obj.values())
-            )
-            loaded_total = sum(max_per_obj.values())
-            max_total = min(max_total, loaded_total)
-
-            if min_total > max_total:
-                raise ValueError(
-                    f"min_total_objects ({min_total}) > max_total_objects "
-                    f"({max_total}): only {loaded_total} instance(s) are "
-                    f"loaded {max_per_obj}. Lower the minimum, or raise the "
-                    "assets' max instances and reload the models - instance "
-                    "counts are baked in when the models are imported."
+        selected = sample_counts(
+            self.counts, self.min_num_total_objects, self.max_num_total_objects
+        )
+        active = set(context.get_visible_object_names())
+        for name, count in selected.items():
+            available = [
+                obj
+                for obj in context.get_object_group(name)
+                if obj.get_name() not in active
+            ]
+            if count > len(available):
+                raise RuntimeError(
+                    f"Insufficient prepared instances for {name!r}."
                 )
-
-            total = random.randint(min_total, max_total)
-
-            # Feasibility checks
-            min_sum = 0
-            for obj_name in objs:
-                mn = min_per_obj.get(obj_name, 0)
-                mx = max_per_obj[obj_name]
-                if mn > mx:
-                    raise ValueError(f"{obj_name}: min {mn} > max {mx}")
-                min_sum += mn
-
-            if min_sum > total:
-                raise ValueError(
-                    f"Sum of minima ({min_sum}) exceeds total ({total})"
-                )
-
-            # Allocate minima: Either the min or 0 if not present
-            k = {obj_name: min_per_obj.get(obj_name, 0) for obj_name in objs}
-            remaining = total - sum(k.values())
-
-            # Distribute remaining slots fairly (balanced by fill ratio)
-            while remaining > 0:
-                candidates = [o for o in objs if k[o] < max_per_obj[o]]
-                if not candidates:
-                    break
-
-                # Tie-break randomness, then pick lowest fill ratio
-                random.shuffle(candidates)
-                chosen = min(candidates, key=lambda o: k[o] / max_per_obj[o])
-
-                k[chosen] += 1
-                remaining -= 1
-
-            # Materialize sampled instances (lists already shuffled)
-            currently_visible_objects = list(context.get_visible_object_names())
-            for obj_name in objs:
-                for obj in target_object_group[obj_name][: k[obj_name]]:
-                    obj.enable_rigid_body()
-                    obj.hide(False)
-                    currently_visible_objects.append(obj.get_name())
-            context.set_visible_object_names(currently_visible_objects)
-        else:
-            raise RuntimeError("No target objects to randomize.")
+            random.shuffle(available)
+            for obj in available[:count]:
+                context.activate(obj)
 
 
 class BackgroundRandomizer(RandomizerNode):
@@ -927,7 +852,7 @@ class MaterialRandomizer(RandomizerNode):
     def __init__(
         self,
         target_objects: list[str] | MaterialTarget,
-        context: Context,
+        context: Context | None = None,
         types: list[str] | None = None,
         *,
         mode: MaterialMode | None = None,
@@ -973,9 +898,17 @@ class MaterialRandomizer(RandomizerNode):
             self._slot_pools = (
                 [(AllSlots(), self._pool)] if self._mode == "slots" else []
             )
+        self._prepared_manager = None
+        if context is not None:
+            self.prepare(context)
+
+    def prepare(self, context: Context) -> None:
+        if self._prepared_manager is context.material_manager:
+            return
         pools = [p for _, p in self._slot_pools] or [self._pool]
         for pool in pools:
             pool.prepare(context.material_manager)
+        self._prepared_manager = context.material_manager
 
     @classmethod
     def from_config(cls, target_objects, context, config):
@@ -1018,6 +951,7 @@ class MaterialRandomizer(RandomizerNode):
         return self._types
 
     def randomize(self, context: Context) -> None:
+        self.prepare(context)
         targets = self._targets(context)
         # Resolve every target before sampling or mutation, so bad selectors
         # cannot leave a partially randomized asset behind.

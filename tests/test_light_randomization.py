@@ -1,3 +1,6 @@
+from telekinesis.illusion.core.engine import BlenderEngine
+from telekinesis.illusion.types.render_result import RenderResult
+
 """Real Blender light properties, sampling and conservative pose clearance."""
 
 import math
@@ -12,7 +15,11 @@ isolate_user_extensions()
 
 import bpy
 
-import blenderproc as bproc
+from telekinesis.illusion.blender.types import mesh_object
+from telekinesis.illusion.blender import physics
+from telekinesis.illusion.blender.camera import settings as camera_settings
+from telekinesis.illusion.blender import math as blender_math
+from telekinesis.illusion.blender.rendering import renderer
 from telekinesis.illusion.core.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
@@ -189,7 +196,7 @@ def test_area_clearance_includes_full_emitter(
 
 def test_pose_retries_inside_near_and_emitter_overlap(context):
     # Deliberately outside Context: scenery must also prevent unsafe placement.
-    obstacle = bproc.object.create_primitive(
+    obstacle = mesh_object.create_primitive(
         "CUBE", location=(2, 0, 0), scale=(2, 1, 1)
     )
     light = context.add_light("key", "AREA", shape="DISK", size=1)
@@ -214,7 +221,7 @@ def test_pose_retries_inside_near_and_emitter_overlap(context):
 
 
 def test_pose_failure_does_not_change_any_target(context):
-    bproc.object.create_primitive("CUBE")
+    mesh_object.create_primitive("CUBE")
     lights = [context.add_light(n, location=(4, 0, 0)) for n in ("a", "b")]
     samples = iter([(5, 0, 0), (0, 0, 0), (0, 0, 0)])
     node = LightPoseRandomizer(
@@ -227,7 +234,7 @@ def test_pose_failure_does_not_change_any_target(context):
 
 
 def test_sun_location_does_not_require_clearance(context):
-    bproc.object.create_primitive("CUBE")
+    mesh_object.create_primitive("CUBE")
     light = context.add_light("sun", "SUN")
     LightPoseRandomizer(
         lambda **_: ((0, 0, 0), (0.2, 0.3, 0.4)), max_tries=1
@@ -292,7 +299,7 @@ def test_shell_sampler_and_randomizer_chain(context):
 def test_light_pose_pass_uses_moved_geometry_and_respects_disabled_nodes(
     context,
 ):
-    obstacle = bproc.object.create_primitive("CUBE")
+    obstacle = mesh_object.create_primitive("CUBE")
     light = context.add_light("key", power=10, radius=0.1)
     locations = iter([(3, 0, 0), (3, 0, 0), (6, 0, 0)])
     randomizer = Randomizer()
@@ -317,7 +324,7 @@ def test_light_pose_pass_uses_moved_geometry_and_respects_disabled_nodes(
 def test_generation_rechecks_light_clearance_after_physics(
     context, monkeypatch
 ):
-    obstacle = bproc.object.create_primitive("CUBE")
+    obstacle = mesh_object.create_primitive("CUBE")
     light = context.add_light("key", radius=0.1)
     locations = iter([(3, 0, 0), (3, 0, 0), (6, 0, 0)])
     randomizer = Randomizer()
@@ -329,20 +336,20 @@ def test_generation_rechecks_light_clearance_after_physics(
         np.testing.assert_allclose(light.get_location(), (3, 0, 0))
         obstacle.set_location((3, 0, 0))
 
-    def render(**kwargs):
+    def render(self, scene, **kwargs):
         np.testing.assert_allclose(light.get_location(), (6, 0, 0))
-        return {}
+        return RenderResult({}, {}, ({},))
 
     monkeypatch.setattr(
-        bproc.object, "simulate_physics_and_fix_final_poses", simulate
+        physics, "simulate_physics_and_fix_final_poses", simulate
     )
-    monkeypatch.setattr(bproc.renderer, "render", render)
-    monkeypatch.setattr(bproc.renderer, "set_render_devices", lambda **_: None)
+    monkeypatch.setattr(BlenderEngine, "render", render)
+    monkeypatch.setattr(renderer, "set_render_devices", lambda **_: None)
     monkeypatch.setattr(
-        bproc.renderer, "enable_segmentation_output", lambda **_: None
+        renderer, "enable_segmentation_output", lambda **_: None
     )
     writer = SimpleNamespace(
-        get_segmentation_output_config=dict, write=lambda **_: 1
+        get_segmentation_output_config=dict, write=lambda result: 1
     )
     SyntheticDataGenerator(context, randomizer, writer).generate(
         num_images=1, simulate_physics=True, clean_up_scene=False

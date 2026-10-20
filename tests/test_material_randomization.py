@@ -11,9 +11,13 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 isolate_user_extensions()
 
 import bpy
-from blenderproc.python.types.MeshObjectUtility import MeshObject
+from telekinesis.illusion.blender.types.mesh_object import MeshObject
 
-import blenderproc as bproc
+from telekinesis.illusion.blender.types import mesh_object
+from telekinesis.illusion.blender import physics
+from telekinesis.illusion.blender.camera import settings as camera_settings
+from telekinesis.illusion.blender import math as blender_math
+from telekinesis.illusion.blender.rendering import renderer
 from telekinesis.illusion.randomizer.materials import (
     MaterialTarget,
 )
@@ -151,9 +155,8 @@ def test_preprocessing_and_linked_duplicates(context, tmp_path, policy, slots):
     path.with_suffix(".mtl").write_text(
         "newmtl a\nKd 1 0 0\nnewmtl b\nKd 0 1 0\n"
     )
-    context.add_model(
-        str(path), "part", max_number_instances=2, material_preprocessing=policy
-    )
+    context.add_model(str(path), "part", material_preprocessing=policy)
+    context.prepare({"part": 2})
     obj, duplicate = context.get_object_group("part")
     assert len(assigned(obj)) == slots
     original = assigned(duplicate)
@@ -781,6 +784,7 @@ def test_uv_mapping_projection_is_configurable(
     )
 
     context.add_model(str(path), "part", uv_mapping=projection)
+    context.prepare({"part": 1})
 
     assert calls == [(projection, True)]
 
@@ -795,6 +799,8 @@ def test_real_asset_modes(context, material_model_path):
         f"Unavailable model: {material_model_path}"
     )
     context.add_model(str(material_model_path), "model", preprocess_model=False)
+    context.add_model(str(material_model_path), "legacy", preprocess_model=True)
+    context.prepare({"model": 1, "legacy": 1})
     obj = context.get_object_group("model")[0]
     original = assigned(obj)
     face_indices = [
@@ -843,7 +849,6 @@ def test_real_asset_modes(context, material_model_path):
     assert len(set(assigned(obj))) == 1
 
     # The existing load/preprocess/PBR workflow still creates exactly one slot.
-    context.add_model(str(material_model_path), "legacy", preprocess_model=True)
     obj = context.get_object_group("legacy")[0]
     assert len(assigned(obj)) == 1
     assert obj.get_material_slot_names()[0].startswith("DummyMaterial")
@@ -909,14 +914,14 @@ def test_aliasing_selectors_fail_before_mutation(context):
 
 
 def test_imported_mesh_and_linked_instances_survive_undo(context):
-    from blenderproc.python.types.StructUtilityFunctions import get_instances
-    from blenderproc.python.utility.Utility import UndoAfterExecution
+    from telekinesis.illusion.blender.types.references import get_instances
+    from telekinesis.illusion.blender.undo import UndoAfterExecution
 
     context.add_model(
         str(ROOT / "assets/models/mechanical_parts/gearwheel_1.glb"),
         "part",
-        max_number_instances=3,
     )
+    context.prepare({"part": 3})
     objects = context.get_object_group("part")
     for obj in objects:
         assert any(ref is obj.get_object() for _, ref in get_instances())
@@ -953,10 +958,10 @@ def test_quickstart_models_survive_repeated_physics(context):
         context.add_model(
             str(ROOT / "assets/models" / path),
             name,
-            max_number_instances=count,
             active_in_simulation=active,
             collision_shape=shape,
         )
+    context.prepare({"part_1": 3, "part_2": 1, "crate_2": 1})
     objects = list(context.get_objects().values())
     randomizer = MaterialRandomizer(["part_"], context, types=["metal"])
     for _ in range(2):
@@ -967,7 +972,7 @@ def test_quickstart_models_survive_repeated_physics(context):
             obj.hide(False)
             obj.enable_rigid_body()
         randomizer.randomize(context)
-        bproc.object.simulate_physics_and_fix_final_poses(
+        physics.simulate_physics_and_fix_final_poses(
             min_simulation_time=0.05,
             max_simulation_time=0.1,
             check_object_interval=0.05,

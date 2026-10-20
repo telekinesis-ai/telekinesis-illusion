@@ -32,7 +32,9 @@ def test_quickstart_runs_exit_handlers(
 
         script, cleanup_marker, temporary_cleanup_marker = sys.argv[1:]
         module_exports = {
-            "core.context": "Context",
+            "core.scene": "Scene",
+            "core.engine": "BlenderEngine RenderConfig PhysicsConfig",
+            "types.camera": "CameraConfig",
             "core.synthetic_data_generator": "SyntheticDataGenerator",
             "randomizer.randomizer": "Randomizer",
             "randomizer.randomizer_node": (
@@ -44,7 +46,6 @@ def test_quickstart_runs_exit_handlers(
             "types.distribution": "uniform",
             "types.object": "Object",
             "utils.assets": "resolve_asset_dir",
-            "viewer.shard_viewer": "view_coco",
             "writer.writer": "CocoWriter",
         }
         for suffix, exports in module_exports.items():
@@ -62,7 +63,7 @@ def test_quickstart_runs_exit_handlers(
         generator.generate.side_effect = lambda **kwargs: print(
             "Generation completed", flush=True
         )
-        initializer = ModuleType("blenderproc.python.utility.Initializer")
+        initializer = ModuleType("telekinesis.illusion.blender.initialization")
         initializer.clean_temp_dir = lambda: Path(temporary_cleanup_marker).touch()
         sys.modules[initializer.__name__] = initializer
         atexit.register(lambda: Path(cleanup_marker).touch())

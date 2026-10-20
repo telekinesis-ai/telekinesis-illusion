@@ -52,9 +52,24 @@ def main(argv: list[str] | None = None) -> None:
         help="Open the merged dataset in the FiftyOne viewer after merging.",
     )
 
+    parser.add_argument(
+        "--resolution", type=int, help="Override both image dimensions."
+    )
+    parser.add_argument(
+        "--samples", type=int, help="Override Cycles sample count."
+    )
+    parser.add_argument(
+        "--seed", type=int, help="Set Python and NumPy random seeds."
+    )
     args = parser.parse_args(argv)
+    if args.seed is not None:
+        import random
+        import numpy as np
 
-    for name in ("num_images", "shard_size"):
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+
+    for name in ("num_images", "shard_size", "resolution", "samples"):
         value = getattr(args, name)
         if value is not None and value < 1:
             parser.error(f"--{name.replace('_', '-')} must be positive")
@@ -75,6 +90,12 @@ def main(argv: list[str] | None = None) -> None:
 
     with spec_path.open(encoding="utf-8") as file:
         specs = yaml.safe_load(file)
+    if args.resolution is not None:
+        specs.setdefault("camera", {}).update(
+            image_width=args.resolution, image_height=args.resolution
+        )
+    if args.samples is not None:
+        specs.setdefault("renderer", {})["samples"] = args.samples
     metadata = specs["metadata"]
     if args.dataset_name is not None:
         metadata["dataset_name"] = args.dataset_name

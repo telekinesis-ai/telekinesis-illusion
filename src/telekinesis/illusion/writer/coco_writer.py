@@ -11,14 +11,7 @@ from skimage import measure
 import cv2
 from pycocotools import mask as mask_utils
 
-from telekinesis.illusion.utils.blender_env import isolate_user_extensions
-
-# Must run before bpy is imported. See blender_env.py for why.
-isolate_user_extensions()
-
-import bpy
-
-from blenderproc.python.utility.LabelIdMapping import LabelIdMapping
+from telekinesis.illusion.blender.labels import LabelIdMapping
 
 
 def write_coco_annotations(
@@ -85,22 +78,35 @@ def write_coco_annotations(
         with open(coco_annotations_path, "r", encoding="utf-8") as fp:
             existing_coco_annotations = json.load(fp)
         image_offset = (
-            max(image["id"] for image in existing_coco_annotations["images"])
+            max(
+                (image["id"] for image in existing_coco_annotations["images"]),
+                default=-1,
+            )
             + 1
         )
     else:
         image_offset = 0
         existing_coco_annotations = None
 
+    # Check the taxonomy before writing images into an existing shard.
+    if existing_coco_annotations and label_mapping is not None:
+        for category in existing_coco_annotations["categories"]:
+            cid, name = category["id"], category["name"]
+            if (
+                label_mapping.has_id(cid)
+                and label_mapping.label_from_id(cid) != name
+                or label_mapping.has_label(name)
+                and label_mapping.id_from_label(name) != cid
+            ):
+                raise ValueError(
+                    f"Incompatible category mapping: {cid} -> {name!r}"
+                )
+
     # collect all RGB paths
     new_coco_image_paths = []
 
     # for each rendered frame
-    for frame in range(
-        bpy.context.scene.frame_start, bpy.context.scene.frame_end
-    ):
-        color_rgb = colors[frame - bpy.context.scene.frame_start]
-
+    for frame, color_rgb in enumerate(colors):
         # Reverse channel order for opencv
         color_bgr = color_rgb.copy()
         color_bgr[..., :3] = color_bgr[..., :3][..., ::-1]
@@ -143,21 +149,38 @@ def write_coco_annotations(
         image_metadata,
     )
 
+    # Keep the complete registered taxonomy, including classes absent in a view.
+    if label_mapping is not None:
+        categories = {
+            category["id"]: category for category in coco_output["categories"]
+        }
+        for cid, name in label_mapping._id_label_map.items():
+            categories.setdefault(
+                cid,
+                {
+                    "id": cid,
+                    "name": name,
+                    "supercategory": (supercategory_map or {}).get(
+                        cid, "coco_annotations"
+                    ),
+                },
+            )
+        coco_output["categories"] = list(categories.values())
     print("Writing coco annotations to " + coco_annotations_path)
     with open(coco_annotations_path, "w", encoding="utf-8") as fp:
         json.dump(coco_output, fp, indent=indent)
 
 
-def binary_mask_to_rle(binary_mask: np.ndarray) -> Dict[str, Union[str, List[int]]]:
+def binary_mask_to_rle(
+    binary_mask: np.ndarray,
+) -> Dict[str, Union[str, List[int]]]:
     """Encode a binary mask as compressed, JSON-safe COCO RLE.
 
     ``pycocotools`` performs the pixel scan in compiled code. Its encoder
     returns the compressed counts as bytes, which are converted to ASCII for
     JSON serialization.
     """
-    rle = mask_utils.encode(
-        np.asfortranarray(binary_mask, dtype=np.uint8)
-    )
+    rle = mask_utils.encode(np.asfortranarray(binary_mask, dtype=np.uint8))
     rle["counts"] = rle["counts"].decode("ascii")
     rle["size"] = [int(value) for value in rle["size"]]
     return rle
@@ -286,12 +309,14 @@ class _CocoWriterUtility:
             image_path,
             instance_2_category_map,
             inst_attribute_map,
-        ) in enumerate(zip(
-            inst_segmaps,
-            image_paths,
-            instance_2_category_maps,
-            inst_attribute_maps,
-        )):
+        ) in enumerate(
+            zip(
+                inst_segmaps,
+                image_paths,
+                instance_2_category_maps,
+                inst_attribute_maps,
+            )
+        ):
             # Add coco info for image
             image_id = len(images)
             image_info = _CocoWriterUtility.create_image_info(
@@ -383,7 +408,10 @@ class _CocoWriterUtility:
             if compose_parent_masks:
                 for child_idx, child in visible_attributes.items():
                     parent_name = child.get("annotation_parent")
-                    if not parent_name or child_idx not in annotation_by_instance:
+                    if (
+                        not parent_name
+                        or child_idx not in annotation_by_instance
+                    ):
                         continue
                     parent_idx = name_to_instance.get(parent_name)
                     parent_annotation = annotation_by_instance.get(parent_idx)
@@ -426,7 +454,10 @@ class _CocoWriterUtility:
 
         # Concatenate images sections
         image_id_offset = (
-            max(image["id"] for image in existing_coco_annotations["images"])
+            max(
+                (image["id"] for image in existing_coco_annotations["images"]),
+                default=-1,
+            )
             + 1
         )
         for image in new_coco_annotations["images"]:

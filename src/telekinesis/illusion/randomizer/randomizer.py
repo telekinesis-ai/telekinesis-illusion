@@ -275,6 +275,33 @@ class Randomizer:
             name: entry["config"].stage for name, entry in self._node.items()
         }
 
+    def prepare(self, context: Context) -> None:
+        for name in self._topological_order():
+            entry = self._node[name]
+            if entry["config"].enabled:
+                entry["randomizer"].prepare(context)
+
+    def required_instances(self) -> dict[str, int]:
+        """Sum enabled DAG nodes once in topological order; no Blender work."""
+        required: dict[str, int] = {}
+        for name in self._topological_order():
+            entry = self._node[name]
+            if not entry["config"].enabled:
+                continue
+            for model, count in (
+                entry["randomizer"].required_instances().items()
+            ):
+                if (
+                    isinstance(count, bool)
+                    or not isinstance(count, int)
+                    or count < 0
+                ):
+                    raise ValueError(
+                        f"{name}: declare a finite integer capacity for {model!r}."
+                    )
+                required[model] = required.get(model, 0) + count
+        return required
+
     def randomize(
         self,
         context: Context,

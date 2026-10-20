@@ -1,52 +1,36 @@
-"""Shared Blender lifecycle and optional model paths for integration tests."""
+"""Fresh bpy scenes; BlenderProc imports are prohibited in all tests."""
 
 import gc
+import sys
 from pathlib import Path
-
+import importlib.abc
 import pytest
 
 
-@pytest.fixture(scope="session")
-def initialized_blender():
-    """Initialize BlenderProc once across all in-process integration tests."""
-    from telekinesis.illusion.utils.blender_env import isolate_user_extensions
+class RejectBlenderProc(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "blenderproc" or fullname.startswith("blenderproc."):
+            raise RuntimeError(
+                "The new implementation must not import BlenderProc"
+            )
 
-    isolate_user_extensions()
-    import blenderproc as bproc
 
-    bproc.init()
-    yield bproc
-    bproc.clean_up()
+sys.meta_path.insert(0, RejectBlenderProc())
 
 
 @pytest.fixture
-def context(initialized_blender, monkeypatch):
-    """Provide a fresh scene without repeating BlenderProc initialization."""
-    from telekinesis.illusion.core.context import Context
+def context():
+    from telekinesis.illusion.core.scene import Scene
 
-    bproc = initialized_blender
-    # Release cycles from earlier tests before BlenderProc scans its weak
-    # references during physics undo operations.
     gc.collect()
-    # Production Context owns process initialization. Within pytest, the
-    # session fixture owns it and each Context only needs a fresh scene.
-    monkeypatch.setattr(
-        bproc, "init", lambda: bproc.clean_up(clean_up_camera=True)
-    )
-    try:
-        yield Context()
-    finally:
-        # Retain BlenderProc's process resources until session teardown.
-        bproc.clean_up(clean_up_camera=True)
+    scene = Scene()
+    yield scene
+    scene.clean_up()
+    gc.collect()
 
 
 def pytest_addoption(parser):
-    parser.addoption(
-        "--material-model",
-        action="append",
-        default=[],
-        help="Additional OBJ/GLB path for material integration checks (repeatable).",
-    )
+    parser.addoption("--material-model", action="append", default=[])
 
 
 def pytest_generate_tests(metafunc):

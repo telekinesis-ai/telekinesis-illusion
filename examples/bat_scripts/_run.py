@@ -20,7 +20,7 @@ def run_example(filename: str) -> None:
 def finish_batch_run() -> None:
     """Clean temporary Blender files and bypass Windows native teardown."""
     if sys.platform == "win32":
-        from blenderproc.python.utility.Initializer import clean_temp_dir
+        from telekinesis.illusion.blender.initialization import clean_temp_dir
 
         clean_temp_dir()
         sys.stdout.flush()
