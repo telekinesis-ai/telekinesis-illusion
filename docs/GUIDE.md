@@ -50,10 +50,12 @@ Each use case is driven by a spec YAML under [`configs/`](../configs/) and a run
 2. Run:
 
    ```bash
-   python examples/generate_synthetic_data_with_bin_picking_worker.py --spec-file example_bin_picking_gearwheel_2.yaml
+   python examples/generate_synthetic_data_with_bin_picking_worker.py
    ```
 
-   `--spec-file` defaults to `example_bin_picking_gearwheel_2.yaml`; bare filenames resolve against `configs/`, or pass an absolute/relative path to a spec elsewhere. Add `--no-preview` to skip opening the merged dataset in the viewer afterward.
+   The example reads `configs/example_bin_picking_gearwheel_2.yaml` directly. Change `spec_file` in the example to select another YAML. Preview is disabled; set `preview=True` in `merge_shards()` to open the merged dataset in the viewer.
+
+   For CLI overrides, use `python examples/bat_scripts/generate_synthetic_data_with_bin_picking_worker.py --spec-file example_bin_picking_gearwheel_2.yaml`. This entrypoint accepts bare filenames under `configs/` or absolute/relative spec paths, plus overrides such as `--num-images` and `--output-dir`; run it with `--help` for all options.
 
    This calls `BinPickingWorker(spec_path).generate()` followed by `worker.merge_shards(preview=...)`. The merged COCO annotations land at `<metadata.base_output_directory>/<metadata.dataset_name>/merged_coco_annotations.json`. If the spec sets `output.dataset_format` (`coco` or `yolo`), `merge_shards()` also runs a `DatasetConverter` split automatically - see [Dataset](#dataset) below.
 3. (Optional) For a quick smoke test, lower `metadata.num_images` and `shard.size` in the chosen YAML (e.g. both to `10`) so a full generate + merge cycle finishes in minutes.

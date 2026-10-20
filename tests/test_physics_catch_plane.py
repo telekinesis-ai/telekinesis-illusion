@@ -99,7 +99,7 @@ def test_catch_plane_geometry_validates_config(kwargs, match):
         )
 
 
-def test_create_catch_plane_is_passive_and_render_invisible(monkeypatch):
+def test_prepare_catch_plane_is_passive_and_render_invisible(monkeypatch):
     container = _FakeObject(_box_bounds((-1.0, -1.0, 0.0), (1.0, 1.0, 2.0)))
     context = _FakeContext({"bin_INSTANCE_0": container}, ["bin_INSTANCE_0"])
     plane = SimpleNamespace(
@@ -111,6 +111,9 @@ def test_create_catch_plane_is_passive_and_render_invisible(monkeypatch):
     plane.enable_rigidbody = lambda **kwargs: setattr(
         plane, "rigid_body", kwargs
     )
+    plane.set_location = lambda value: setattr(plane, "location", value)
+    plane.set_scale = lambda value: setattr(plane, "scale", value)
+    plane.hide = lambda value: setattr(plane, "hidden", value)
     captured = {}
 
     def create_primitive(shape, **kwargs):
@@ -120,17 +123,19 @@ def test_create_catch_plane_is_passive_and_render_invisible(monkeypatch):
     monkeypatch.setattr(
         generator_module.bproc.object, "create_primitive", create_primitive
     )
-    generator = SyntheticDataGenerator.__new__(SyntheticDataGenerator)
-    generator._context = context
+    generator = SyntheticDataGenerator(context, None, None)
 
-    created, plane_z = generator._create_physics_catch_plane(
+    created, plane_z = generator._prepare_physics_catch_plane(
         {"container_names": ["bin"]}
     )
 
     assert created is plane
     assert plane_z == pytest.approx(-0.5)
     assert captured["shape"] == "PLANE"
+    np.testing.assert_allclose(plane.location, [0.0, 0.0, -0.5])
+    np.testing.assert_allclose(plane.scale, [6.0, 6.0, 1.0])
     assert plane.rigid_body == {"active": False, "collision_shape": "BOX"}
+    assert plane.hidden is False
     assert plane.blender_obj.hide_render is True
 
 
@@ -185,3 +190,147 @@ def test_real_catch_plane_stops_a_falling_body(context):
 
     body_bottom = float(np.min(body.get_bound_box()[:, 2]))
     assert plane_z - 1e-5 <= body_bottom <= plane_z + 0.05
+
+
+@pytest.fixture
+def catch_plane_generator(context, monkeypatch) -> SyntheticDataGenerator:
+    """Build a real physics scene with an escaped part and stubbed rendering."""
+    bproc = generator_module.bproc
+    container = context.add_mesh_object(
+        bproc.object.create_primitive(
+            "CUBE", location=[0.0, 0.0, 0.5], scale=[1.0, 1.0, 0.5]
+        ),
+        object_name="bin",
+    )
+    part = context.add_mesh_object(
+        bproc.object.create_primitive("CUBE", scale=[0.1, 0.1, 0.1]),
+        object_name="part",
+        active_in_simulation=True,
+        collision_shape="BOX",
+    )
+
+    def randomize(scene) -> None:
+        container.hide(False)
+        part.hide(False)
+        part.set_location(container.get_location() + [2.5, 0.0, 2.0])
+        part.enable_rigid_body()
+        scene.set_visible_object_names(["bin", "part"])
+
+    monkeypatch.setattr(bproc.renderer, "render", lambda **_: {})
+    monkeypatch.setattr(bproc.renderer, "set_render_devices", lambda **_: None)
+    monkeypatch.setattr(
+        bproc.renderer, "enable_segmentation_output", lambda **_: None
+    )
+    randomizer = SimpleNamespace(
+        randomize=randomize, randomize_light_poses=lambda _: None
+    )
+    writer = SimpleNamespace(
+        get_segmentation_output_config=dict, write=lambda **_: 1
+    )
+    return SyntheticDataGenerator(context, randomizer, writer)
+
+
+def test_catch_plane_is_reused_across_scenes_and_shards(
+    catch_plane_generator, context, monkeypatch
+) -> None:
+    from bpy import data
+
+    generator = catch_plane_generator
+    bproc = generator_module.bproc
+    baseline_meshes = len(data.meshes)
+    baseline_objects = len(data.objects)
+    mesh_names = []
+
+    def render(**kwargs) -> dict:
+        plane = generator._physics_catch_plane
+        assert plane.blender_obj.hide_render
+        assert plane.blender_obj.hide_get()
+        assert not plane.has_rigidbody_enabled()
+        assert len(data.meshes) == baseline_meshes + 1
+        assert len(data.objects) == baseline_objects + 1
+        assert plane.blender_obj.data.users == 1
+        mesh_names.append(plane.blender_obj.data.name)
+        part = context.get_objects()["part"]
+        body_bottom = float(np.min(part.get_bound_box()[:, 2]))
+        plane_z = plane.get_location()[2]
+        assert plane_z - 1e-5 <= body_bottom <= plane_z + 0.05
+        assert part.is_hidden()
+        assert context.get_visible_object_names() == ["bin"]
+        return {}
+
+    monkeypatch.setattr(bproc.renderer, "render", render)
+    options = {
+        "simulate_physics": True,
+        "min_simulation_time_range": (1.0, 1.0),
+        "max_simulation_time_range": (2.0, 2.0),
+        "check_object_interval": 0.5,
+        "clean_up_scene": False,
+        "physics_catch_plane": {
+            "active": True,
+            "container_names": ["bin"],
+            "tracked_object_names": ["part"],
+        },
+    }
+    generator.generate(num_images=10, **options)
+    plane = generator._physics_catch_plane
+    np.testing.assert_allclose(plane.get_location(), [0.0, 0.0, -0.25])
+    np.testing.assert_allclose(plane.get_scale(), [6.0, 6.0, 1.0])
+
+    container = context.get_objects()["bin"].get_object()
+    container.set_location([3.0, 2.0, 1.5])
+    container.set_scale([2.0, 3.0, 2.0])
+    generator.generate(num_images=10, **options)
+    assert generator._physics_catch_plane is plane
+    np.testing.assert_allclose(plane.get_location(), [3.0, 2.0, 0.0])
+    np.testing.assert_allclose(plane.get_scale(), [12.0, 18.0, 1.0])
+    assert len(mesh_names) == 20
+    assert len(set(mesh_names)) == 1
+
+    # A later shard can disable the catch plane without leaving a collider.
+    monkeypatch.setattr(bproc.renderer, "render", lambda **_: {})
+    generator.generate(
+        num_images=1, **{**options, "physics_catch_plane": {"active": False}}
+    )
+    assert context.get_objects()["part"].get_location()[2] < -1.0
+    assert not plane.has_rigidbody_enabled()
+    assert len(data.meshes) == baseline_meshes + 1
+
+    monkeypatch.setattr(bproc.renderer, "render", render)
+    generator.generate(num_images=1, **options)
+    assert generator._physics_catch_plane is plane
+
+    plane_name = plane.get_name()
+    generator.clean_up()
+    assert generator._physics_catch_plane is None
+    assert plane_name not in data.objects
+    assert mesh_names[0] not in data.meshes
+
+
+def test_catch_plane_is_deactivated_after_simulation_failure(
+    catch_plane_generator, monkeypatch
+) -> None:
+    generator = catch_plane_generator
+
+    def simulate(*args) -> None:
+        plane = generator._physics_catch_plane
+        assert plane.get_rigidbody().type == "PASSIVE"
+        assert not plane.blender_obj.hide_get()
+        raise RuntimeError("Simulation failed")
+
+    monkeypatch.setattr(
+        generator_module.bproc.object,
+        "simulate_physics_and_fix_final_poses",
+        simulate,
+    )
+    with pytest.raises(RuntimeError, match="Simulation failed"):
+        generator.generate(
+            num_images=1,
+            simulate_physics=True,
+            clean_up_scene=False,
+            physics_catch_plane={"active": True, "container_names": ["bin"]},
+        )
+
+    plane = generator._physics_catch_plane
+    assert not plane.has_rigidbody_enabled()
+    assert plane.blender_obj.hide_get()
+    assert plane.blender_obj.hide_render

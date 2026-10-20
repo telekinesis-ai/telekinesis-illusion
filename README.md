@@ -102,7 +102,7 @@ Runs the low-level API to build a bin-picking scene: gearwheels and a pipe fixtu
 ```bash
 python examples/generate_synthetic_data_with_bin_picking_worker.py
 ```
-Launches synthetic data generation for a bin-picking use case with the default assets. Generates a COCO instance-segmentation dataset of 20 images (gearwheels in an industrial bin, with pipes and pipe fixtures as distractors) and opens the result in the interactive dataset viewer.
+Loads `configs/example_bin_picking_gearwheel_2.yaml`, generates the bin-picking dataset, and merges its shards. Edit the YAML for dataset settings or change `spec_file` in the example to use another configuration. Set `preview=True` in `merge_shards()` to open the merged dataset in the viewer.
 
 ## Color transfer on existing COCO datasets
 
@@ -151,11 +151,11 @@ color statistics, so reference composition and clipping can affect results.
 
 ## Generate a dataset from the command line
 
-Run the example in the environment where this package is installed. CLI options
-override the YAML settings without modifying the source file:
+Use the batch entrypoint in the environment where this package is installed.
+Its CLI options override the YAML settings without modifying the source file:
 
 ```bash
-python examples/generate_synthetic_data_with_bin_picking_worker.py --spec-file example_bin_picking_gearwheel_2.yaml --dataset-name gearwheel_experiment_01 --output-dir output --num-images 100 --shard-size 10 --dataset-format coco --no-preview
+python examples/bat_scripts/generate_synthetic_data_with_bin_picking_worker.py --spec-file example_bin_picking_gearwheel_2.yaml --dataset-name gearwheel_experiment_01 --output-dir output --num-images 100 --shard-size 10 --dataset-format coco --no-preview
 ```
 
 This writes the dataset to `output/gearwheel_experiment_01/coco_format`.

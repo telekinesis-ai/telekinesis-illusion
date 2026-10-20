@@ -18,17 +18,7 @@ EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
 RUNS_TO_COMPLETION = {
     "quickstart_flying_things.py": (["--no-preview"], 300),
     "quickstart_parts_in_bin.py": (["--no-preview"], 300),
-    "generate_synthetic_data_with_bin_picking_worker.py": (
-        [
-            "--no-preview",
-            "--spec-file",
-            str(
-                EXAMPLES_DIR.parent
-                / "configs/example_bin_picking_gearwheel_2.yaml"
-            ),
-        ],
-        300,
-    ),
+    "generate_synthetic_data_with_bin_picking_worker.py": ([], 300),
 }
 
 # Printed by SyntheticDataGenerator.generate() right before scene clean-up,

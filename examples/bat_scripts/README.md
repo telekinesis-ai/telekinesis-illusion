@@ -1,7 +1,9 @@
 # Windows batch examples
 
-These entrypoints reuse the standard examples and their CLI options. After a
-successful run on Windows, they remove Blender's temporary directory, flush
+The bin-picking entrypoint provides CLI overrides and writes the effective
+configuration to a temporary YAML file, leaving the source YAML unchanged.
+The quickstart entrypoints reuse the standard examples. After a successful run
+on Windows, these entrypoints remove Blender's temporary directory, flush
 console output, and call `os._exit(0)` to bypass the native shutdown crash.
 Generation and export exceptions propagate normally.
 

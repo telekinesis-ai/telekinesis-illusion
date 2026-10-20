@@ -13,8 +13,32 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = run_path(
-    str(ROOT / "examples/generate_synthetic_data_with_bin_picking_worker.py")
+    str(
+        ROOT
+        / "examples/bat_scripts/generate_synthetic_data_with_bin_picking_worker.py"
+    )
 )["main"]
+
+
+def test_normal_example_uses_original_yaml(monkeypatch):
+    module = ModuleType("telekinesis.illusion.workers.bin_picking_worker")
+    module.BinPickingWorker = Mock()
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+
+    main = run_path(
+        str(
+            ROOT / "examples/generate_synthetic_data_with_bin_picking_worker.py"
+        )
+    )["main"]
+    main()
+
+    module.BinPickingWorker.assert_called_once_with(
+        ROOT / "configs/example_bin_picking_gearwheel_2.yaml"
+    )
+    assert module.BinPickingWorker.return_value.mock_calls == [
+        call.generate(),
+        call.merge_shards(preview=False),
+    ]
 
 
 def test_generation_overrides_preserve_yaml_and_asset_paths(
@@ -115,6 +139,9 @@ def test_generation_preserves_exit_status_and_cleanup(
 
         script, spec, cleanup_marker, temporary_cleanup_marker, failure = sys.argv[1:]
         worker = Mock()
+        worker.merge_shards.side_effect = lambda **kwargs: print(
+            "Dataset merged", flush=True
+        )
         if failure != "none":
             method = worker.generate if failure == "generate" else worker.merge_shards
             method.side_effect = RuntimeError("generation/export failed")
@@ -126,7 +153,9 @@ def test_generation_preserves_exit_status_and_cleanup(
         sys.modules[initializer.__name__] = initializer
         atexit.register(lambda: Path(cleanup_marker).touch())
         sys.path.insert(0, str(Path(script).parent))
-        sys.argv = [script, "--spec-file", spec, "--no-preview"]
+        sys.argv = [script]
+        if Path(script).parent.name == "bat_scripts":
+            sys.argv.extend(["--spec-file", spec, "--no-preview"])
         runpy.run_path(script, run_name="__main__")
     """)
     )
@@ -155,8 +184,8 @@ def test_generation_preserves_exit_status_and_cleanup(
     assert temporary_cleanup_marker.is_file() is bypassed
     if failure == "none":
         assert result.returncode == 0, result.stderr
-        assert "Dataset ready:" in result.stdout
+        assert "Dataset merged" in result.stdout
     else:
         assert result.returncode != 0
         assert "generation/export failed" in result.stderr
-        assert "Dataset ready:" not in result.stdout
+        assert "Dataset merged" not in result.stdout

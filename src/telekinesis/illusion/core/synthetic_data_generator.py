@@ -3,6 +3,9 @@ Defines the SyntheticDataGenerator class that is the main orchestrator of the
 synthetic data generation process.
 """
 
+# Blender extension isolation must run before Blender-dependent imports.
+# ruff: noqa: E402
+
 import random
 from datetime import datetime
 
@@ -44,6 +47,7 @@ class SyntheticDataGenerator:
         self._context = context
         self._randomizer = randomizer
         self._writer = writer
+        self._physics_catch_plane: bproc.types.MeshObject | None = None
 
     def clean_up(
         self,
@@ -53,6 +57,7 @@ class SyntheticDataGenerator:
         """
         logger.info("Cleaning up the scene...")
         bproc.clean_up()
+        self._physics_catch_plane = None
 
     @staticmethod
     def _catch_plane_geometry(
@@ -94,8 +99,10 @@ class SyntheticDataGenerator:
         )
         return location, scale
 
-    def _create_physics_catch_plane(self, config: dict):
-        """Create an invisible passive plane beneath the visible container."""
+    def _prepare_physics_catch_plane(
+        self, config: dict
+    ) -> tuple[bproc.types.MeshObject, float]:
+        """Create or reposition the reusable plane beneath the visible bin."""
         container_prefixes = tuple(config.get("container_names", ()))
         visible_names = self._context.get_visible_object_names()
         container_name = next(
@@ -119,16 +126,19 @@ class SyntheticDataGenerator:
             minimum_distance=float(config.get("minimum_distance", 0.05)),
             size_factor=float(config.get("size_factor", 6.0)),
         )
-        plane = bproc.object.create_primitive(
-            "PLANE", location=location, scale=scale
-        )
-        plane.set_name("ILLUSION_PHYSICS_CATCH_PLANE")
-        plane.enable_rigidbody(active=False, collision_shape="BOX")
-        # Do not call Entity.hide(): hide_set() can remove the plane from
-        # dependency-graph evaluation. hide_render keeps its collision active.
+        if self._physics_catch_plane is None:
+            self._physics_catch_plane = bproc.object.create_primitive("PLANE")
+            self._physics_catch_plane.set_name("ILLUSION_PHYSICS_CATCH_PLANE")
+        plane = self._physics_catch_plane
+        plane.set_location(location)
+        plane.set_scale(scale)
+        # Restore dependency-graph evaluation for physics, but keep the plane
+        # invisible to rendering. It is hidden again after simulation.
+        plane.hide(False)
         plane.blender_obj.hide_render = True
+        plane.enable_rigidbody(active=False, collision_shape="BOX")
         logger.debug(
-            f"Created physics catch plane at z={location[2]:.4f} "
+            f"Prepared physics catch plane at z={location[2]:.4f} "
             f"below '{container_name}'."
         )
         return plane, float(location[2])
@@ -235,8 +245,10 @@ class SyntheticDataGenerator:
                 Show Blender's live frame and sample progress while rendering.
             physics_catch_plane: dict or None
                 Optional catch-plane configuration. A passive, render-invisible
-                plane is placed beneath the visible container before physics;
-                tracked objects resting on it are hidden before rendering.
+                plane is reused and positioned beneath the visible container
+                before physics; tracked objects resting on it are hidden before
+                rendering. The plane is inactive between simulations and is
+                released by clean_up().
         """
         # Record the start time
         start_time = datetime.now()
@@ -278,14 +290,13 @@ class SyntheticDataGenerator:
                 max_simulation_time = random.uniform(
                     max_simulation_time_range[0], max_simulation_time_range[1]
                 )
-                catch_plane = None
                 catch_plane_z = None
                 catch_config = physics_catch_plane or {}
-                if catch_config.get("active", False):
-                    catch_plane, catch_plane_z = (
-                        self._create_physics_catch_plane(catch_config)
-                    )
                 try:
+                    if catch_config.get("active", False):
+                        _, catch_plane_z = self._prepare_physics_catch_plane(
+                            catch_config
+                        )
                     bproc.object.simulate_physics_and_fix_final_poses(
                         min_simulation_time,
                         max_simulation_time,
@@ -302,8 +313,10 @@ class SyntheticDataGenerator:
                             catch_plane_z, catch_config
                         )
                 finally:
-                    if catch_plane is not None:
-                        catch_plane.delete()
+                    if self._physics_catch_plane is not None:
+                        if self._physics_catch_plane.has_rigidbody_enabled():
+                            self._physics_catch_plane.disable_rigidbody()
+                        self._physics_catch_plane.hide(True)
 
                 self._randomizer.randomize_light_poses(self._context)
 

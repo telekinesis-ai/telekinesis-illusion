@@ -14,6 +14,11 @@ def run_example(filename: str) -> None:
     """
     script = Path(__file__).resolve().parents[1] / filename
     runpy.run_path(str(script), run_name="__main__")
+    finish_batch_run()
+
+
+def finish_batch_run() -> None:
+    """Clean temporary Blender files and bypass Windows native teardown."""
     if sys.platform == "win32":
         from blenderproc.python.utility.Initializer import clean_temp_dir
 
