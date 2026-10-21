@@ -9,7 +9,6 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from uuid import uuid4
 from loguru import logger
-import atexit
 
 from telekinesis.illusion.blender.labels import LabelIdMapping
 

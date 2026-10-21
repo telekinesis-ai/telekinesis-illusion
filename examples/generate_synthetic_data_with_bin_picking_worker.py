@@ -1,25 +1,45 @@
 """Generate a bin-picking dataset using a YAML configuration."""
 
+import argparse
+from collections.abc import Sequence
 import os
 from pathlib import Path
+import sys
 
 
-def main() -> None:
-    """Generate and merge the dataset described by the example YAML."""
+def main(argv: Sequence[str] = ()) -> None:
+    """Generate and merge a dataset using the selected YAML configuration.
+
+    Args:
+        argv: CLI arguments. Defaults to the example YAML with preview disabled.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--spec_file",
+        type=Path,
+        default=(
+            Path(__file__).resolve().parents[1]
+            / "configs"
+            / "example_bin_picking_gearwheel_2.yaml"
+        ),
+        help="Path to the bin-picking YAML configuration (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--preview",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Open the generated dataset in the interactive viewer.",
+    )
+    args = parser.parse_args(argv)
+
     os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 
     from telekinesis.illusion.workers.bin_picking_worker import BinPickingWorker
 
-    # Choose a YAML file and edit its dataset settings in configs/.
-    spec_file = (
-        Path(__file__).resolve().parents[1]
-        / "configs"
-        / "example_bin_picking_gearwheel_2.yaml"
-    )
-    worker = BinPickingWorker(spec_file)
+    worker = BinPickingWorker(args.spec_file)
     worker.generate()
-    worker.merge_shards(preview=False)
+    worker.merge_shards(preview=args.preview)
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

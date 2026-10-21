@@ -71,8 +71,12 @@ python examples/quickstart_flying_things.py --preview
 python examples/quickstart_parts_in_bin.py --preview
 ```
 ```bash
-python examples/generate_synthetic_data_with_bin_picking_worker.py --preview
+python examples/generate_synthetic_data_with_bin_picking_worker.py --spec_file configs/example_bin_picking_gearwheel_2.yaml --preview
 ```
+
+The bin-picking worker defaults to this example YAML with preview disabled.
+Use `--spec_file PATH` to select another YAML and `--preview` or `--no-preview`
+to control the viewer.
 
 The checkout includes the original example assets. For another asset tree,
 pass `asset_dir` to `Scene`, or set `metadata.asset_directory` in the worker

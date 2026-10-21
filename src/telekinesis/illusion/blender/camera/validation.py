@@ -132,7 +132,7 @@ def perform_obstacle_in_view_check(
                 if "avg" in proximity_checks:
                     sum_value += dist
                 if "var" in proximity_checks:
-                    if not "avg" in proximity_checks:
+                    if "avg" not in proximity_checks:
                         sum_value += dist
                     sum_sq += dist * dist
             elif (
@@ -151,7 +151,7 @@ def perform_obstacle_in_view_check(
             return False
 
     if "var" in proximity_checks:
-        if not "avg" in proximity_checks:
+        if "avg" not in proximity_checks:
             avg = sum_value / (sqrt_number_of_rays * sqrt_number_of_rays)
         sq_avg = avg * avg
 

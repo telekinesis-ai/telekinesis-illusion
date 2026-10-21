@@ -3,14 +3,12 @@
 
 import os
 import csv
-import shutil
 import sys
 import threading
 from types import TracebackType
 from typing import IO, List, Dict, Any, Tuple, Optional, Union, Type
 from pathlib import Path
 import time
-import inspect
 import json
 from contextlib import contextmanager, redirect_stdout
 
@@ -19,7 +17,6 @@ import numpy as np
 
 # pylint: disable=wrong-import-position
 from telekinesis.illusion.blender.storage import GlobalStorage
-from telekinesis.illusion.blender.types.references import get_instances
 from telekinesis.illusion.blender.version import __version__
 
 # TODO: Current workaround for managing the undo functionlity for physics sim

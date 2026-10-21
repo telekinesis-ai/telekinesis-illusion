@@ -20,7 +20,6 @@ from telekinesis.illusion.blender.types.material import Material
 from telekinesis.illusion.blender.loaders import (
     material_utils as MaterialLoaderUtility,
 )
-from telekinesis.illusion.blender.setup import SetupUtility
 
 if platform != "win32":
     # this is only supported under linux and macOS, the import itself already doesn't work under windows

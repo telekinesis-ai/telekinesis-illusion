@@ -15,10 +15,8 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 isolate_user_extensions()
 
 
-from mathutils import Vector  # Only importable once bpy is loaded
 
 from telekinesis.illusion.core.context import Context
-from telekinesis.illusion.types.object import Object
 
 
 def upper_region_sampler(
