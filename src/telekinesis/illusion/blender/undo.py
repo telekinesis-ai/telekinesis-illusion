@@ -1,6 +1,6 @@
 """Blender undo with restoration of pre-existing Python wrappers.
 
-Adapted from the locally modified BlenderProc Utility.py (see NOTICE.md).
+See NOTICE.md for attribution and licensing.
 Wrappers created inside a reverted block must not escape the block.
 """
 

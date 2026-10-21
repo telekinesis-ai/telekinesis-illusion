@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """Filter classes to filter entities based on certain attributes"""
 
 from typing import Any, Type, List

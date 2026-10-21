@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """The material class containing the texture and material properties."""
 
 from typing import List, Union
@@ -21,7 +21,7 @@ class Material(Struct):
         if not material.use_nodes:
             raise RuntimeError(
                 f"The given material {material.name} does not have nodes enabled and can "
-                f"therefore not be handled by BlenderProc's Material wrapper class."
+                f"therefore not be handled by the Material wrapper class."
             )
 
         self.nodes = material.node_tree.nodes

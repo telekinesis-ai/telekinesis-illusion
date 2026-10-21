@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """Run the physics simulation for the objects in the scene."""
 
 import bpy

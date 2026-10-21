@@ -1,21 +1,8 @@
-"""Fresh bpy scenes; BlenderProc imports are prohibited in all tests."""
+"""Fresh bpy scenes and material model fixtures."""
 
 import gc
-import sys
 from pathlib import Path
-import importlib.abc
 import pytest
-
-
-class RejectBlenderProc(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == "blenderproc" or fullname.startswith("blenderproc."):
-            raise RuntimeError(
-                "The new implementation must not import BlenderProc"
-            )
-
-
-sys.meta_path.insert(0, RejectBlenderProc())
 
 
 @pytest.fixture

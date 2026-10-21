@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """This module provides a collection of functions to check if objects collide."""
 
 from typing import Union, Optional, Dict, Tuple, List, Callable

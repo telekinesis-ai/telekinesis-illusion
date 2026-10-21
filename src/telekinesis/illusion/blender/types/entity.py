@@ -1,5 +1,5 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
-"""The base class of all things, which can be placed in the scene, in BlenderProc."""
+# Adapted code; see NOTICE.md for attribution and licensing.
+"""Wrappers for Blender objects with a position and orientation in the scene."""
 
 from typing import Union, Optional, List
 import warnings

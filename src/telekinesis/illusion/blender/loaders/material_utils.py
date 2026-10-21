@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """Provides a lot of functions to deal with materials."""
 
 import os
@@ -38,7 +38,7 @@ def create(name: str) -> Material:
 def convert_to_materials(
     blender_materials: List[Optional[bpy.types.Material]],
 ) -> List[Optional[Material]]:
-    """Converts the given list of blender materials to bproc.Material(s)
+    """Converts Blender materials to Material wrappers, preserving None entries.
 
     :param blender_materials: List of materials.
     :return: The list of materials.

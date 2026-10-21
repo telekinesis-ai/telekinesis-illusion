@@ -57,7 +57,7 @@ class Scene:
         asset_dir: str | Path | None = None,
     ) -> None:
         """
-        Initialize internal states and BlenderProc.
+        Initialize internal state and the Blender scene.
 
         Args:
             asset_dir: str, Path or None
@@ -65,7 +65,6 @@ class Scene:
                 it is resolved by
                 telekinesis.illusion.utils.assets.resolve_asset_dir().
         """
-        # Intialize BlenderProc
         initialization.init()
 
         # Resolve the asset directory once and share it with everything in the

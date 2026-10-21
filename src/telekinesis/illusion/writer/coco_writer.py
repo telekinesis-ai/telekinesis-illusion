@@ -65,7 +65,7 @@ def write_coco_annotations(
 
     if len(colors) > 0 and len(colors[0].shape) == 4:
         raise ValueError(
-            "BlenderProc currently does not support writing coco annotations for stereo images. "
+            "The COCO writer does not support stereo images. "
             "However, you can enter left and right images / segmaps separately."
         )
 

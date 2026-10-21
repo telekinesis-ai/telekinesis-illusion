@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """Camera utility, collection of useful camera functions."""
 
 from typing import Union, Tuple, Optional, List
@@ -310,8 +310,8 @@ def set_intrinsics_from_K_matrix(
 
     if abs(K[0][1]) > 1e-7:
         raise ValueError(
-            f"Skew is not supported by blender and therefore "
-            f"not by BlenderProc, set this to zero: {K[0][1]} and recalibrate"
+            "Skew is not supported by Blender; set this to zero: "
+            f"{K[0][1]} and recalibrate"
         )
 
     fx, fy = K[0][0], K[1][1]
@@ -512,9 +512,10 @@ def add_depth_of_field(
     focal_distance: float = -1.0,
 ):
     """
-    Adds depth of field to the given camera, the focal point will be set by the focal_point_obj, ideally an empty
-    instance is used for this see `bproc.object.create_empty()` on how to init one of those. A higher fstop value
-    makes the resulting image look sharper, while a low value decreases the sharpness.
+    Adds depth of field to the camera, using focal_point_obj as the focal point.
+    An empty instance is suitable for this; see
+    `telekinesis.illusion.blender.types.entity.create_empty()`.
+    A higher fstop value makes the image sharper; a lower value reduces sharpness.
 
     Check the documentation on
     https://docs.blender.org/manual/en/latest/render/cameras.html#depth-of-field

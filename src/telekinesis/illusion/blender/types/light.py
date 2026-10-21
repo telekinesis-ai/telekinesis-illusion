@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """This class allows the creation and management of lights in the scene."""
 
 from typing import Union, Optional, List
@@ -268,16 +268,16 @@ class Light(Entity):
 
 
 def convert_to_lights(blender_objects: List[bpy.types.Object]) -> List[Light]:
-    """Converts a list of Blender light objects to a list of BlenderProc light objects.
+    """Converts Blender light objects to Light wrappers.
 
     :param blender_objects: A list of Blender light objects.
-    :return: A list of BlenderProc light objects.
+    :return: A list of Light wrappers.
     """
     return [Light(blender_obj=obj) for obj in blender_objects]
 
 
 def get_all_light_objects() -> List[Light]:
-    """Retrieves all light objects in the current Blender scene and converts them to BlenderProc light objects.
+    """Returns Light wrappers for all lights in the current Blender scene.
 
     :return: A list of all light objects in the current scene.
     """

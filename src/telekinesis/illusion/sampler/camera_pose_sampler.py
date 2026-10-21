@@ -9,7 +9,7 @@ from loguru import logger
 
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
-# Must run before bpy is imported (blenderproc pulls it in). See blender_env.py.
+# Must run before bpy is imported. See blender_env.py for why.
 isolate_user_extensions()
 
 from telekinesis.illusion.blender.camera import settings as camera_settings
@@ -97,7 +97,7 @@ def shell_sampler(
     )
 
     forward_vec = center - location
-    # BlenderProc expects in-plane rotation in radians.
+    # Camera pose sampling expects in-plane rotation in radians.
     inplane_rot = np.deg2rad(
         np.random.uniform(inplane_rot_min, inplane_rot_max)
     )
@@ -213,7 +213,7 @@ def volume_sampler(
     location += np.array([0.0, 0.0, distance])
 
     forward_vec = poi - location
-    # BlenderProc expects in-plane rotation in radians.
+    # Camera pose sampling expects in-plane rotation in radians.
     inplane_rot = np.deg2rad(
         np.random.uniform(inplane_rot_min, inplane_rot_max)
     )

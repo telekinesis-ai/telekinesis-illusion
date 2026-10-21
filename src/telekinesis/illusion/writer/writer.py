@@ -124,7 +124,7 @@ class Writer(ABC):
         return str(self._output_dir)
 
     def get_segmentation_output_config(self) -> Dict[str, Any]:
-        """Describe the BlenderProc segmentation pass required by the writer."""
+        """Describe the Blender segmentation pass required by the writer."""
         return {
             "map_by": ["category_id", "instance", "name"],
             "default_values": {"category_id": 0},

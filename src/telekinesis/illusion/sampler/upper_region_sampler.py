@@ -11,7 +11,7 @@ from loguru import logger
 
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
-# Must run before bpy is imported (blenderproc pulls it in). See blender_env.py.
+# Must run before bpy is imported. See blender_env.py for why.
 isolate_user_extensions()
 
 
@@ -32,9 +32,6 @@ def upper_region_sampler(
     use_upper_dir: bool = True,
 ) -> np.ndarray:
     """
-    Based on:
-    https://github.com/DLR-RM/BlenderProc/blob/main/blenderproc/python/sampler/UpperRegionSampler.py
-
     Uniformly samples 3-dimensional value over the bounding box of the specified
     objects (can be just a plane) in the defined upper direction.
     If "use_upper_dir" is False, samples along the face normal closest to
@@ -103,8 +100,8 @@ def upper_region_sampler(
     objects_to_sample_on = []
     for object_name in object_names_to_sample_on:
         illusion_object = context.get_objects_by_name(object_name)
-        bproc_mesh_object = illusion_object.get_object()
-        objects_to_sample_on.append(bproc_mesh_object)
+        mesh_object = illusion_object.get_object()
+        objects_to_sample_on.append(mesh_object)
 
     if max_height < min_height:
         raise RuntimeError(
@@ -171,15 +168,15 @@ def calc_vec_and_normals(
     return (vec1, vec2), normal
 
 
-def select_upper_region(bproc_mesh_object, upper_dir: np.ndarray) -> "Region2D":
+def select_upper_region(mesh_object, upper_dir: np.ndarray) -> "Region2D":
     """
     Pick the face of the object's bounding box whose normal is most aligned with
     'upper_dir' and return it as a Region2D (base point + in-plane vectors +
     normal).
 
     Args:
-        bproc_mesh_object:
-            A BlenderProc mesh object exposing 'get_bound_box()' and 'get_name()'.
+        mesh_object:
+            A mesh wrapper exposing 'get_bound_box()' and 'get_name()'.
         upper_dir: np.ndarray
             Unit-length 'up' direction to compare each face normal against.
 
@@ -189,7 +186,7 @@ def select_upper_region(bproc_mesh_object, upper_dir: np.ndarray) -> "Region2D":
     Raises:
         RuntimeError: If no suitable face is found.
     """
-    bb = bproc_mesh_object.get_bound_box()
+    bb = mesh_object.get_bound_box()
     faces = [
         [bb[0], bb[1], bb[2], bb[3]],
         [bb[0], bb[4], bb[5], bb[1]],
@@ -211,7 +208,7 @@ def select_upper_region(bproc_mesh_object, upper_dir: np.ndarray) -> "Region2D":
     # Save the selected face values
     if selected_face is None:
         raise RuntimeError(
-            f"Couldn't find a face, for this obj: {bproc_mesh_object.get_name()}"
+            f"Couldn't find a face, for this obj: {mesh_object.get_name()}"
         )
     vectors, normal = calc_vec_and_normals(selected_face)
     base_point = selected_face[0]

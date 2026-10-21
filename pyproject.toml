@@ -77,7 +77,7 @@ namespaces = true
 exclude = ["*.__pycache__*"]
 
 [tool.setuptools.package-data]
-"telekinesis.illusion.blender" = ["NOTICE.md", "LICENSE.BlenderProc", "resources/**/*", "external/vhacd/*.sh"]
+"telekinesis.illusion.blender" = ["NOTICE.md", "LICENSE.upstream", "resources/**/*", "external/vhacd/*.sh"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["**/__pycache__/*", "**/*.pyc"]

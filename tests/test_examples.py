@@ -17,9 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def run_example(name, args, log_path):
     env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(ROOT / "tests/import_guard"), str(ROOT / "src")]
-    )
+    env["PYTHONPATH"] = str(ROOT / "src")
     env["PYTHONUNBUFFERED"] = "1"
     with log_path.open("w", encoding="utf8") as log:
         result = subprocess.run(
@@ -62,9 +60,7 @@ def validate_dataset(path, count, resolution):
 @pytest.mark.parametrize(
     "name", ["quickstart_flying_things.py", "quickstart_parts_in_bin.py"]
 )
-def test_quickstarts_render_multiple_samples_without_blenderproc(
-    tmp_path, name
-):
+def test_quickstarts_render_multiple_samples(tmp_path, name):
     output = tmp_path / "dataset"
     run_example(
         name,

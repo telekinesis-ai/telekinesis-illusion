@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """Provides functionality to render a color, normal, depth and distance image."""
 
 from contextlib import contextmanager
@@ -263,7 +263,9 @@ def enable_distance_output(
             "The distance enable function can not be called twice. Either you called it twice or you used the "
             "enable_depth_output with activate_antialiasing=True, which internally calls this function. This is "
             "currently not supported, but there is an easy way to solve this, you can use the "
-            "bproc.postprocessing.dist2depth and depth2dist function on the output of the renderer and generate "
+            "dist2depth and depth2dist functions from "
+            "telekinesis.illusion.blender.postprocessing on the renderer output "
+            "to generate "
             "the antialiased depth image yourself."
         )
         raise RuntimeError(msg)
@@ -360,7 +362,9 @@ def enable_depth_output(
             "The depth enable function can not be called twice. Either you called it twice or you used the "
             "enable_distance_output with activate_antialiasing=False, which internally calls this function. This "
             "is currently not supported, but there is an easy way to solve this, you can use the "
-            "bproc.postprocessing.dist2depth and depth2dist function on the output of the renderer and generate "
+            "dist2depth and depth2dist functions from "
+            "telekinesis.illusion.blender.postprocessing on the renderer output "
+            "to generate "
             "the antialiased distance image yourself."
         )
         raise RuntimeError(msg)
@@ -606,7 +610,7 @@ def enable_segmentation_output(
 
     def segmentation_node(node_type):
         # Store ownership on the nodes themselves so reuse also survives physics undo.
-        key = "blenderproc_segmentation_output_key"
+        key = "illusion_segmentation_output_key"
         for node in tree.nodes:
             if node.bl_idname == node_type and node.get(key) == output_key:
                 return node
@@ -919,7 +923,8 @@ def render(
     else:
         raise RuntimeError(
             "No camera poses have been registered, therefore nothing can be rendered. A camera "
-            "pose can be registered via bproc.camera.add_camera_pose()."
+            "pose can be registered via "
+            "telekinesis.illusion.blender.camera.settings.add_camera_pose()."
         )
 
     return (

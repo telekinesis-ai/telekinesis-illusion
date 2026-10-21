@@ -116,7 +116,7 @@ class NamedSlots:
 
 
 class MaterialSource(Protocol):
-    """A source returns a BlenderProc material without assigning it."""
+    """A source returns a Blender material wrapper without assigning it."""
 
     def prepare(self, manager: "MaterialManager") -> None: ...
 

@@ -22,8 +22,7 @@ class Object:
     """
     Every instance of this class is a mesh which can be rendered in the scene.
     It can have multiple materials and different configurations of vertices with
-    faces and edges. This class is a wrapper around BlenderProc's MeshObject
-    class. Input models must contain one mesh object without empties.
+    faces and edges. Input models must contain one mesh object without empties.
     """
 
     def __init__(
@@ -501,7 +500,7 @@ class Object:
             slot.link = "OBJECT"
             slot.material = material
 
-        # Convert to bproc subclass
+        # Convert to the mesh wrapper.
         new_entity = MeshObject(new_obj)
 
         # Convert to illusion subclass

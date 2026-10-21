@@ -228,11 +228,10 @@ the generated files rather than live scene state. Shard accumulation can use
 ## Blender integration and supporting modules
 
 The [blender/](src/telekinesis/illusion/blender/) package contains local helpers
-adapted from BlenderProc for loading, wrappers, rendering, physics, camera
-operations, and postprocessing. The runtime uses `bpy` directly without an
-external BlenderProc installation or launcher. Attribution and licensing are
+for loading, wrappers, rendering, physics, camera operations, and postprocessing.
+The runtime uses `bpy` directly. Attribution and licensing are
 recorded in [NOTICE.md](src/telekinesis/illusion/blender/NOTICE.md) and
-[LICENSE.BlenderProc](src/telekinesis/illusion/blender/LICENSE.BlenderProc).
+[LICENSE.upstream](src/telekinesis/illusion/blender/LICENSE.upstream).
 
 `UndoAfterExecution` restores Blender state and rebinds pre-existing wrappers
 to restored objects. It does not roll back arbitrary Python collections or

@@ -42,7 +42,7 @@ def _vector(value, name, minimum=-_FLOAT_MAX, maximum=_FLOAT_MAX):
 
 
 class Light:
-    """Wrap a BlenderProc light, using meters and XYZ Euler radians.
+    """A named scene light, using meters and XYZ Euler radians.
 
     ``light_type`` is POINT, SUN, SPOT or AREA. Properties accepted by
     construction and :meth:`set_properties` are:
@@ -54,7 +54,7 @@ class Light:
     - SUN: angular diameter ``angle`` in radians.
     - SPOT: cone angle ``spot_size`` in radians and ``spot_blend`` in [0, 1].
 
-    Omitted properties retain BlenderProc's defaults. Lights have no annotation
+    Omitted properties retain the light defaults. Lights have no annotation
     category or rigid body. Their local -Z axis is the emission direction.
     """
 
@@ -123,7 +123,7 @@ class Light:
             setattr(self._light.blender_obj.data, attribute, value)
 
     def get_light(self) -> BlenderLight:
-        """Return the underlying BlenderProc light."""
+        """Return the underlying Blender light wrapper."""
         return self._light
 
     def get_properties(self) -> dict:

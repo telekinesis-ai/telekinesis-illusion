@@ -1,5 +1,5 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
-"""This module provides functions to init a BlenderProc scene."""
+# Adapted code; see NOTICE.md for attribution and licensing.
+"""Initialize and reset the Blender scene and rendering defaults."""
 
 import atexit
 import os
@@ -38,14 +38,24 @@ def handle_sigterm(_signum, _frame):
 
 
 def init(clean_up_scene: bool = True, temp_dir: Optional[str] = None):
-    """Initializes BlenderProc.
+    """Initialize the Blender scene and rendering defaults for Illusion.
 
-    Cleans up the whole scene at first and then initializes basic blender settings, the world, the renderer and
-    the camera. This method should only be called once in the beginning. If you want to clean up the scene afterwards,
-    use bproc.clean_up()
+    By default, reset scene data and create a world and camera before applying
+    rendering and camera defaults. A new scene replaces the process-wide scene;
+    multiple live scenes are unsupported. Use clean_up() to reset scene data
+    without reapplying these defaults.
 
-    :param clean_up_scene: Set to False, if you want to keep all scene data.
-    :param temp_dir: The temporary directory to use when using external bpy module. If None a default temporary directory is used.
+    A nonempty ILLUSION_RANDOM_SEED seeds Python and NumPy random generators.
+    Data blocks with a truthy illusion_preserve custom property survive cleanup.
+
+    Args:
+        clean_up_scene: Whether to reset scene data before initialization.
+        temp_dir: Parent directory for a new owned temporary directory. None
+            uses the system temporary directory. An existing temporary
+            directory is reused until it is removed.
+
+    Raises:
+        ValueError: If ILLUSION_RANDOM_SEED is not a valid NumPy integer seed.
     """
     from telekinesis.illusion.blender.utility import Utility
 
@@ -77,7 +87,7 @@ def init(clean_up_scene: bool = True, temp_dir: Optional[str] = None):
     # Set default parameters
     _Initializer.set_default_parameters()
 
-    random_seed = os.getenv("BLENDER_PROC_RANDOM_SEED")
+    random_seed = os.getenv("ILLUSION_RANDOM_SEED")
     if random_seed:
         print(f"Got random seed: {random_seed}")
         try:
@@ -95,6 +105,7 @@ def clean_up(clean_up_camera: bool = False):
 
     This method removes all objects, camera poses and cleans up the world background.
     All (renderer) settings and the UI are kept as they are.
+    Data blocks with a truthy illusion_preserve custom property are retained.
 
     :param clean_up_camera: If True, also the camera is set back to its clean state.
     """
@@ -131,7 +142,7 @@ def clean_up(clean_up_camera: bool = False):
 
 class _Initializer:
     """
-    This is the initializer class used to init a BlenderProc scene.
+    Configure Blender defaults and remove scene data.
     """
 
     @staticmethod
@@ -238,10 +249,10 @@ class _Initializer:
                     # loop otherwise wipes *every* collection in bpy.data,
                     # including bpy.data.node_groups - which destroys add-on
                     # owned datablocks (e.g. an add-on's own configuration
-                    # node tree) when BlenderProc is driven from inside a live
+                    # node tree) when running inside a live
                     # Blender session rather than a headless one-shot run.
                     try:
-                        if block.get("bproc_preserve"):
+                        if block.get("illusion_preserve"):
                             continue
                     except (AttributeError, TypeError):
                         pass

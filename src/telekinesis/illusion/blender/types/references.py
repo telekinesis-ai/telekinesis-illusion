@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """Struct utility functions, like providing all current struct instances."""
 
 from typing import List, Tuple, TYPE_CHECKING

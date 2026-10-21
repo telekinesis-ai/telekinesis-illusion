@@ -136,8 +136,8 @@ discussion respectful and explain tradeoffs when an alternative is proposed.
 ## License and attribution
 
 The project license is recorded in [LICENSE](LICENSE). Preserve existing
-copyright and license notices. For changes to adapted BlenderProc code, consult
+copyright and license notices. For changes to adapted rendering code, consult
 the [attribution notice](src/telekinesis/illusion/blender/NOTICE.md) and
-[upstream license](src/telekinesis/illusion/blender/LICENSE.BlenderProc).
+[upstream license](src/telekinesis/illusion/blender/LICENSE.upstream).
 Include provenance and license information with any new third-party code or
 assets.

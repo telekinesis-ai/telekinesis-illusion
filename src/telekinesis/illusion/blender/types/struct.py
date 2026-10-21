@@ -1,5 +1,5 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
-"""The base class of all things in BlenderProc."""
+# Adapted code; see NOTICE.md for attribution and licensing.
+"""Common properties and reference tracking for Blender data wrappers."""
 
 from typing import Any, Dict
 import weakref
@@ -13,8 +13,8 @@ from telekinesis.illusion.blender.utility import Utility, KeyFrame
 
 class Struct:
     """
-    The base class of all things in BlenderProc, this can be an Entity in the scene or a Material which is only applied
-    to a MeshObject.
+    A Blender data wrapper with names and custom properties.
+    Represents scene entities or materials applied to mesh objects.
     """
 
     # Contains weak refs to all struct instances

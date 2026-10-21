@@ -1,4 +1,4 @@
-"""Local bpy helpers; no BlenderProc installation or launcher is required."""
+"""Local bpy helpers"""
 
 import os
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions

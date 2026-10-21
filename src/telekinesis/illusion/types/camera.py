@@ -20,7 +20,7 @@ from telekinesis.illusion.blender import math as blender_math
 
 @dataclass
 class CameraConfig:
-    # Defaults from BlenderProc
+    # Camera defaults for scene initialization.
     image_width: int | None = 720
     image_height: int | None = 720
     focal_length: float | None = None

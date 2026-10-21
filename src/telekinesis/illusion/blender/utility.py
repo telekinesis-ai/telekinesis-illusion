@@ -1,5 +1,5 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
-"""This module provides a collection of utility functions tied closely to BlenderProc."""
+# Adapted code; see NOTICE.md for attribution and licensing.
+"""Utilities for Blender scene state, resources, and rendering outputs."""
 
 import os
 import csv
@@ -45,9 +45,9 @@ def resolve_path(path: Union[str, Path]) -> str:
 
 
 def resolve_resource(relative_resource_path: str) -> str:
-    """Returns an absolute path to the given BlenderProc resource.
+    """Returns an absolute path to a bundled Blender resource.
 
-    :param relative_resource_path: The relative path inside the BlenderProc resource folder.
+    :param relative_resource_path: The relative path inside the bundled resources folder.
     :return: The absolute path.
     """
     return resolve_path(
@@ -91,7 +91,7 @@ def set_keyframe_render_interval(
 
 class Utility:
     """
-    The main utility class, helps with different BlenderProc functions.
+    Shared utilities for Blender state and rendering outputs.
     """
 
     temp_dir = ""
@@ -99,9 +99,9 @@ class Utility:
 
     @staticmethod
     def get_current_version() -> Optional[str]:
-        """Gets the current blenderproc version.
+        """Gets the Illusion Blender helpers version.
 
-        :return: a string, the BlenderProc version
+        :return: The version string.
         """
         return __version__
 

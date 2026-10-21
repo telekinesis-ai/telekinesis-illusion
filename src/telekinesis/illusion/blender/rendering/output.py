@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """Provides functionality to write the generated data to disc."""
 
 import os
@@ -39,6 +39,9 @@ def write_hdf5(
 ):
     """
     Saves the information provided inside of the output_data_dict into a .hdf5 container
+
+    Each file includes the helpers version as bytes in the illusion_version
+    dataset.
 
     :param output_dir_path: The folder path in which the .hdf5 containers will be generated
     :param output_data_dict: The container, which keeps the different images, which should be saved to disc.
@@ -118,12 +121,12 @@ def write_hdf5(
                         f"There are more frames {adjusted_frame} then there are blocks of information "
                         f" {len(data_block)} in the given list for key {key}."
                     )
-            blender_proc_version = Utility.get_current_version()
-            if blender_proc_version is not None:
+            illusion_version = Utility.get_current_version()
+            if illusion_version is not None:
                 _WriterUtility.write_to_hdf_file(
                     file,
-                    "blender_proc_version",
-                    np.bytes_(blender_proc_version),
+                    "illusion_version",
+                    np.bytes_(illusion_version),
                 )
 
 

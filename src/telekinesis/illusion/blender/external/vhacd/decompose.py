@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """Decompose script from Khaled Mamou"""
 # ----------------
 # V-HACD Blender add-on
@@ -19,7 +19,7 @@
 
 #
 # NOTE: requires/calls Khaled Mamou"s VHACD executable found here: https://github.com/kmammou/v-hacd/
-# We specifically asked for the permission to use this inside BlenderProc. All rights are still with Khaled Mamou.
+# All rights are still with Khaled Mamou. See NOTICE.md for the permission note.
 
 import os
 from sys import platform

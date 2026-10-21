@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """Provides functionality to render a segmentation image."""
 
 import csv
@@ -341,7 +341,7 @@ def _colorize_object(
     new_mat.use_nodes = True
     # sampling as light,conserves memory, by not keeping a reference to it for multiple importance sampling.
     # This shouldn't change the results because with an emission of 1 the colorized objects aren't emitting light.
-    # Also, BlenderProc's segmap render settings are configured so that there is only a single sample to distribute,
+    # The segmentation render settings use only a single sample to distribute,
     # multiple importance shouldn't affect the noise of the render anyway.
     # This fixes issue #530
     new_mat.cycles.sample_as_light = False

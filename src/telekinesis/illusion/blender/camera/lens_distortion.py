@@ -1,9 +1,8 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """
-This file provides to functions to first set up the lens distortion used in this particular BlenderProc
-run and then to apply the said lens distortion parameters to an image rendered by Blender. Both functions must be
-called after each other to use the lens distortion feature correctly. The `set_lens_distortion` fct. has to be
-called before the rendering takes place and the `apply_lens_distortion` has to be applied to the rendered images.
+Configure lens distortion and apply it to images rendered by Blender.
+Call `set_lens_distortion` before rendering, then `apply_lens_distortion` on
+the rendered images.
 
 For more information on lens distortion see: https://en.wikipedia.org/wiki/Distortion_(optics)
 Note that, unlike in that wikipedia entry as of early 2021, we're here using the undistorted-to-distorted formulation.
@@ -41,7 +40,7 @@ def set_lens_distortion(
     values by interpolation. Note that when adapting the internal image resolution demanded from Blender, the
     camera main point (cx,cy) of the K intrinsic matrix is (internally and temporarily) shifted.
 
-    This function has to be used together with bproc.postprocessing.apply_lens_distortion(), else only the
+    This function has to be used together with apply_lens_distortion(), else only the
     resolution is increased but the image(s) will not be distorted.
 
     :param k1: First radial distortion parameter (of 3rd degree in radial distance) as defined
@@ -178,7 +177,7 @@ def set_lens_distortion(
                     "  and subtract at most that number of lines and columns from the main point location)."
                 )
                 print(
-                    "BlenderProc will not generate incomplete images with void regions since these are not "
+                    "Illusion will not generate incomplete images with void regions since these are not "
                     "useful for ML (data leakage)."
                 )
                 print(
@@ -261,7 +260,7 @@ def apply_lens_distortion(
 ) -> Union[List[np.ndarray], np.ndarray]:
     """
     This functions applies the lens distortion mapping that needs to be precalculated by
-    `bproc.camera.set_lens_distortion()`.
+    `set_lens_distortion()`.
 
     Without calling this function the `set_lens_distortion` fct. only increases the image resolution and
     changes the K matrix of the camera.
@@ -284,11 +283,9 @@ def apply_lens_distortion(
             orig_res_y, orig_res_x = content["original_image_res"]
         else:
             raise Exception(
-                "Applying of a lens distortion is only possible after calling "
-                "bproc.camera.set_lens_distortion(...) and pass 'mapping_coords' and "
-                "'orig_res_x' + 'orig_res_x' to bproc.postprocessing.apply_lens_distortion(...). "
-                "Previously this could also have been done via the CameraInterface module, "
-                "see the example on lens_distortion."
+                "Call set_lens_distortion(...) first and pass 'mapping_coords', "
+                "'orig_res_x', and 'orig_res_y' to apply_lens_distortion(...), "
+                "or call set_lens_distortion(..., use_global_storage=True)."
             )
     interpolation_order = 2 if use_interpolation else 0
 
@@ -359,7 +356,7 @@ def set_camera_parameters_from_config_file(
     """
     This function sets the camera intrinsic parameters based on a config file, currently it only supports the
     DLR-RMC camera calibration file format used in the "DLR CalDe and DLR CalLab" camera calibration toolbox.
-    The calibration file allows to use multiple cameras, but only one can be used inside of BlenderProc per run.
+    The calibration file allows multiple cameras, but only one can be used per run.
 
     :param camera_intrinsics_file_path: Path to the calibration file
     :param camera_index: Used camera index
@@ -456,7 +453,7 @@ def set_camera_parameters_from_config_file(
     ):
         raise RuntimeError(
             "The origin in the DLR-RMC camera calibration file has to be defined and "
-            "set to center for BlenderProc distortion to work."
+            "set to center for lens distortion to work."
         )
     # set intrinsics based on the yaml-read matrix called A and the yaml-read camera image size
     CameraUtility.set_intrinsics_from_K_matrix(

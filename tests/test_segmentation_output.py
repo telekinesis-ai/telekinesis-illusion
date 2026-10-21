@@ -21,7 +21,7 @@ from telekinesis.illusion.blender.rendering import renderer
 
 @pytest.fixture(autouse=True)
 def isolated_render_outputs(context, monkeypatch):
-    # BlenderProc scene cleanup deliberately retains render settings and outputs.
+    # Scene cleanup deliberately retains render settings and outputs.
     monkeypatch.setitem(GlobalStorage._storage_dict, "output", [])
     bpy.context.scene.use_nodes = True
     tree = bpy.context.scene.node_tree

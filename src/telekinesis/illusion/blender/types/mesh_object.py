@@ -1,4 +1,4 @@
-# Adapted from the modified BlenderProc distribution; see NOTICE.md.
+# Adapted code; see NOTICE.md for attribution and licensing.
 """All mesh objects are captured in this class."""
 
 from typing import List, Union, Tuple, Optional, Literal, Dict
@@ -264,7 +264,7 @@ class MeshObject(Entity):
         self,
         vhacd_path: str,
         temp_dir: Optional[str] = None,
-        cache_dir: str = "blenderproc_resources/decomposition_cache",
+        cache_dir: str = "illusion_resources/decomposition_cache",
     ):
         """Builds a collision shape of the object by decomposing it into near convex parts using V-HACD
 

@@ -1,7 +1,6 @@
 """Internal state shared by the retained Blender rendering helpers.
 
-Adapted from BlenderProc GlobalStorage (see NOTICE.md). The launcher/global
-configuration framework is omitted. Cleared when initializing a new Scene.
+Cleared when initializing a new Scene. See NOTICE.md for attribution.
 """
 
 from typing import Any

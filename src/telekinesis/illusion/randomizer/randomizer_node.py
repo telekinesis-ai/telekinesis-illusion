@@ -223,7 +223,6 @@ class ObjectPoseRandomizer(RandomizerNode):
         mode_on_failure: str = "last_pose",
     ) -> Dict[Object, Tuple[int, bool]]:
         """
-        From: https://github.com/DLR-RM/BlenderProc/blob/main/blenderproc/python/object/ObjectPoseSampler.py
         Samples positions and rotations of selected object inside the sampling
         volume while performing mesh and bounding box collision checks.
 
@@ -274,7 +273,7 @@ class ObjectPoseRandomizer(RandomizerNode):
             set(objects_to_check_collisions) - set(objects_to_sample)
         )
 
-        # Convert to MeshObject in order to use BlenderProc utility functions
+        # Collision checks require mesh wrappers.
         if cur_objects_to_check_collisions:
             cur_objects_to_check_collisions = [
                 o.get_object() for o in cur_objects_to_check_collisions
@@ -370,7 +369,6 @@ class ObjectPoseRandomizer(RandomizerNode):
     ) -> List[Object]:
         """
         TODO: Check if it makes more sense to use a geo node set up...
-        From: https://github.com/DLR-RM/BlenderProc/blob/main/blenderproc/python/object/OnSurfaceSampler.py
         Samples objects poses on a surface.
 
         The objects are positioned slightly above the surface due to the
