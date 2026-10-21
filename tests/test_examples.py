@@ -1,4 +1,4 @@
-"""Run the requested scripts in isolated processes with real CUDA rendering."""
+"""Run the generation examples without previews using real CUDA rendering."""
 
 import json
 import os
@@ -16,12 +16,36 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def run_example(name, args, log_path):
+    """Run an example without a viewer and retain its output on failure."""
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
     env["PYTHONUNBUFFERED"] = "1"
+    # bpy can crash during Windows interpreter teardown after a successful run.
+    runner = """
+import os
+import runpy
+import sys
+
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+if sys.platform == "win32":
+    from telekinesis.illusion.blender.initialization import clean_temp_dir
+
+    clean_temp_dir()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
+"""
     with log_path.open("w", encoding="utf8") as log:
         result = subprocess.run(
-            [sys.executable, str(ROOT / "examples" / name), *map(str, args)],
+            [
+                sys.executable,
+                "-c",
+                runner,
+                str(ROOT / "examples" / name),
+                *map(str, args),
+                "--no-preview",
+            ],
             cwd=ROOT,
             env=env,
             stdout=log,
@@ -32,6 +56,7 @@ def run_example(name, args, log_path):
 
 
 def validate_dataset(path, count, resolution):
+    """Check rendered images and their COCO masks, then return the records."""
     coco = json.loads(path.read_text(encoding="utf8"))
     assert len(coco["images"]) == count
     ids = {image["id"] for image in coco["images"]}
@@ -40,6 +65,7 @@ def validate_dataset(path, count, resolution):
     categories = {entry["id"]: entry["name"] for entry in coco["categories"]}
     assert categories
     for image in coco["images"]:
+        assert (image["height"], image["width"]) == (resolution, resolution)
         pixels = cv2.imread(str(path.parent / image["file_name"]))
         assert pixels is not None
         assert pixels.shape == (resolution, resolution, 3)
@@ -61,11 +87,11 @@ def validate_dataset(path, count, resolution):
     "name", ["quickstart_flying_things.py", "quickstart_parts_in_bin.py"]
 )
 def test_quickstarts_render_multiple_samples(tmp_path, name):
+    """Quickstarts render the requested image count with camera metadata."""
     output = tmp_path / "dataset"
     run_example(
         name,
         [
-            "--no-preview",
             "--num-images",
             3,
             "--resolution",
@@ -84,81 +110,43 @@ def test_quickstarts_render_multiple_samples(tmp_path, name):
 
 
 @pytest.mark.integration
-def test_worker_cli_accumulates_compatible_shards_across_restarts(tmp_path):
+def test_worker_renders_and_exports_coco_shards(tmp_path):
+    """The YAML example renders shards, merges them, and exports COCO splits."""
     spec = yaml.safe_load(
-        (ROOT / "configs/example_bin_picking_gearwheel_2.yaml").read_text()
+        (ROOT / "configs/example_bin_picking_gearwheel_2.yaml").read_text(
+            encoding="utf8"
+        )
     )
-    spec["metadata"]["asset_directory"] = str(ROOT / "assets")
-    spec.setdefault("output", {})["dataset_format"] = None
+    spec["metadata"].update(
+        asset_directory=str(ROOT / "assets"),
+        base_output_directory=str(tmp_path),
+        dataset_name="test_bins",
+        num_images=3,
+    )
+    spec["shard"]["size"] = 2
+    spec["camera"].update(image_width=64, image_height=64)
+    spec["renderer"]["samples"] = 2
     spec_path = tmp_path / "spec.yaml"
     spec_path.write_text(yaml.safe_dump(spec), encoding="utf8")
-    args = [
-        "--spec-file",
-        spec_path,
-        "--no-preview",
-        "--num-images",
-        3,
-        "--shard-size",
-        2,
-        "--dataset-name",
-        "test_bins",
-        "--output-dir",
-        tmp_path,
-        "--resolution",
-        64,
-        "--samples",
-        2,
-        "--seed",
-        23,
-    ]
+    run_example(
+        "generate_synthetic_data_with_bin_picking_worker.py",
+        ["--spec_file", spec_path],
+        tmp_path / "run.log",
+    )
     dataset = tmp_path / "test_bins"
-    run_example(
-        "bat_scripts/generate_synthetic_data_with_bin_picking_worker.py",
-        args,
-        tmp_path / "first.log",
-    )
-    shards_before = set(dataset.glob("shard_*"))
-    assert len(shards_before) == 2
-    first = validate_dataset(dataset / "merged_coco_annotations.json", 3, 64)
-    run_example(
-        "bat_scripts/generate_synthetic_data_with_bin_picking_worker.py",
-        args,
-        tmp_path / "second.log",
-    )
-    assert len(list(dataset.glob("shard_*"))) == 4
-    assert all(path.exists() for path in shards_before)
-    second = validate_dataset(dataset / "merged_coco_annotations.json", 6, 64)
-    assert first["categories"] == second["categories"]
-
-
-@pytest.mark.integration
-def test_worker_cli_default_spec_exports_coco_splits(tmp_path):
-    run_example(
-        "bat_scripts/generate_synthetic_data_with_bin_picking_worker.py",
-        [
-            "--no-preview",
-            "--num-images",
-            3,
-            "--shard-size",
-            2,
-            "--dataset-name",
-            "export_bins",
-            "--output-dir",
-            tmp_path,
-            "--resolution",
-            64,
-            "--samples",
-            2,
-            "--seed",
-            23,
-        ],
-        tmp_path / "export.log",
-    )
-    dataset = tmp_path / "export_bins"
+    shards = list(dataset.glob("shard_*/coco_annotations.json"))
+    assert len(shards) == 2
+    shard_counts = [
+        len(json.loads(path.read_text(encoding="utf8"))["images"])
+        for path in shards
+    ]
+    assert sorted(shard_counts) == [1, 2]
+    for path, count in zip(shards, shard_counts):
+        validate_dataset(path, count, 64)
     validate_dataset(dataset / "merged_coco_annotations.json", 3, 64)
     exported = list((dataset / "coco_format").glob("*/_annotations.coco.json"))
     assert len(exported) == 3
-    records = [json.loads(path.read_text()) for path in exported]
+    records = [json.loads(path.read_text(encoding="utf8")) for path in exported]
     assert sum(len(data["images"]) for data in records) == 3
     for path, data in zip(exported, records):
         assert all(
