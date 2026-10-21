@@ -29,6 +29,8 @@ from telekinesis.illusion.sampler.camera_pose_sampler import (
     volume_sampler,
 )
 from telekinesis.illusion.types.distribution import uniform
+from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.model_asset import ModelAsset
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.utils.assets import resolve_asset_dir
 from telekinesis.illusion.writer.writer import CocoWriter
@@ -63,37 +65,43 @@ def main():
 
     assets_dir = resolve_asset_dir()
 
-    scene.add_light("softbox", "AREA", power=80.0, size=0.4)
-    scene.add_light("spot", "SPOT", power=20.0, radius=0.03)
+    scene.add(Light("softbox", "AREA", power=80.0, size=0.4))
+    scene.add(Light("spot", "SPOT", power=20.0, radius=0.03))
 
     # Add models to the context
     model_1_path = str(
         assets_dir / "models" / "mechanical_parts" / "gearwheel_1.glb"
     )
-    scene.add_model(
-        model_1_path,
-        object_name="part_1",
-        uv_mapping="cube",
-        active_in_simulation=True,
+    scene.add(
+        ModelAsset(
+            model_1_path,
+            object_name="part_1",
+            uv_mapping="cube",
+            active_in_simulation=True,
+        )
     )
 
     model_2_path = str(
         assets_dir / "models" / "mechanical_parts" / "pipe_fixture_1.glb"
     )
-    scene.add_model(
-        model_2_path,
-        object_name="part_2",
-        uv_mapping="cube",
-        shading="SMOOTH",
-        active_in_simulation=True,
+    scene.add(
+        ModelAsset(
+            model_2_path,
+            object_name="part_2",
+            uv_mapping="cube",
+            shading="SMOOTH",
+            active_in_simulation=True,
+        )
     )
 
     model_3_path = str(assets_dir / "models" / "bins" / "plastic_bin_2.glb")
-    scene.add_model(
-        model_3_path,
-        object_name="crate_2",
-        uv_mapping="cube",
-        collision_shape="MESH",
+    scene.add(
+        ModelAsset(
+            model_3_path,
+            object_name="crate_2",
+            uv_mapping="cube",
+            collision_shape="MESH",
+        )
     )
 
     # Create the randomizer

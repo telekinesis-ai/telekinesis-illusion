@@ -31,6 +31,7 @@ from telekinesis.illusion.core.engine import BlenderEngine, RenderConfig
 from telekinesis.illusion.types.camera import CameraConfig
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.model_asset import ModelAsset
 from telekinesis.illusion.types.distribution import Uniform, uniform
 from telekinesis.illusion.sampler.camera_pose_sampler import (
     CAMERA_POSE_SAMPLERS,
@@ -480,20 +481,22 @@ class BinPickingWorker:
         id_supercategory_map = defaultdict(list)
         for model in self._specs["models"]:
             model_path = str(resolve_asset_path(model["path"], self._asset_dir))
-            self._context.add_model(
-                model_path,
-                object_name=model["name"],
-                category_name=model["category_name"],
-                category_id=model["id"],
-                active_in_simulation=model["simulation"]["active"],
-                collision_shape=model["simulation"]["collision_shape"],
-                scale=model["scale"],
-                preprocess_model=model["preprocess_model"],
-                material_preprocessing=model.get(
-                    "material_preprocessing", "replace"
-                ),
-                uv_mapping=model.get("uv_mapping", "smart"),
-                shading=model.get("shading", "FLAT"),
+            self._context.add(
+                ModelAsset(
+                    model_path,
+                    object_name=model["name"],
+                    category_name=model["category_name"],
+                    category_id=model["id"],
+                    active_in_simulation=model["simulation"]["active"],
+                    collision_shape=model["simulation"]["collision_shape"],
+                    scale=model["scale"],
+                    preprocess_model=model["preprocess_model"],
+                    material_preprocessing=model.get(
+                        "material_preprocessing", "replace"
+                    ),
+                    uv_mapping=model.get("uv_mapping", "smart"),
+                    shading=model.get("shading", "FLAT"),
+                )
             )
             model_supercategory_map[model["supercategory"]].append(
                 model["name"]
@@ -514,20 +517,22 @@ class BinPickingWorker:
             distractor_path = str(
                 resolve_asset_path(distractor["path"], self._asset_dir)
             )
-            self._context.add_model(
-                distractor_path,
-                object_name=distractor["name"],
-                category_name=distractor["category_name"],
-                category_id=distractor["id"],
-                active_in_simulation=distractor["simulation"]["active"],
-                collision_shape=distractor["simulation"]["collision_shape"],
-                scale=distractor["scale"],
-                preprocess_model=distractor["preprocess_model"],
-                material_preprocessing=distractor.get(
-                    "material_preprocessing", "replace"
-                ),
-                uv_mapping=distractor.get("uv_mapping", "smart"),
-                shading=distractor.get("shading", "FLAT"),
+            self._context.add(
+                ModelAsset(
+                    distractor_path,
+                    object_name=distractor["name"],
+                    category_name=distractor["category_name"],
+                    category_id=distractor["id"],
+                    active_in_simulation=distractor["simulation"]["active"],
+                    collision_shape=distractor["simulation"]["collision_shape"],
+                    scale=distractor["scale"],
+                    preprocess_model=distractor["preprocess_model"],
+                    material_preprocessing=distractor.get(
+                        "material_preprocessing", "replace"
+                    ),
+                    uv_mapping=distractor.get("uv_mapping", "smart"),
+                    shading=distractor.get("shading", "FLAT"),
+                )
             )
             self._distractor_names.append(distractor["name"])
             resolved_id = self._context.get_assets()[
@@ -1258,7 +1263,7 @@ class BinPickingWorker:
 
         self._loaded_light_types = {}
         for name, (light_type, properties, pose) in self._light_nodes.items():
-            self._context.add_light(name, light_type)
+            self._context.add(Light(name, light_type))
             self._loaded_light_types[name] = light_type
             self._randomizer.add_randomizer(
                 properties,

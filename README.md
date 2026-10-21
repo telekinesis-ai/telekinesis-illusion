@@ -70,11 +70,14 @@ from telekinesis.illusion.randomizer.randomizer_node import (
     ObjectInstanceRandomizer, ObjectPoseRandomizer, CameraPoseRandomizer,
 )
 from telekinesis.illusion.sampler.camera_pose_sampler import shell_sampler
+from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.model_asset import ModelAsset
 from telekinesis.illusion.writer.writer import CocoWriter
 
 scene = Scene()
-scene.add_model("assets/models/mechanical_parts/gearwheel_1.glb",
-                object_name="gear", category_name="gear", category_id=1)
+scene.add(ModelAsset("assets/models/mechanical_parts/gearwheel_1.glb",
+                     object_name="gear", category_name="gear", category_id=1))
+scene.add(Light("key", "POINT", power=40.0, location=(0.0, 0.0, 1.0)))
 
 randomizer = Randomizer()
 randomizer.add_randomizer(ObjectInstanceRandomizer({"gear": (1, 3)}), "counts")
@@ -93,6 +96,13 @@ generator = SyntheticDataGenerator(
 )
 generator.generate(num_images=100)
 ```
+
+`scene.add()` accepts a `ModelAsset` or a `Light`. Model registration returns a
+normalized copy with an absolute path, validated scale and resolved category;
+the input specification stays unchanged. Omit category fields to use the model
+name and an automatically assigned ID. Construct lights after creating the
+scene; `add()` registers and returns the supplied light, accessible through
+`scene.get_light(name)` and `scene.get_lights()`.
 
 `generate()` prepares automatically. Call `generator.prepare()` explicitly if
 you need to inspect instantiated objects or set fixed transforms first. Before
@@ -161,8 +171,9 @@ configuration graph or implicit scene rebuild. The process has one active bpy
 scene; constructing another `Scene` replaces it. The current importer continues
 to assume a single mesh per model.
 
-`Context` is a compatibility import for `Scene`. The former instance-count
-arguments to `Context.add_model()` have moved to `ObjectInstanceRandomizer`.
+`Context` is a compatibility import for `Scene`. Replace `add_model(...)` with
+`add(ModelAsset(...))` and `add_light(...)` with `add(Light(...))`. Instance-count
+arguments belong to `ObjectInstanceRandomizer`.
 Legacy generator physics keywords remain accepted for existing workers; new
 scripts should pass a `PhysicsConfig` to their engine.
 

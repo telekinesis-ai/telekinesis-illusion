@@ -3,7 +3,7 @@ Owns model definitions, linked instance pools, and current scene activity.
 """
 
 import random
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from types import MappingProxyType
 from telekinesis.illusion.types.model_asset import ModelAsset
 from collections.abc import Sequence
@@ -44,6 +44,10 @@ from telekinesis.illusion.utils.assets import (
 class Scene:
     """
     Class for managing the context for synthetic data generation.
+
+    Example:
+        scene = Scene()
+        scene.add(Light("key", power=40.0))
     """
 
     def __init__(
@@ -117,16 +121,6 @@ class Scene:
         """
         return self._camera
 
-    def add_light(
-        self, light_name: str, light_type: str = "POINT", **kwargs
-    ) -> Light:
-        """Create a named light; kwargs are Light pose and property values."""
-        if light_name in self._lights:
-            raise ValueError(f"Light {light_name!r} already exists.")
-        light = Light(light_name, light_type, **kwargs)
-        self._lights[light_name] = light
-        return light
-
     def get_lights(self) -> dict[str, Light]:
         """Return lights by their exact registered names, separate from meshes."""
         return self._lights
@@ -177,7 +171,7 @@ class Scene:
 
         Args:
             object_name: str
-                The name the model was registered with in add_model().
+                The object_name of the ModelAsset registered with add().
 
         Returns:
             The list of Object instances, or an empty list if the name is
@@ -387,39 +381,52 @@ class Scene:
 
         return add_mapping(name, category_id)
 
-    def add_model(
-        self,
-        model_path: str | Path,
-        object_name: str,
-        category_name: str | None = None,
-        category_id: int | None = None,
-        active_in_simulation: bool = False,
-        collision_shape: str = "CONVEX_HULL",
-        scale: float | np.ndarray = 1.0,
-        preprocess_model: bool = True,
-        shading: str = "FLAT",
-        material_preprocessing: str = "replace",
-        uv_mapping: str = "smart",
-    ) -> ModelAsset:
-        """Register a single-mesh model without importing or duplicating it.
+    def add(self, asset: ModelAsset | Light) -> ModelAsset | Light:
+        """Register a model definition or an existing light by its exact name.
 
-        Instance ranges belong to ObjectInstanceRandomizer.counts. Register all
-        assets before preparation. A new Scene replaces the current bpy scene.
+        Models are validated and assigned an annotation category without
+        importing meshes. Register them before preparation; instance counts
+        belong to ObjectInstanceRandomizer.counts. Lights are constructed after
+        the Scene and are registered separately from models and mesh instances.
+
+        Args:
+            asset: ModelAsset specification or a constructed Light.
+
+        Returns:
+            For a model, the registered copy with an absolute Path, a float or
+            three-float tuple scale, and resolved category metadata. The input
+            specification is unchanged. For a light, the supplied object.
+
+        Raises:
+            TypeError: The asset is neither a ModelAsset nor a Light.
+            RuntimeError: A model is added after preparation or cleanup.
+            ValueError: A model name is empty or already registered, a light
+                name is already registered, scale is not a positive finite
+                scalar or three-vector, or category metadata conflicts.
+            FileNotFoundError: The model path does not point to a file.
         """
+        if isinstance(asset, Light):
+            light_name = asset.get_name()
+            if light_name in self._lights:
+                raise ValueError(f"Light {light_name!r} already exists.")
+            self._lights[light_name] = asset
+            return asset
+        if not isinstance(asset, ModelAsset):
+            raise TypeError("asset must be a ModelAsset or Light.")
         if self._prepared or self._closed:
             raise RuntimeError("Register models before preparing the scene.")
         if (
-            not object_name
-            or object_name in self._assets
-            or object_name in self._object_groups
+            not asset.object_name
+            or asset.object_name in self._assets
+            or asset.object_name in self._object_groups
         ):
             raise ValueError(
-                f"Model name {object_name!r} is empty or already registered."
+                f"Model name {asset.object_name!r} is empty or already registered."
             )
-        path = Path(model_path).resolve()
+        path = Path(asset.model_path).resolve()
         if not path.is_file():
             raise FileNotFoundError(path)
-        values = np.asarray(scale, dtype=float)
+        values = np.asarray(asset.scale, dtype=float)
         if (
             values.shape not in ((), (3,))
             or not np.all(np.isfinite(values))
@@ -430,22 +437,16 @@ class Scene:
             )
         scale = float(values) if values.ndim == 0 else tuple(map(float, values))
         category_name, category_id = self._resolve_category_id_and_name(
-            object_name, category_name, category_id
+            asset.object_name, asset.category_name, asset.category_id
         )
-        asset = ModelAsset(
-            path,
-            object_name,
-            category_name,
-            category_id,
-            active_in_simulation,
-            collision_shape,
-            scale,
-            preprocess_model,
-            shading,
-            material_preprocessing,
-            uv_mapping,
+        asset = replace(
+            asset,
+            model_path=path,
+            category_name=category_name,
+            category_id=category_id,
+            scale=scale,
         )
-        self._assets[object_name] = asset
+        self._assets[asset.object_name] = asset
         return asset
 
     def get_assets(self):

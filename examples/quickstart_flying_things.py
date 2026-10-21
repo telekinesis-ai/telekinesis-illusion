@@ -26,6 +26,8 @@ from telekinesis.illusion.randomizer.randomizer_node import (
 )
 from telekinesis.illusion.sampler.camera_pose_sampler import shell_sampler
 from telekinesis.illusion.types.distribution import uniform
+from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.model_asset import ModelAsset
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.utils.assets import resolve_asset_dir
 from telekinesis.illusion.writer.writer import CocoWriter
@@ -60,26 +62,30 @@ def main():
 
     assets_dir = resolve_asset_dir()
 
-    scene.add_light("key", "POINT", power=40.0, radius=0.05)
-    scene.add_light("sun", "SUN", power=0.2)
+    scene.add(Light("key", "POINT", power=40.0, radius=0.05))
+    scene.add(Light("sun", "SUN", power=0.2))
 
     # Add models to the context
     model_1_path = str(
         assets_dir / "models" / "mechanical_parts" / "gearwheel_1.glb"
     )
-    scene.add_model(
-        model_1_path,
-        object_name="part_1",
-        uv_mapping="cube",
+    scene.add(
+        ModelAsset(
+            model_1_path,
+            object_name="part_1",
+            uv_mapping="cube",
+        )
     )
 
     model_2_path = str(
         assets_dir / "models" / "mechanical_parts" / "pipe_1.glb"
     )
-    scene.add_model(
-        model_2_path,
-        object_name="part_2",
-        uv_mapping="cube",
+    scene.add(
+        ModelAsset(
+            model_2_path,
+            object_name="part_2",
+            uv_mapping="cube",
+        )
     )
 
     # Create the randomizer
