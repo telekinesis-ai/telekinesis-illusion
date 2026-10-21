@@ -27,15 +27,13 @@ from telekinesis.illusion.randomizer.randomizer_node import (
     NodeConfig,
     ObjectInstanceRandomizer,
     ObjectPoseRandomizer,
-    RandomizerNode,
 )
 from telekinesis.illusion.blender.types.mesh_object import create_primitive
 from telekinesis.illusion.blender.types.material import Material
 from telekinesis.illusion.blender.undo import UndoAfterExecution
-from telekinesis.illusion.blender import initialization, physics
+from telekinesis.illusion.blender import physics
 from telekinesis.illusion.blender.camera import settings
 from telekinesis.illusion.blender.math import build_transformation_mat
-from telekinesis.illusion.blender.rendering import renderer
 from telekinesis.illusion.types.render_result import RenderResult
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.writer.writer import CocoWriter

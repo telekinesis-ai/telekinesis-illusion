@@ -12,7 +12,6 @@ from typing import Dict, List
 
 import numpy as np
 from loguru import logger
-from tqdm import tqdm
 
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 

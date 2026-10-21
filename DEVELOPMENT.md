@@ -184,9 +184,9 @@ renderer:
 ```
 
 The standard `examples/generate_synthetic_data_with_bin_picking_worker.py`
-currently selects `configs/bin_picking_epson.yaml`, which is not tracked in the
-repository. Use the explicit command above for a fresh checkout, or point a
-local script at a configuration you provide.
+defaults to `configs/example_bin_picking_gearwheel_2.yaml` with preview disabled.
+Use `--spec_file PATH` to select another configuration and `--preview` or
+`--no-preview` to control the viewer.
 
 On Windows, the batch entrypoints bypass native interpreter teardown after a
 successful run, so Python exit handlers do not run. Generation errors still

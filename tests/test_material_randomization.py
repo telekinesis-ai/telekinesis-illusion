@@ -13,11 +13,7 @@ isolate_user_extensions()
 import bpy
 from telekinesis.illusion.blender.types.mesh_object import MeshObject
 
-from telekinesis.illusion.blender.types import mesh_object
 from telekinesis.illusion.blender import physics
-from telekinesis.illusion.blender.camera import settings as camera_settings
-from telekinesis.illusion.blender import math as blender_math
-from telekinesis.illusion.blender.rendering import renderer
 from telekinesis.illusion.randomizer.materials import (
     MaterialTarget,
 )

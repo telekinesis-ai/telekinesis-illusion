@@ -3,7 +3,6 @@ Defines the camera class that is reponsible for the camera settings in the
 context
 """
 
-from typing import List
 from dataclasses import dataclass
 import numpy as np
 
@@ -13,7 +12,7 @@ from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 isolate_user_extensions()
 
 import bpy
-from mathutils import Matrix, Vector, Euler
+from mathutils import Matrix, Euler
 from telekinesis.illusion.blender.camera import settings as camera_settings
 from telekinesis.illusion.blender import math as blender_math
 

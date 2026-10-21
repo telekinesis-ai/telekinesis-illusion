@@ -4,7 +4,6 @@
 import atexit
 import os
 import random
-import signal
 import shutil
 
 from numpy import random as np_random

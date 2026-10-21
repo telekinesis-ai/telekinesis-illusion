@@ -5,7 +5,6 @@ import json
 import os
 from typing import Optional, Dict, Union, Tuple, List
 
-from loguru import logger
 import numpy as np
 from skimage import measure
 import cv2

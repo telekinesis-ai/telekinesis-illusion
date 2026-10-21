@@ -5,7 +5,7 @@ nodes.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Callable, List, Dict, Tuple, Any
+from typing import Callable, List, Dict, Tuple
 import random
 import numpy as np
 from loguru import logger
@@ -20,18 +20,16 @@ isolate_user_extensions()
 
 import bpy
 import mathutils
-from mathutils import Matrix, Vector, Euler
+from mathutils import Euler
 
 from telekinesis.illusion.blender.types.mesh_object import (
     MeshObject,
     get_all_mesh_objects,
 )
 from telekinesis.illusion.blender.collision import CollisionUtility
-from telekinesis.illusion.blender.types.entity import Entity
 
-from telekinesis.illusion.types.distribution import Uniform, uniform
+from telekinesis.illusion.types.distribution import Uniform
 from telekinesis.illusion.core.context import Context
-from telekinesis.illusion.types.camera import Camera
 from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.types.light import AREA_SHAPES, Light, _vector
 from telekinesis.illusion.utils.assets import resolve_asset_dir

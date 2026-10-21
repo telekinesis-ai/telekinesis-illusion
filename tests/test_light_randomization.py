@@ -17,8 +17,6 @@ import bpy
 
 from telekinesis.illusion.blender.types import mesh_object
 from telekinesis.illusion.blender import physics
-from telekinesis.illusion.blender.camera import settings as camera_settings
-from telekinesis.illusion.blender import math as blender_math
 from telekinesis.illusion.blender.rendering import renderer
 from telekinesis.illusion.core.synthetic_data_generator import (
     SyntheticDataGenerator,

@@ -298,7 +298,7 @@ def get_node_attributes(node: bpy.types.Node) -> List[str]:
     for attr in node.bl_rna.properties:
         # check if the attribute should be copied and add it to the list of attributes to copy
         if (
-            not attr.identifier in ignore_attributes
+            attr.identifier not in ignore_attributes
             and not attr.identifier.split("_")[0] == "bl"
         ):
             attributes.append(attr.identifier)

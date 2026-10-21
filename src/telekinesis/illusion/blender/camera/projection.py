@@ -3,7 +3,6 @@
 
 from typing import Optional
 from telekinesis.illusion.blender.postprocessing import dist2depth
-from telekinesis.illusion.blender.types.mesh_object import create_primitive
 
 import bpy
 import numpy as np
