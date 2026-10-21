@@ -238,10 +238,8 @@ class GridRegionSampler:
 
     def _rebuild_grid(self, bin_name: str) -> None:
         illusion_object = self._context.get_objects_by_name(bin_name)
-        bproc_mesh_object = illusion_object.get_object()
-        region: Region2D = select_upper_region(
-            bproc_mesh_object, self._upper_dir
-        )
+        mesh_object = illusion_object.get_object()
+        region: Region2D = select_upper_region(mesh_object, self._upper_dir)
 
         base_point = region.base_point()
         vec1, vec2 = region.vectors()

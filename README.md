@@ -12,16 +12,10 @@
     <a href="LICENSE">
       <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-green" />
     </a>
-    <a href="https://www.blender.org/download/releases/4-2/">
-      <img src="https://img.shields.io/badge/Blender-4.2%20LTS-orange" />
-    </a>
-    <a href="#requirements">
-      <img src="https://img.shields.io/badge/platform-Windows%20x64-lightgrey" />
-    </a>
   </p>
 
   <p>
-    <a href="https://docs.telekinesis.ai/data-engine/synthetic-data-generation/overview.html">Docs</a>
+    <a href="https://docs.telekinesis.ai/">Docs</a>
     &nbsp;•&nbsp;
     <a href="https://github.com/telekinesis-ai/telekinesis-illusion">GitHub</a>
     &nbsp;•&nbsp;
@@ -45,64 +39,48 @@ Full documentation: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.
 
 ## Installation
 
-It is highly recommended to install a Miniconda environment before setting up the project. You can install Miniconda by following instructions from [here](https://docs.conda.io/en/latest/miniconda.html#installing).
+1. Create the enviornment;
+    ```bash
+    conda create -n telekinesis-illusion python=3.11
+    conda activate telekinesis-illusion
+    ```
+2. Install the package:
 
-```bash
-conda create -n telekinesis-illusion python=3.11
-conda activate telekinesis-illusion
-```
+    Via pip: The simplest way to install `telekinesis-illusion`.
+    ```bash
+    python -m pip install telekinesis-illusion
+    ```
+    Via GitHub: Alternatively, if you need to make changes to `telekinesis-illusion` or use a different branch.
+    ```bash
+    git clone https://github.com/telekinesis-ai/telekinesis-illusion.git
+    ```
 
-Clone the repository:
-
-```bash
-git clone https://github.com/telekinesis-ai/telekinesis-illusion
-cd telekinesis-illusion
-```
-
-This repository comes with a modified BlenderProc 2.8.0 package that uses an external `bpy` package (4.2.17 (LTS)) - see [BlenderProc/NOTICE.md](BlenderProc/NOTICE.md) for the list of modifications. Install it in editable mode:
-
-```bash
-cd BlenderProc
-pip install -e .
-```
-
-Then install `telekinesis-illusion` from the repository root:
-
-```bash
-cd ..
-pip install -e .
-```
-
-`telekinesis-illusion` comes with a small collection of default assets and models for running the examples.
-
-In case you want to use your own assets, make sure to organize them in the expected layout as described in [docs/GUIDE.md](docs/GUIDE.md#assets).
-
-## Blender Extension
-
-To ease the parameter tuning of the `telekinesis-illusion` randomizer tree, we have additionally developed a Blender node-graph editor, with a live preview. 
-
-You can install the `telekinesis-illusion` Blender extension from our [GitHub](https://github.com/telekinesis-ai/telekinesis-illusion-blender-extension).
+    ```bash
+    cd telekinesis-illusion
+    python -m pip install -e .
+    ```
 
 ## Quickstart
+The examples default to CUDA; `BlenderEngine(RenderConfig(device="CPU"))` selects CPU rendering:
 
-Run the examples from the `examples` folder. Note: running an example for the first time might take a few minutes and you might see `Loading render kernels (may take a few minutes the first time)` in the terminal. The quickstart examples demonstarte the following use cases:
-
+Run the exmamples:
 ```bash
-python examples/quickstart_flying_things.py
+python examples/quickstart_flying_things.py --preview
+```
+```bash
+python examples/quickstart_parts_in_bin.py --preview
+```
+```bash
+python examples/generate_synthetic_data_with_bin_picking_worker.py --preview
 ```
 
-Runs the low-level API to build a "flying things" scene: gearwheels and pipes are scattered in mid-air (no physics simulation) against randomized industrial/studio backgrounds. Generates a COCO instance-segmentation dataset of 5 images and opens it in the interactive dataset viewer.
-
+The checkout includes the original example assets. For another asset tree,
+pass `asset_dir` to `Scene`, or set `metadata.asset_directory` in the worker
+YAML. Relative YAML asset paths resolve against that YAML file. Interactive
+FiftyOne previews are optional: 
 ```bash
-python examples/quickstart_parts_in_bin.py
+python -m pip install -e ".[viewer]"
 ```
-
-Runs the low-level API to build a bin-picking scene: gearwheels and a pipe fixture are dropped into a bin and settled with physics simulation. Generates a COCO instance-segmentation dataset of 5 images and opens it in the interactive dataset viewer.
-
-```bash
-python examples/generate_synthetic_data_with_bin_picking_worker.py
-```
-Launches synthetic data generation for a bin-picking use case with the default assets. Generates a COCO instance-segmentation dataset of 20 images (gearwheels in an industrial bin, with pipes and pipe fixtures as distractors) and opens the result in the interactive dataset viewer.
 
 ## Documentation
 

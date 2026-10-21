@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telekinesis-illusion"
-version = "0.1.1"
+version = "0.2.0"
 description = "A synthetic data generation package."
 readme = "README.md"
 requires-python = "~=3.11.14"
@@ -15,10 +15,11 @@ license-files = [
     "LICEN[CS]E*",
 ]
 dependencies = [
+    "numpy>=1.26",
+    "Pillow>=10",
+    "h5py>=3.10",
     "loguru>=0.7.3",
-    "debugpy>=1.8.19",
     "opencv-contrib-python==4.13.0.90",
-    "pathlib>=1.0.1",
     "tqdm>=4.67.1",
     "pycocotools>=2.0.11",
     # Blender
@@ -29,13 +30,10 @@ dependencies = [
     "scikit-image>=0.23.2",
     "rich>=13.7.1",
     "pypng>=0.20220715.0",
-    # Deep Learning
-    "fiftyone==1.17.0",
     "httpx>=0.28.1",
-    # Development
-    "ruff>=0.15.9",
-    "pylint>=4.0.5",
-    "pytest>=8.3.4",
+    "pyyaml>=6.0",
+    "scipy>=1.11",
+    "GitPython>=3.1",
 ]
 authors = [
     { name = "Telekinesis", email = "support@telekinesis.ai" },
@@ -43,7 +41,6 @@ authors = [
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries",
@@ -52,6 +49,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+test = ["pytest>=8.3.4", "ruff>=0.15.9"]
+viewer = ["fiftyone==1.17.0"]
 docs = [
     "mkdocs>=1.6,<2",
     "mkdocstrings[python]>=0.25,<1",
@@ -75,3 +74,15 @@ where = [
     "src",
 ]
 namespaces = true
+exclude = ["*.__pycache__*"]
+
+[tool.setuptools.package-data]
+"telekinesis.illusion.blender" = ["NOTICE.md", "LICENSE.upstream", "resources/**/*", "external/vhacd/*.sh"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["**/__pycache__/*", "**/*.pyc"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = ["integration: real bpy rendering and physics"]

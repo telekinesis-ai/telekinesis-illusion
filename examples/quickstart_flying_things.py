@@ -1,51 +1,91 @@
 """Generate a "flying things"-type dataset."""
 
+import argparse
+
 import numpy as np
 
+from telekinesis.illusion.core.scene import Scene
+from telekinesis.illusion.core.engine import (
+    BlenderEngine,
+    RenderConfig,
+    PhysicsConfig,
+)
+from telekinesis.illusion.types.camera import CameraConfig
 from telekinesis.illusion.core.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
-from telekinesis.illusion.core.context import Context
-from telekinesis.illusion.types.object import Object
-from telekinesis.illusion.sampler.camera_pose_sampler import shell_sampler
 from telekinesis.illusion.randomizer.randomizer import Randomizer
 from telekinesis.illusion.randomizer.randomizer_node import (
-    ObjectPoseRandomizer,
-    ObjectInstanceRandomizer,
     BackgroundRandomizer,
-    MaterialRandomizer,
     CameraPoseRandomizer,
+    LightPoseRandomizer,
+    LightRandomizer,
+    MaterialRandomizer,
+    ObjectInstanceRandomizer,
+    ObjectPoseRandomizer,
 )
-from telekinesis.illusion.writer.writer import CocoWriter
-from telekinesis.illusion.viewer.shard_viewer import view_coco
+from telekinesis.illusion.sampler.camera_pose_sampler import shell_sampler
+from telekinesis.illusion.types.distribution import uniform
+from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.model_asset import ModelAsset
+from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.utils.assets import resolve_asset_dir
+from telekinesis.illusion.writer.writer import CocoWriter
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--preview",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Open the generated dataset in the interactive viewer.",
+    )
+    parser.add_argument("--num-images", type=int, default=5)
+    parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument("--resolution", type=int, default=720)
+    parser.add_argument("--samples", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    args = parser.parse_args()
+    if args.seed is not None:
+        import random
+
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+
     # Create the context
-    context = Context()
+    scene = Scene(
+        camera_config=CameraConfig(
+            image_width=args.resolution, image_height=args.resolution
+        )
+    )
 
     assets_dir = resolve_asset_dir()
+
+    scene.add(Light("key", "POINT", power=40.0, radius=0.05))
+    scene.add(Light("sun", "SUN", power=0.2))
 
     # Add models to the context
     model_1_path = str(
         assets_dir / "models" / "mechanical_parts" / "gearwheel_1.glb"
     )
-    context.add_model(
-        model_1_path,
-        object_name="part_1",
-        min_number_instances=1,
-        max_number_instances=3,
+    scene.add(
+        ModelAsset(
+            model_1_path,
+            object_name="part_1",
+            uv_mapping="cube",
+        )
     )
 
     model_2_path = str(
         assets_dir / "models" / "mechanical_parts" / "pipe_1.glb"
     )
-    context.add_model(
-        model_2_path,
-        object_name="part_2",
-        min_number_instances=1,
-        max_number_instances=1,
+    scene.add(
+        ModelAsset(
+            model_2_path,
+            object_name="part_2",
+            uv_mapping="cube",
+        )
     )
 
     # Create the randomizer
@@ -53,7 +93,7 @@ def main():
 
     # Add obect instance randomizer
     object_instance_randomizer = ObjectInstanceRandomizer(
-        target_objects=["part_1", "part_2"],
+        counts={"part_1": (1, 3), "part_2": (1, 1)},
         min_num_total_objects=2,
         max_num_total_objects=4,
     )
@@ -84,7 +124,7 @@ def main():
 
     # Add matrial randomizer
     material_randomizer = MaterialRandomizer(
-        target_objects=["part_1", "part_2"], types=["metal"], context=context
+        target_objects=["part_1", "part_2"], types=["metal"]
     )
 
     randomizer.add_randomizer(
@@ -98,6 +138,36 @@ def main():
 
     randomizer.add_randomizer(
         randomizer_node=background_randomizer, node_name="background_randomizer"
+    )
+
+    # Randomize point-light power/radius and sun strength/angular diameter.
+    randomizer.add_randomizer(
+        LightRandomizer(
+            ["key"],
+            color=uniform((0.8, 0.85, 0.9), (1.0, 1.0, 1.0)),
+            power=uniform(20.0, 60.0),
+            radius=uniform(0.02, 0.08),
+        ),
+        node_name="point_light_properties",
+    )
+    randomizer.add_randomizer(
+        LightRandomizer(
+            ["sun"], power=uniform(0.1, 0.4), angle=uniform(0.01, 0.1)
+        ),
+        node_name="sun_properties",
+    )
+    # Sample overhead poses aimed at the parts, keeping the emitter clear.
+    randomizer.add_randomizer(
+        LightPoseRandomizer(
+            shell_sampler,
+            target_lights=["key", "sun"],
+            min_distance=0.3,
+            radius_min=1.0,
+            radius_max=1.5,
+            elevation_min=35.0,
+            elevation_max=75.0,
+        ),
+        node_name="light_poses",
     )
 
     # Add camera pose randomizer
@@ -114,18 +184,27 @@ def main():
     )
 
     # Create the writer
-    writer = CocoWriter()
+    writer = CocoWriter(
+        output_dir=args.output_dir, include_camera_metadata=True
+    )
 
     # Create the data generator with context, randomizer and writer
     data_generator = SyntheticDataGenerator(
-        context=context, randomizer=randomizer, writer=writer
+        scene=scene,
+        randomizer=randomizer,
+        writer=writer,
+        engine=BlenderEngine(
+            RenderConfig(samples=args.samples), PhysicsConfig(active=False)
+        ),
     )
 
     # Generate data
-    data_generator.generate(num_images=5, save_blender_scene=False)
+    data_generator.generate(num_images=args.num_images)
 
-    # View data
-    view_coco(writer.get_output_dir())
+    if args.preview:
+        from telekinesis.illusion.viewer.shard_viewer import view_coco
+
+        view_coco(writer.get_output_dir())
 
 
 if __name__ == "__main__":

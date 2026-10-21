@@ -30,8 +30,8 @@ outright with no namespace merging. Any module the stale copy lacks then fails
 with ``ModuleNotFoundError``, and any module it does have silently runs the old
 version.
 
-**Therefore: every module that imports ``bpy`` (or ``blenderproc``, which pulls
-``bpy`` in) must call** ``isolate_user_extensions()`` **above that import.** The
+**Therefore: every module that imports ``bpy`` directly or indirectly must
+call** ``isolate_user_extensions()`` **above that import.** The
 call is idempotent and imports only the standard library, so it is safe and
 cheap to repeat. Doing it after ``bpy`` is already imported is too late: by then
 ``telekinesis.illusion.utils`` is bound to the stale directory. This convention

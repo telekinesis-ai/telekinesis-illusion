@@ -4,6 +4,8 @@ Worker class for generating shards for the bin picking use case.
 
 import math
 import shutil
+from collections.abc import Mapping
+from copy import deepcopy
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
@@ -24,9 +26,13 @@ from loguru import logger
 from telekinesis.illusion.core.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
-from telekinesis.illusion.core.context import Context
+from telekinesis.illusion.core.scene import Scene as Context
+from telekinesis.illusion.core.engine import BlenderEngine, RenderConfig
 from telekinesis.illusion.types.camera import CameraConfig
 from telekinesis.illusion.types.object import Object
+from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.model_asset import ModelAsset
+from telekinesis.illusion.types.distribution import Uniform, uniform
 from telekinesis.illusion.sampler.camera_pose_sampler import (
     CAMERA_POSE_SAMPLERS,
 )
@@ -41,6 +47,8 @@ from telekinesis.illusion.randomizer.randomizer_node import (
     BackgroundRandomizer,
     MaterialRandomizer,
     CameraPoseRandomizer,
+    LightRandomizer,
+    LightPoseRandomizer,
     NodeConfig,
     STAGE_COMPOSITION,
     STAGE_POSE,
@@ -96,6 +104,13 @@ DEFAULT_PHYSICS_SIMULATOR_PARAMS = {
     "verbose": False,
     "use_volume_com": False,
     "clean_up_scene": False,
+    "catch_plane": {
+        "active": True,
+        "distance_fraction": 0.25,
+        "minimum_distance": 0.05,
+        "size_factor": 6.0,
+        "contact_tolerance": 0.05,
+    },
 }
 
 # Material type tags per supercategory, matched against the sub-directories of
@@ -126,9 +141,7 @@ class BinPickingWorker:
     A wroker class for generating shard for the bin picking use case.
     """
 
-    # The stages randomize_geometry() re-runs. Defined here rather than at the
-    # call site so that a future stage (say a lighting randomizer that belongs
-    # with the camera) can be folded in without touching the callers.
+    # Geometry previews move objects, lights and cameras, retaining properties.
     GEOMETRY_STAGES = frozenset({STAGE_POSE, STAGE_CAMERA})
 
     def __init__(
@@ -165,6 +178,9 @@ class BinPickingWorker:
         self._parse_tunable_cfg()
 
         # Prepare configs from spec
+        # TODO: Reuse blender.camera.settings.set_intrinsics_from_K_matrix
+        # for measured camera calibration and add_depth_of_field for the
+        # target lens's aperture and focus distance.
         self._camera_config = CameraConfig(**self._specs.get("camera", {}))
 
         # Create the context
@@ -190,19 +206,38 @@ class BinPickingWorker:
         self._add_randomizers()
 
         # Create the writer
+        # TODO: Reuse blender.camera.lens_distortion.set_lens_distortion
+        # before rendering and apply_lens_distortion on captured RGB and
+        # instance maps before COCO writing. Use the same mapping for both,
+        # nearest-neighbor interpolation for IDs, and derive masks/boxes
+        # from the remapped instance maps.
         self._output_base = None
+        renderer = self._specs.get("renderer", {})
         self._writer = CocoWriter(
             create_output_dir_on_init=False,
             info=self._info,
             licenses=self._licenses,
             supercategory_map=self._id_supercategory_map,
+            color_file_format=renderer.get("image_format", "JPEG"),
+            jpg_quality=renderer.get("jpg_quality", 90),
         )
 
         # Create the data generator with context, randomizer and writer
+        # TODO: For RGB-D datasets, enable RenderConfig.depth and reuse
+        # blender.postprocessing.add_kinect_azure_noise/add_gaussian_shifts
+        # only when they match the target sensor. Preserve clean depth and
+        # write noisy sensor depth separately; CocoWriter writes neither.
         self._data_generator = SyntheticDataGenerator(
             context=self._context,
             randomizer=self._randomizer,
             writer=self._writer,
+            engine=BlenderEngine(
+                RenderConfig(
+                    samples=renderer.get("samples"),
+                    noise_threshold=renderer.get("noise_threshold"),
+                    device=renderer.get("device", "CUDA"),
+                )
+            ),
         )
 
         # Create shard merger and arguments for splitter
@@ -244,17 +279,51 @@ class BinPickingWorker:
             **ps_params.get("grid", {}),
         }
         # Physics simulation params
-        self._physics_simulator_params = self._specs.get(
-            "physics_simulator", DEFAULT_PHYSICS_SIMULATOR_PARAMS
-        )
+        physics_cfg = self._specs.get("physics_simulator", {})
+        catch_plane_cfg = {
+            **DEFAULT_PHYSICS_SIMULATOR_PARAMS["catch_plane"],
+            **physics_cfg.get("catch_plane", {}),
+        }
+        self._physics_simulator_params = {
+            **DEFAULT_PHYSICS_SIMULATOR_PARAMS,
+            **physics_cfg,
+            "catch_plane": catch_plane_cfg,
+        }
 
         # Randomizer params that used to be hard-coded in _add_randomizers().
         # Merged per key so a spec that overrides only one role still picks up
         # the defaults for the others.
-        self._material_cfg = {
-            **DEFAULT_MATERIAL_RANDOMIZER_CFG,
-            **self._specs.get("material_randomizer", {}),
-        }
+        material_cfg = self._specs.get("material_randomizer", {})
+        self._material_rules = None
+        if isinstance(material_cfg, Mapping) and "rules" in material_cfg:
+            unknown = set(material_cfg) - {"active", "rules"}
+            if unknown:
+                raise ValueError(
+                    "Rule-based material_randomizer only accepts 'active' "
+                    f"and 'rules'; unknown keys: {sorted(unknown)}."
+                )
+            if material_cfg.get("active", True):
+                rules = material_cfg["rules"]
+                if not isinstance(rules, list) or not rules:
+                    raise ValueError(
+                        "An active rule-based material_randomizer requires "
+                        "a non-empty 'rules' list."
+                    )
+                self._material_rules = rules
+            # Rules replace role-level defaults, preventing a second material
+            # assignment from overwriting a carefully randomized slot.
+            self._material_cfg = {
+                "part": [],
+                "container": [],
+                "distractor": [],
+            }
+        else:
+            if not isinstance(material_cfg, Mapping):
+                raise TypeError("material_randomizer must be a mapping.")
+            self._material_cfg = {
+                **DEFAULT_MATERIAL_RANDOMIZER_CFG,
+                **material_cfg,
+            }
         self._background_cfg = {
             **DEFAULT_BACKGROUND_RANDOMIZER_CFG,
             **self._specs.get("background_randomizer", {}),
@@ -263,6 +332,9 @@ class BinPickingWorker:
             **DEFAULT_INSTANCE_RANDOMIZER_CFG,
             **self._specs.get("instance_randomizer", {}),
         }
+        self._light_nodes = self._parse_light_randomizers(
+            self._specs.get("light_randomizer", {})
+        )
 
         # The grid hands out cell centers in order and starts over once it runs
         # out, so more parts than cells means parts share a center and only the
@@ -284,7 +356,9 @@ class BinPickingWorker:
             configured_max = (
                 part_cfg["max"]
                 if part_cfg
-                else self._specs.get("max_number_visible_models", loadable_parts)
+                else self._specs.get(
+                    "max_number_visible_models", loadable_parts
+                )
             )
             visible_parts = min(configured_max, loadable_parts)
             if visible_parts > capacity:
@@ -326,17 +400,15 @@ class BinPickingWorker:
 
     def randomize_geometry(self, context: Context) -> None:
         """
-        Re-sample object poses and camera poses only.
+        Re-sample object, light and camera poses.
 
-        Which instances are visible, their materials and the background are all
-        left exactly as they are, so the caller can iterate on the layout and
-        the framing without the scene changing underneath them. Interactive
+        Visible instances, materials, background and sampled light properties
+        are retained while the caller iterates on layout and framing. Interactive
         tools (the Blender spec editor's "Preview Scene") use this; a real
         generation run always calls randomize() unfiltered.
 
-        Note that the visible objects are the ones that get re-posed, so the
-        caller is responsible for having composed a scene first - on an empty
-        scene this is a no-op.
+        Visible objects are the ones that get re-posed, so the caller is
+        responsible for composing a scene before sampling poses.
 
         Args:
             context: Context
@@ -383,6 +455,24 @@ class BinPickingWorker:
         for k, v in md.items():
             logger.info(f"{k:<{width}} : {v}")
 
+    def _counts_for(self, names: list[str]) -> dict[str, tuple[int, int]]:
+        entries = {
+            entry["name"]: entry
+            for entry in self._specs.get("models", [])
+            + self._specs.get("distractors", [])
+        }
+        return {
+            name: (
+                entries[name]["instances"]["min"],
+                entries[name]["instances"]["max"],
+            )
+            for name in names
+        }
+
+    def prepare(self) -> None:
+        """Prepare linked pools before an interactive preview or generation."""
+        self._data_generator.prepare()
+
     def _add_models_to_context(self) -> None:
         """
         Add the listed models from the specs to the context.
@@ -391,23 +481,30 @@ class BinPickingWorker:
         id_supercategory_map = defaultdict(list)
         for model in self._specs["models"]:
             model_path = str(resolve_asset_path(model["path"], self._asset_dir))
-            self._context.add_model(
-                model_path,
-                object_name=model["name"],
-                category_name=model["category_name"],
-                category_id=model["id"],
-                min_number_instances=model["instances"]["min"],
-                max_number_instances=model["instances"]["max"],
-                active_in_simulation=model["simulation"]["active"],
-                collision_shape=model["simulation"]["collision_shape"],
-                scale=model["scale"],
-                preprocess_model=model["preprocess_model"],
-                shading=model.get("shading", "FLAT"),
+            self._context.add(
+                ModelAsset(
+                    model_path,
+                    object_name=model["name"],
+                    category_name=model["category_name"],
+                    category_id=model["id"],
+                    active_in_simulation=model["simulation"]["active"],
+                    collision_shape=model["simulation"]["collision_shape"],
+                    scale=model["scale"],
+                    preprocess_model=model["preprocess_model"],
+                    material_preprocessing=model.get(
+                        "material_preprocessing", "replace"
+                    ),
+                    uv_mapping=model.get("uv_mapping", "smart"),
+                    shading=model.get("shading", "FLAT"),
+                )
             )
             model_supercategory_map[model["supercategory"]].append(
                 model["name"]
             )
-            id_supercategory_map[model["id"]] = model["supercategory"]
+            # category_id may be auto-assigned by Context when the spec uses
+            # null. Record the resolved ID that rendering will actually emit.
+            resolved_id = self._context.get_assets()[model["name"]].category_id
+            id_supercategory_map[resolved_id] = model["supercategory"]
         # Convert from defaultdict back to normal dict
         self._model_supercatgory_map = dict(model_supercategory_map)
         self._id_supercategory_map = dict(id_supercategory_map)
@@ -420,21 +517,28 @@ class BinPickingWorker:
             distractor_path = str(
                 resolve_asset_path(distractor["path"], self._asset_dir)
             )
-            self._context.add_model(
-                distractor_path,
-                object_name=distractor["name"],
-                category_name=distractor["category_name"],
-                category_id=distractor["id"],
-                min_number_instances=distractor["instances"]["min"],
-                max_number_instances=distractor["instances"]["max"],
-                active_in_simulation=distractor["simulation"]["active"],
-                collision_shape=distractor["simulation"]["collision_shape"],
-                scale=distractor["scale"],
-                preprocess_model=distractor["preprocess_model"],
-                shading=distractor.get("shading", "FLAT"),
+            self._context.add(
+                ModelAsset(
+                    distractor_path,
+                    object_name=distractor["name"],
+                    category_name=distractor["category_name"],
+                    category_id=distractor["id"],
+                    active_in_simulation=distractor["simulation"]["active"],
+                    collision_shape=distractor["simulation"]["collision_shape"],
+                    scale=distractor["scale"],
+                    preprocess_model=distractor["preprocess_model"],
+                    material_preprocessing=distractor.get(
+                        "material_preprocessing", "replace"
+                    ),
+                    uv_mapping=distractor.get("uv_mapping", "smart"),
+                    shading=distractor.get("shading", "FLAT"),
+                )
             )
             self._distractor_names.append(distractor["name"])
-            self._id_supercategory_map[distractor["id"]] = distractor[
+            resolved_id = self._context.get_assets()[
+                distractor["name"]
+            ].category_id
+            self._id_supercategory_map[resolved_id] = distractor[
                 "supercategory"
             ]
 
@@ -491,27 +595,17 @@ class BinPickingWorker:
 
         needs_reload = self._apply_model_scales()
 
-        # Per-asset instance counts are baked in at import: add_model() creates
-        # max-1 linked duplicates and refuses to re-import a name, so a changed
-        # count can only take effect by rebuilding the worker. Reported rather
-        # than applied, otherwise a raised maximum looks like it worked until
-        # ObjectInstanceRandomizer trips over the instances that don't exist.
+        # Capacity cannot grow in a prepared scene. Existing pools remain
+        # usable for appearance/pose edits and smaller instance ranges.
         for entry in self._specs.get("models", []) + self._specs.get(
             "distractors", []
         ):
             group = self._context.get_object_group(entry["name"])
-            if not group:
-                # Already reported by _apply_model_scales().
-                continue
-            loaded_min = group[0].min_number_instances
-            loaded_max = group[0].max_number_instances
-            wanted = entry["instances"]
-            if wanted["min"] != loaded_min or wanted["max"] != loaded_max:
+            if self._context._prepared and entry["instances"]["max"] > len(
+                group
+            ):
                 needs_reload.append(
-                    f"'{entry['name']}' instance count changed "
-                    f"({loaded_min}-{loaded_max} loaded, "
-                    f"{wanted['min']}-{wanted['max']} configured) - "
-                    "reload assets to apply it"
+                    f"'{entry['name']}' capacity increased; reload assets to apply it"
                 )
 
         # Instance counts - plain attributes, re-read on every randomize().
@@ -535,6 +629,12 @@ class BinPickingWorker:
             if node is None:
                 continue
             minimum, maximum = self._instance_bounds(role, *(legacy or ()))
+            wanted_counts = self._counts_for(node.target_objects)
+            if not self._context._prepared or all(
+                bounds[1] <= len(self._context.get_object_group(name))
+                for name, bounds in wanted_counts.items()
+            ):
+                node.counts = wanted_counts
             node.min_num_total_objects = minimum
             node.max_num_total_objects = maximum
 
@@ -573,26 +673,44 @@ class BinPickingWorker:
                 # one installed.
                 pose_node.pose_sampling_function = self._make_sample_pose()
 
-        # Materials: the type list is baked into the context's loaded
-        # materials, so a change needs a fresh randomizer.
-        for role, node_name in (
-            ("part", "material_randomizer_parts"),
-            ("container", "material_randomizer_crate"),
-            ("distractor", "material_randomizer_distractors"),
-        ):
-            node = self._randomizer.get_randomizer_node(node_name)
-            types = self._material_cfg.get(role)
-            if node is None or not types:
-                continue
-            if list(types) != list(node.types or []):
+        # Materials: source catalogs and procedural recipes are baked into the
+        # nodes, so edited configurations need fresh randomizers.
+        if self._material_rules is not None:
+            for index, rule in enumerate(self._material_rules):
+                name, targets, config = self._parse_material_rule(index, rule)
+                if self._randomizer.get_randomizer_node(name) is None:
+                    needs_reload.append(
+                        f"material rule '{name}' was added or renamed - "
+                        "reload assets to apply it"
+                    )
+                    continue
                 self._randomizer.replace_randomizer(
-                    node_name,
-                    MaterialRandomizer(
-                        target_objects=node.target_objects,
-                        types=list(types),
+                    name,
+                    MaterialRandomizer.from_config(
+                        target_objects=targets,
+                        config=config,
                         context=self._context,
                     ),
                 )
+        else:
+            for role, node_name in (
+                ("part", "material_randomizer_parts"),
+                ("container", "material_randomizer_crate"),
+                ("distractor", "material_randomizer_distractors"),
+            ):
+                node = self._randomizer.get_randomizer_node(node_name)
+                types = self._material_cfg.get(role)
+                if node is None or not types:
+                    continue
+                if types != node.configuration:
+                    self._randomizer.replace_randomizer(
+                        node_name,
+                        MaterialRandomizer.from_config(
+                            target_objects=node.target_objects,
+                            config=types,
+                            context=self._context,
+                        ),
+                    )
 
         # Background: the hdri catalog is built at construction.
         background_node = self._randomizer.get_randomizer_node(
@@ -608,6 +726,26 @@ class BinPickingWorker:
                         categories=list(categories),
                     ),
                 )
+
+        light_config = self._specs.get("light_randomizer", {})
+        if light_config != self._loaded_light_config:
+            light_types = {
+                name: nodes[0] for name, nodes in self._light_nodes.items()
+            }
+            if light_types != self._loaded_light_types:
+                needs_reload.append(
+                    "Lights were added, removed, renamed, enabled/disabled, "
+                    "or changed type - reload assets to apply it"
+                )
+            else:
+                for name, (_, properties, pose) in self._light_nodes.items():
+                    self._randomizer.replace_randomizer(
+                        f"light_properties_{name}", properties
+                    )
+                    self._randomizer.replace_randomizer(
+                        f"light_pose_{name}", pose
+                    )
+                self._loaded_light_config = deepcopy(light_config)
 
         # Camera: sampler kwargs are captured at construction.
         camera_node = self._randomizer.get_randomizer_node(
@@ -798,6 +936,135 @@ class BinPickingWorker:
 
         return sample_pose_grid
 
+    @staticmethod
+    def _parse_material_rule(index: int, rule: Mapping):
+        """Return a validated rule name, targets and node configuration."""
+        if not isinstance(rule, Mapping):
+            raise TypeError(
+                f"material_randomizer.rules[{index}] must be a mapping."
+            )
+        target_objects = list(rule.get("target_objects", []))
+        if not target_objects:
+            raise ValueError(
+                f"material_randomizer.rules[{index}] requires 'target_objects'."
+            )
+        name = rule.get("name", f"material_rule_{index}")
+        config = {
+            key: value
+            for key, value in rule.items()
+            if key not in ("name", "target_objects")
+        }
+        return name, target_objects, config
+
+    @staticmethod
+    def _parse_light_randomizers(config: Mapping) -> dict:
+        """Translate YAML ranges into the existing light and pose nodes."""
+        if not isinstance(config, Mapping):
+            raise TypeError("light_randomizer must be a mapping.")
+        unknown = set(config) - {"active", "lights"}
+        if unknown:
+            raise ValueError(
+                f"Unknown light_randomizer keys: {sorted(unknown)}"
+            )
+        if not isinstance(config.get("active", True), bool):
+            raise TypeError("light_randomizer.active must be a boolean.")
+        if not config or not config.get("active", True):
+            return {}
+        lights = config.get("lights")
+        if not isinstance(lights, list) or not lights:
+            raise ValueError(
+                "An active light_randomizer requires a non-empty lights list."
+            )
+        nodes = {}
+        for entry in lights:
+            if not isinstance(entry, Mapping):
+                raise TypeError(
+                    "Each light_randomizer light must be a mapping."
+                )
+            unknown = set(entry) - {
+                "name",
+                "type",
+                "seed",
+                "properties",
+                "pose",
+            }
+            if unknown:
+                raise ValueError(
+                    f"Unknown light configuration keys: {sorted(unknown)}"
+                )
+            name = entry.get("name")
+            if not isinstance(name, str) or not name.strip() or name in nodes:
+                raise ValueError(
+                    "Configured light names must be non-empty and unique."
+                )
+            light_type = entry.get("type", "POINT")
+            Light._validate_properties(light_type, {})
+            properties = entry.get("properties")
+            if not isinstance(properties, Mapping) or not properties:
+                raise ValueError(
+                    f"Light '{name}' requires a non-empty properties mapping."
+                )
+            properties = dict(properties)
+            for key, value in properties.items():
+                if isinstance(value, Mapping):
+                    if set(value) != {"min", "max"}:
+                        raise ValueError(
+                            f"Light '{name}' {key} range requires min and max."
+                        )
+                    value = properties[key] = uniform(
+                        value["min"], value["max"]
+                    )
+                if isinstance(value, Uniform):
+                    choices = (value.min.tolist(), value.max.tolist())
+                elif key == "shape" and isinstance(value, list):
+                    if not value:
+                        raise ValueError(
+                            f"Light '{name}' shape choices cannot be empty."
+                        )
+                    choices = value
+                else:
+                    choices = (value,)
+                for choice in choices:
+                    Light._validate_properties(light_type, {key: choice})
+
+            pose = entry.get("pose")
+            if not isinstance(pose, Mapping):
+                raise TypeError(f"Light '{name}' requires a pose mapping.")
+            unknown = set(pose) - {
+                "sampler",
+                "params",
+                "min_distance",
+                "max_tries",
+            }
+            if unknown:
+                raise ValueError(f"Unknown light pose keys: {sorted(unknown)}")
+            sampler = pose.get("sampler", "shell_sampler")
+            if sampler not in CAMERA_POSE_SAMPLERS:
+                raise ValueError(f"Unknown light pose sampler '{sampler}'.")
+            params = pose.get("params", {})
+            if not isinstance(params, Mapping):
+                raise TypeError(
+                    f"Light '{name}' pose.params must be a mapping."
+                )
+            params = dict(params)
+            center = params.get("center")
+            if isinstance(center, list) and all(
+                isinstance(v, (int, float)) for v in center
+            ):
+                params["center"] = np.asarray(center, dtype=float)
+            nodes[name] = (
+                light_type,
+                LightRandomizer([name], seed=entry.get("seed"), **properties),
+                LightPoseRandomizer(
+                    CAMERA_POSE_SAMPLERS[sampler],
+                    target_lights=[name],
+                    min_distance=pose.get("min_distance", 0.25),
+                    max_tries=pose.get("max_tries", 100),
+                    **params,
+                ),
+            )
+        return nodes
+
     def _add_randomizers(
         self,
     ) -> None:
@@ -809,7 +1076,7 @@ class BinPickingWorker:
             "part", "min_number_visible_models", "max_number_visible_models"
         )
         object_instance_randomizer = ObjectInstanceRandomizer(
-            target_objects=self._model_supercatgory_map["part"],
+            counts=self._counts_for(self._model_supercatgory_map["part"]),
             min_num_total_objects=min_parts,
             max_num_total_objects=max_parts,
         )
@@ -823,7 +1090,7 @@ class BinPickingWorker:
         # Add container instance ranodmizer
         min_containers, max_containers = self._instance_bounds("container")
         container_instance_randomizer = ObjectInstanceRandomizer(
-            target_objects=self._model_supercatgory_map["container"],
+            counts=self._counts_for(self._model_supercatgory_map["container"]),
             min_num_total_objects=min_containers,
             max_num_total_objects=max_containers,
         )
@@ -890,7 +1157,7 @@ class BinPickingWorker:
                 "max_number_visible_distractors",
             )
             distractor_instance_randomizer = ObjectInstanceRandomizer(
-                target_objects=self._distractor_names,
+                counts=self._counts_for(self._distractor_names),
                 min_num_total_objects=min_distractors,
                 max_num_total_objects=max_distractors,
             )
@@ -910,7 +1177,27 @@ class BinPickingWorker:
                 node_config=NodeConfig(stage=STAGE_POSE),
             )
 
-        # Add matrial randomizer
+        # Add material randomizers. Rule mode permits models with different
+        # imported slot layouts to receive independent material assignments.
+        # TODO: Use the existing material rules with PrincipledMaterial and
+        # SurfaceImperfections for plausible roughness, scratches and wear;
+        # see examples/preview_bin_surface_imperfections.py. Reuse the local
+        # Material.infuse_texture/infuse_material helpers for further layers,
+        # duplicating shared materials before per-instance shader edits.
+        if self._material_rules is not None:
+            for index, rule in enumerate(self._material_rules):
+                name, targets, config = self._parse_material_rule(index, rule)
+                self._randomizer.add_randomizer(
+                    randomizer_node=MaterialRandomizer.from_config(
+                        target_objects=targets,
+                        config=config,
+                        context=self._context,
+                    ),
+                    node_name=name,
+                    node_config=NodeConfig(stage=STAGE_APPEARANCE),
+                )
+
+        # Add legacy role-level material randomizers.
         # An empty type list means "do not randomize the material for this
         # role" - MaterialRandomizer would otherwise load no materials and
         # fail later in get_random_material().
@@ -925,33 +1212,37 @@ class BinPickingWorker:
                 )
                 return
             self._randomizer.add_randomizer(
-                randomizer_node=MaterialRandomizer(
+                randomizer_node=MaterialRandomizer.from_config(
                     target_objects=target_objects,
-                    types=types,
+                    config=types,
                     context=self._context,
                 ),
                 node_name=node_name,
                 node_config=NodeConfig(stage=STAGE_APPEARANCE),
             )
 
-        add_material_randomizer(
-            "part",
-            self._model_supercatgory_map["part"],
-            "material_randomizer_parts",
-        )
-        add_material_randomizer(
-            "container",
-            self._model_supercatgory_map["container"],
-            "material_randomizer_crate",
-        )
-        if self._distractor_names:
+        if self._material_rules is None:
             add_material_randomizer(
-                "distractor",
-                self._distractor_names,
-                "material_randomizer_distractors",
+                "part",
+                self._model_supercatgory_map["part"],
+                "material_randomizer_parts",
             )
+            add_material_randomizer(
+                "container",
+                self._model_supercatgory_map["container"],
+                "material_randomizer_crate",
+            )
+            if self._distractor_names:
+                add_material_randomizer(
+                    "distractor",
+                    self._distractor_names,
+                    "material_randomizer_distractors",
+                )
 
         # Add background randomizer
+        # TODO: Extend HDRI variation using Background's existing mapping
+        # rotation and background strength nodes, alongside image selection,
+        # to vary reflection direction and illumination without new loaders.
         background_categories = self._background_cfg.get("categories")
         if background_categories:
             background_randomizer = BackgroundRandomizer(
@@ -970,7 +1261,42 @@ class BinPickingWorker:
                 "skipping background_randomizer."
             )
 
+        self._loaded_light_types = {}
+        for name, (light_type, properties, pose) in self._light_nodes.items():
+            self._context.add(Light(name, light_type))
+            self._loaded_light_types[name] = light_type
+            self._randomizer.add_randomizer(
+                properties,
+                node_name=f"light_properties_{name}",
+                node_config=NodeConfig(stage=STAGE_APPEARANCE),
+            )
+            self._randomizer.add_randomizer(
+                pose,
+                node_name=f"light_pose_{name}",
+                node_config=NodeConfig(stage=STAGE_POSE),
+            )
+        self._loaded_light_config = deepcopy(
+            self._specs.get("light_randomizer", {})
+        )
+
         # Add camera pose randomizer
+        # TODO: Run camera validation in the generator after physics settles
+        # and before rendering. Refresh evaluated geometry and reuse
+        # blender.types.mesh_object.create_bvh_tree_multi_objects for the
+        # visible parts, bin and distractors. Exclude inactive pool instances
+        # and invisible physics helpers from all visibility checks.
+        # TODO: Recompute object-relative look-at targets from settled poses
+        # before evaluating each camera view.
+        # TODO: Reuse blender.camera.validation.perform_obstacle_in_view_check
+        # for minimum viewing distance and visible_objects to check whether
+        # target parts are visible from each candidate camera pose.
+        # TODO: Make acceptance follow the intended visibility, cropping and
+        # occlusion distribution; do not require every part to be fully
+        # visible. Ray-grid checks are approximate: use rendered instance
+        # masks when exact visible pixel areas are required.
+        # TODO: Resample only failed camera views with a bounded retry budget
+        # and report exhaustion. Preserve the settled arrangement and accepted
+        # views; randomized views of one arrangement remain separate images.
         cpr_cfg = self._specs.get(
             "camera_pose_randomizer", DEFAULT_CAMERA_POSE_RANDOMIZER_CFG
         )
@@ -1018,64 +1344,82 @@ class BinPickingWorker:
         else:
             self._output_base = Path.cwd() / "output" / dataset_name
 
-        for i in range(self._num_shards):
-            current_shard_size = min(shard_size, remaining_images)
-            shard_name = name_template.format(
-                date=datetime.now().strftime("%Y%m%d_%H%M%S"),
-                uuid=uuid4().hex[:8],
-            )
-            shard_dir = self._output_base / shard_name
-            self._writer.set_output_dir(shard_dir)
-
-            logger.info(
-                f"[shard {i + 1}/{self._num_shards}] "
-                f"Generating {current_shard_size} scenes -> {shard_dir.name}"
-            )
-
-            self._data_generator.generate(
-                num_images=current_shard_size,
-                simulate_physics=self._physics_simulator_params["active"],
-                min_simulation_time_range=tuple(
-                    self._physics_simulator_params["min_simulation_time_range"]
-                ),
-                max_simulation_time_range=tuple(
-                    self._physics_simulator_params["max_simulation_time_range"]
-                ),
-                check_object_interval=self._physics_simulator_params[
-                    "check_object_interval"
-                ],
-                object_stopped_location_threshold=self._physics_simulator_params[
-                    "object_stopped_location_threshold"
-                ],
-                object_stopped_rotation_threshold=self._physics_simulator_params[
-                    "object_stopped_rotation_threshold"
-                ],
-                substeps_per_frame=self._physics_simulator_params[
-                    "substeps_per_frame"
-                ],
-                solver_iters=self._physics_simulator_params["solver_iters"],
-                verbose=self._physics_simulator_params["verbose"],
-                use_volume_com=self._physics_simulator_params["use_volume_com"],
-                clean_up_scene=self._physics_simulator_params["clean_up_scene"],
-            )
-            remaining_images -= current_shard_size
-
-            output_size = self._get_output_size_bytes()
-            logger.info(
-                f"[shard {i + 1}/{self._num_shards}] "
-                f"Current output size: {output_size / (1024**3):.2f} GB "
-                f"(limit: {self._max_output_size_bytes / (1024**3):.1f} GB)"
-            )
-            if output_size >= self._max_output_size_bytes:
-                logger.warning(
-                    f"Output size limit reached "
-                    f"({output_size / (1024**3):.2f} GB >= "
-                    f"{self._max_output_size_bytes / (1024**3):.1f} GB). "
-                    f"Stopping after shard {i + 1}/{self._num_shards}."
+        try:
+            for i in range(self._num_shards):
+                current_shard_size = min(shard_size, remaining_images)
+                shard_name = name_template.format(
+                    date=datetime.now().strftime("%Y%m%d_%H%M%S"),
+                    uuid=uuid4().hex[:8],
                 )
-                break
+                shard_dir = self._output_base / shard_name
+                self._writer.set_output_dir(shard_dir)
 
-        self._data_generator.clean_up()
+                logger.info(
+                    f"[shard {i + 1}/{self._num_shards}] "
+                    f"Generating {current_shard_size} scenes -> {shard_dir.name}"
+                )
+
+                self._data_generator.generate(
+                    num_images=current_shard_size,
+                    simulate_physics=self._physics_simulator_params["active"],
+                    min_simulation_time_range=tuple(
+                        self._physics_simulator_params[
+                            "min_simulation_time_range"
+                        ]
+                    ),
+                    max_simulation_time_range=tuple(
+                        self._physics_simulator_params[
+                            "max_simulation_time_range"
+                        ]
+                    ),
+                    check_object_interval=self._physics_simulator_params[
+                        "check_object_interval"
+                    ],
+                    object_stopped_location_threshold=self._physics_simulator_params[
+                        "object_stopped_location_threshold"
+                    ],
+                    object_stopped_rotation_threshold=self._physics_simulator_params[
+                        "object_stopped_rotation_threshold"
+                    ],
+                    substeps_per_frame=self._physics_simulator_params[
+                        "substeps_per_frame"
+                    ],
+                    solver_iters=self._physics_simulator_params["solver_iters"],
+                    verbose=self._physics_simulator_params["verbose"],
+                    use_volume_com=self._physics_simulator_params[
+                        "use_volume_com"
+                    ],
+                    clean_up_scene=False,
+                    physics_catch_plane={
+                        **self._physics_simulator_params["catch_plane"],
+                        "container_names": self._model_supercatgory_map[
+                            "container"
+                        ],
+                        "tracked_object_names": [
+                            *self._model_supercatgory_map.get("part", []),
+                            *self._distractor_names,
+                        ],
+                    },
+                )
+                remaining_images -= current_shard_size
+
+                output_size = self._get_output_size_bytes()
+                logger.info(
+                    f"[shard {i + 1}/{self._num_shards}] "
+                    f"Current output size: {output_size / (1024**3):.2f} GB "
+                    f"(limit: {self._max_output_size_bytes / (1024**3):.1f} GB)"
+                )
+                if output_size >= self._max_output_size_bytes:
+                    logger.warning(
+                        f"Output size limit reached "
+                        f"({output_size / (1024**3):.2f} GB >= "
+                        f"{self._max_output_size_bytes / (1024**3):.1f} GB). "
+                        f"Stopping after shard {i + 1}/{self._num_shards}."
+                    )
+                    break
+
+        finally:
+            self._data_generator.clean_up()
 
     def merge_shards(self, preview: bool = True) -> None:
         """

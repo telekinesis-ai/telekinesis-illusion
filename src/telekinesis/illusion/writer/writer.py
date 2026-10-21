@@ -7,18 +7,14 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+from uuid import uuid4
 from loguru import logger
 import atexit
 
-from telekinesis.illusion.utils.blender_env import isolate_user_extensions
-
-# Must run before bpy is imported (blenderproc pulls it in). See blender_env.py.
-isolate_user_extensions()
-
-import blenderproc as bproc
-from blenderproc.python.utility.LabelIdMapping import LabelIdMapping
+from telekinesis.illusion.blender.labels import LabelIdMapping
 
 from telekinesis.illusion.writer.coco_writer import write_coco_annotations
+from telekinesis.illusion.types.render_result import RenderResult
 
 
 class Writer(ABC):
@@ -49,7 +45,7 @@ class Writer(ABC):
             output_dir: str
                 Output directory for writing generated images and annotations.
                 If none is provided, the output is written in the directory
-                Path.cwd() / "output" / f"synthetic_data_{timestamp}".
+                Path.cwd() / "output" / f"synthetic_data_{timestamp}_{uuid4().hex[:8]}".
         Returns:
             Returns the output directory as a pathlib.Path() object.
 
@@ -65,7 +61,11 @@ class Writer(ABC):
                 # directory. Where output is written is deliberately unrelated
                 # to where assets are read from.
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                path = Path.cwd() / "output" / f"synthetic_data_{timestamp}"
+                path = (
+                    Path.cwd()
+                    / "output"
+                    / f"synthetic_data_{timestamp}_{uuid4().hex[:8]}"
+                )
 
                 if path.exists():
                     logger.info(f"Using existing output directory {path}.")
@@ -123,11 +123,17 @@ class Writer(ABC):
         """
         return str(self._output_dir)
 
+    def get_segmentation_output_config(self) -> Dict[str, Any]:
+        """Describe the Blender segmentation pass required by the writer."""
+        return {
+            "map_by": ["category_id", "instance", "name"],
+            "default_values": {"category_id": 0},
+        }
+
     @abstractmethod
     def write(
         self,
-        data: Dict[str, Any],
-        categories: Dict[int, str],
+        result: RenderResult,
     ) -> int:
         pass
 
@@ -144,9 +150,30 @@ class CocoWriter(Writer):
         info: Optional[Dict] = None,
         licenses: Optional[List] = None,
         supercategory_map: Optional[Dict] = None,
+        compose_parent_masks: bool = False,
+        include_camera_metadata: bool = False,
+        color_file_format: str = "JPEG",
+        jpg_quality: int = 90,
     ) -> None:
         """Add info, licenses and supercategory info from the specs if present"""
         super().__init__(create_output_dir_on_init, output_dir)
+        if not isinstance(color_file_format, str):
+            raise TypeError(
+                "color_file_format must be 'PNG', 'JPG', or 'JPEG'."
+            )
+        color_file_format = color_file_format.upper()
+        if color_file_format == "JPG":
+            color_file_format = "JPEG"
+        if color_file_format not in ("PNG", "JPEG"):
+            raise ValueError(
+                "color_file_format must be 'PNG', 'JPG', or 'JPEG'."
+            )
+        if isinstance(jpg_quality, bool) or not isinstance(jpg_quality, int):
+            raise TypeError("jpg_quality must be an integer from 0 to 100.")
+        if not 0 <= jpg_quality <= 100:
+            raise ValueError("jpg_quality must be an integer from 0 to 100.")
+        self._color_file_format = color_file_format
+        self._jpg_quality = jpg_quality
         if info:
             self._info = info
         else:
@@ -173,12 +200,29 @@ class CocoWriter(Writer):
             self._supercategory_map = supercategory_map
         else:
             self._supercategory_map = {}
+        self._compose_parent_masks = compose_parent_masks
+        self._include_camera_metadata = include_camera_metadata
+        self._next_image_metadata: Dict[str, Any] = {}
+
+    def set_image_metadata(self, metadata: Dict[str, Any]) -> None:
+        """Set metadata copied onto each image in the next write call."""
+        self._next_image_metadata = dict(metadata)
+
+    def get_segmentation_output_config(self) -> Dict[str, Any]:
+        config = super().get_segmentation_output_config()
+        if self._compose_parent_masks:
+            config["map_by"].append("annotation_parent")
+            config["default_values"]["annotation_parent"] = ""
+        return config
 
     def write(
         self,
-        data: Dict[str, Any],
-        categories: LabelIdMapping,
+        result: RenderResult,
     ) -> int:
+        data = result.data
+        categories = LabelIdMapping.from_dict(
+            {name: cid for cid, name in result.categories.items()}
+        )
         required_keys = {
             "instance_segmaps",
             "instance_attribute_maps",
@@ -189,23 +233,37 @@ class CocoWriter(Writer):
         if missing:
             raise KeyError(f"Missing required data keys: {missing}")
 
+        if any(len(data[key]) != len(result) for key in required_keys):
+            raise ValueError(
+                "Render passes and capture metadata must have equal lengths."
+            )
+        image_metadata = []
+        for capture in result.captures:
+            metadata = dict(self._next_image_metadata)
+            if self._include_camera_metadata:
+                metadata.update(capture)
+            image_metadata.append(metadata)
+
         write_coco_annotations(
             output_dir=str(self._output_dir),
             instance_segmaps=data["instance_segmaps"],
             instance_attribute_maps=data["instance_attribute_maps"],
             colors=data["colors"],
-            color_file_format="PNG",
+            color_file_format=self._color_file_format,
             mask_encoding_format="rle",
             supercategory=None,
             supercategory_map=self._supercategory_map,
             info=self._info,
             licenses=self._licenses,
             append_to_existing_output=True,
-            jpg_quality=95,
+            jpg_quality=self._jpg_quality,
             label_mapping=categories,
             file_prefix="",
             indent=None,
+            compose_parent_masks=self._compose_parent_masks,
+            image_metadata=image_metadata,
         )
+        self._next_image_metadata = {}
 
         self._has_written_output = True
         return len(data["colors"])

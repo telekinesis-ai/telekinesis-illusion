@@ -16,9 +16,7 @@ from telekinesis.illusion.utils.assets import (
 )
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
-# Unlike the other bpy-touching modules here, nothing in this one pulls in
-# blenderproc, so this is the only chance to keep Blender's user extensions off
-# sys.path before bpy is imported.
+# Must run before bpy is imported. See blender_env.py for why.
 isolate_user_extensions()
 
 import bpy
