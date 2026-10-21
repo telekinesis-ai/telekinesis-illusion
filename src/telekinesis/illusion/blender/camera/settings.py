@@ -9,7 +9,10 @@ from mathutils import Matrix, Vector, Euler
 import numpy as np
 
 from telekinesis.illusion.blender.types.entity import Entity
-from telekinesis.illusion.blender.types.mesh_object import MeshObject, create_primitive
+from telekinesis.illusion.blender.types.mesh_object import (
+    MeshObject,
+    create_primitive,
+)
 from telekinesis.illusion.blender.utility import KeyFrame
 
 

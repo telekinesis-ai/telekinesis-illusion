@@ -30,6 +30,7 @@ import shutil
 import git
 import numpy as np
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from telekinesis.illusion.blender.types.mesh_object import MeshObject
 

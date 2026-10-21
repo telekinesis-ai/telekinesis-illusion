@@ -11,12 +11,23 @@ import bpy
 import mathutils
 import h5py
 
-from telekinesis.illusion.blender.postprocessing import trim_redundant_channels, segmentation_mapping
+from telekinesis.illusion.blender.postprocessing import (
+    trim_redundant_channels,
+    segmentation_mapping,
+)
 from telekinesis.illusion.blender.postprocessing import dist2depth, depth2dist
 from telekinesis.illusion.blender.types.entity import Entity
 from telekinesis.illusion.blender.utils import load_image
-from telekinesis.illusion.blender.utility import resolve_path, Utility, NumpyEncoder
-from telekinesis.illusion.blender.math import change_coordinate_frame_of_point, change_source_coordinate_frame_of_transformation_matrix, change_target_coordinate_frame_of_transformation_matrix
+from telekinesis.illusion.blender.utility import (
+    resolve_path,
+    Utility,
+    NumpyEncoder,
+)
+from telekinesis.illusion.blender.math import (
+    change_coordinate_frame_of_point,
+    change_source_coordinate_frame_of_transformation_matrix,
+    change_target_coordinate_frame_of_transformation_matrix,
+)
 from telekinesis.illusion.blender.camera import settings as CameraUtility
 
 

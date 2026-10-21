@@ -17,12 +17,16 @@ from telekinesis.illusion.blender.types.entity import Entity
 from telekinesis.illusion.blender.utility import Utility, resolve_path
 from telekinesis.illusion.blender.utils import get_all_blender_mesh_objects
 from telekinesis.illusion.blender.types.material import Material
-from telekinesis.illusion.blender.loaders import material_utils as MaterialLoaderUtility
+from telekinesis.illusion.blender.loaders import (
+    material_utils as MaterialLoaderUtility,
+)
 from telekinesis.illusion.blender.setup import SetupUtility
 
 if platform != "win32":
     # this is only supported under linux and macOS, the import itself already doesn't work under windows
-    from telekinesis.illusion.blender.external.vhacd.decompose import convex_decomposition
+    from telekinesis.illusion.blender.external.vhacd.decompose import (
+        convex_decomposition,
+    )
 
 
 class MeshObject(Entity):

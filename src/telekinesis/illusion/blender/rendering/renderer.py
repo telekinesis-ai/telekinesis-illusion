@@ -26,7 +26,9 @@ from telekinesis.illusion.blender.utility import Utility, stdout_redirected
 from telekinesis.illusion.blender.rendering.output import _WriterUtility
 
 
-def set_denoiser(denoiser: Optional[str], denoiser_configs: Optional[dict] = None):
+def set_denoiser(
+    denoiser: Optional[str], denoiser_configs: Optional[dict] = None
+):
     """ Enables the specified denoiser.
 
     Automatically disables all previously activated denoiser.
@@ -34,7 +36,10 @@ def set_denoiser(denoiser: Optional[str], denoiser_configs: Optional[dict] = Non
     :param denoiser: The name of the denoiser which should be enabled. Options are "INTEL", "OPTIX" and None. \
                      If None is given, then no denoiser will be active.
     """
-    denoiser_configs = {**DefaultConfig.denoiser_configs, **(denoiser_configs or {})}
+    denoiser_configs = {
+        **DefaultConfig.denoiser_configs,
+        **(denoiser_configs or {}),
+    }
     # Make sure there is no denoiser active
     disable_all_denoiser()
     if denoiser is None:

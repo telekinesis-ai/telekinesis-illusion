@@ -11,10 +11,17 @@ isolate_user_extensions()
 
 import bpy
 
-from telekinesis.illusion.blender.types.mesh_object import MeshObject, convert_to_meshes
+from telekinesis.illusion.blender.types.mesh_object import (
+    MeshObject,
+    convert_to_meshes,
+)
 from telekinesis.illusion.blender.utility import Utility
-from telekinesis.illusion.blender.loaders.material_utils import create_material_from_texture
-from telekinesis.illusion.blender.loaders.material_utils import create as create_material
+from telekinesis.illusion.blender.loaders.material_utils import (
+    create_material_from_texture,
+)
+from telekinesis.illusion.blender.loaders.material_utils import (
+    create as create_material,
+)
 
 
 def load_obj(

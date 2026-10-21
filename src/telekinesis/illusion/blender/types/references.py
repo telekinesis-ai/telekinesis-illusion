@@ -2,6 +2,7 @@
 """Struct utility functions, like providing all current struct instances."""
 
 from typing import List, Tuple, TYPE_CHECKING
+
 if TYPE_CHECKING:
     from telekinesis.illusion.blender.types.struct import Struct
 

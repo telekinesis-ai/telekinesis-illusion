@@ -10,7 +10,9 @@ isolate_user_extensions()
 
 import bpy
 
-from telekinesis.illusion.blender.loaders import material_utils as MaterialLoaderUtility
+from telekinesis.illusion.blender.loaders import (
+    material_utils as MaterialLoaderUtility,
+)
 from telekinesis.illusion.blender.types.material import Material
 from telekinesis.illusion.blender.utility import Utility, resolve_path
 
@@ -124,9 +126,7 @@ def load_ccmaterials(
                         os.path.join(current_path, f"{asset}_Color{suffix}")
                         for suffix in (".png", ".jpg", ".jpeg")
                         if os.path.exists(
-                            os.path.join(
-                                current_path, f"{asset}_Color{suffix}"
-                            )
+                            os.path.join(current_path, f"{asset}_Color{suffix}")
                         )
                     ),
                     None,

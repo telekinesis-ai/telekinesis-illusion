@@ -7,7 +7,10 @@ import numpy as np
 from loguru import logger
 
 from telekinesis.illusion.blender.utils import get_all_blender_mesh_objects
-from telekinesis.illusion.blender.types.mesh_object import get_all_mesh_objects, MeshObject
+from telekinesis.illusion.blender.types.mesh_object import (
+    get_all_mesh_objects,
+    MeshObject,
+)
 from telekinesis.illusion.blender.undo import UndoAfterExecution
 from telekinesis.illusion.blender.utility import stdout_redirected
 

@@ -13,6 +13,7 @@ import random
 import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import filedialog, messagebox
+
 # Private helper from the stdlib `turtle` module, reused here to auto-forward
 # any tk.Canvas method not explicitly defined on ImagePanel to self._canvas.
 from turtle import __forwardmethods
@@ -64,7 +65,9 @@ def draw_masks(draw_layer: Image.Image, objects, obj_categories, ignore, alpha):
             else:
                 # rle dict (compressed counts string or uncompressed)
                 rle = segm
-                if isinstance(rle, dict) and isinstance(rle.get("counts"), list):
+                if isinstance(rle, dict) and isinstance(
+                    rle.get("counts"), list
+                ):
                     rle = mask_utils.frPyObjects(rle, h, w)
 
             m = mask_utils.decode(rle)

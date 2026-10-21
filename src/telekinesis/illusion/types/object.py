@@ -181,10 +181,6 @@ class Object:
         )
         return representation
 
-
-
-
-
     def get_object(self) -> MeshObject:
         return self._object
 

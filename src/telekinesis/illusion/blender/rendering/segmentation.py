@@ -9,8 +9,13 @@ import bpy
 import mathutils
 import numpy as np
 
-from telekinesis.illusion.blender.utils import load_image, get_all_blender_mesh_objects
-from telekinesis.illusion.blender.loaders import material_utils as MaterialLoaderUtility
+from telekinesis.illusion.blender.utils import (
+    load_image,
+    get_all_blender_mesh_objects,
+)
+from telekinesis.illusion.blender.loaders import (
+    material_utils as MaterialLoaderUtility,
+)
 from telekinesis.illusion.blender.rendering import renderer as RendererUtility
 from telekinesis.illusion.blender.undo import UndoAfterExecution
 from telekinesis.illusion.blender.utility import Utility

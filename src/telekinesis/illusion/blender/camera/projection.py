@@ -10,7 +10,10 @@ import numpy as np
 from mathutils.bvhtree import BVHTree
 
 from telekinesis.illusion.blender.utility import KeyFrame
-from telekinesis.illusion.blender.camera.settings import get_camera_pose, get_intrinsics_as_K_matrix
+from telekinesis.illusion.blender.camera.settings import (
+    get_camera_pose,
+    get_intrinsics_as_K_matrix,
+)
 
 
 def depth_via_raytracing(

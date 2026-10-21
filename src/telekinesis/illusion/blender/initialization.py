@@ -13,7 +13,10 @@ import bpy
 
 from telekinesis.illusion.blender.storage import GlobalStorage
 from telekinesis.illusion.blender.utility import reset_keyframes
-from telekinesis.illusion.blender.setup import SetupUtility, is_using_external_bpy_module
+from telekinesis.illusion.blender.setup import (
+    SetupUtility,
+    is_using_external_bpy_module,
+)
 from telekinesis.illusion.blender.camera import settings as CameraUtility
 from telekinesis.illusion.blender.defaults import DefaultConfig
 from telekinesis.illusion.blender.rendering import renderer as RendererUtility
@@ -45,8 +48,11 @@ def init(clean_up_scene: bool = True, temp_dir: Optional[str] = None):
     :param temp_dir: The temporary directory to use when using external bpy module. If None a default temporary directory is used.
     """
     from telekinesis.illusion.blender.utility import Utility
+
     if not Utility.temp_dir or not os.path.isdir(Utility.temp_dir):
-        SetupUtility.setup_utility_paths(SetupUtility.determine_temp_dir(temp_dir))
+        SetupUtility.setup_utility_paths(
+            SetupUtility.determine_temp_dir(temp_dir)
+        )
         atexit.register(clean_temp_dir)
     # A new Scene replaces the process-wide bpy scene. Multiple live scenes
     # are deliberately unsupported; wrappers retain Blender's normal lifetime.
@@ -82,7 +88,6 @@ def init(clean_up_scene: bool = True, temp_dir: Optional[str] = None):
         np_random.seed(random_seed)
 
     # Remember init was completed
-
 
 
 def clean_up(clean_up_camera: bool = False):

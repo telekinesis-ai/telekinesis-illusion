@@ -107,7 +107,9 @@ def test_camera_samples_reuse_action_and_curves_without_accumulating_keys(
 @pytest.mark.integration
 def test_catch_plane_is_reused_across_samples_and_shards(context, monkeypatch):
     container = Object(
-        object=create_primitive("CUBE", location=[0, 0, 0.5], scale=[1, 1, 0.5]),
+        object=create_primitive(
+            "CUBE", location=[0, 0, 0.5], scale=[1, 1, 0.5]
+        ),
         object_name="bin",
         category_name="bin",
         preprocess_model=False,

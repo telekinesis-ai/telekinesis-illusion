@@ -3,7 +3,9 @@
 Adapted from BlenderProc GlobalStorage (see NOTICE.md). The launcher/global
 configuration framework is omitted. Cleared when initializing a new Scene.
 """
+
 from typing import Any
+
 
 class GlobalStorage:
     _storage_dict: dict[str, Any] = {}
@@ -67,4 +69,3 @@ class GlobalStorage:
         :return: True if the key is in the storage
         """
         return key in GlobalStorage._storage_dict
-

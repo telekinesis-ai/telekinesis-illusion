@@ -35,8 +35,7 @@ Small fixes and documentation corrections can go directly to a pull request.
 ## Submit a pull request
 
 1. Fork the repository if you do not have write access. Create a focused branch
-   from the current `main`, such as `fix/camera-metadata` or
-   `docs/development-setup`.
+   from the current `main`, following the [branch naming guide](#branch-names).
 2. Set up the project using [DEVELOPMENT.md](DEVELOPMENT.md#get-started).
 3. Make the smallest complete change. Inspect affected callers and keep
    unrelated refactoring and formatting out of the diff.
@@ -46,9 +45,7 @@ Small fixes and documentation corrections can go directly to a pull request.
 5. Open a pull request against `main`. Link a related issue when one exists.
    A draft pull request is useful when feedback is needed before completion.
 
-Use descriptive commit messages explaining the change. Prefixes such as `fix:`,
-`feat:`, and `docs:` are useful; no issue-number branch format or commit-message
-checker is configured in this repository.
+Follow the [commit message guide](#commit-messages) to describe each change.
 
 The pull request description should state:
 
@@ -60,6 +57,65 @@ The pull request description should state:
 For rendering changes, include comparable before/after images with the same
 configuration and seed. For performance changes, include the workload, device,
 and measured timings or memory use.
+
+## Style guides
+
+### Commit messages
+
+Use this format, omitting the body and footer when they are unnecessary:
+
+```text
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+Choose a lowercase type that describes the main purpose of the change:
+
+| Type | Purpose |
+| --- | --- |
+| `doc` | Update user or developer documentation. |
+| `feat` | Add, change, or remove a feature. |
+| `fix` | Correct a bug. |
+| `refactor` | Restructure code without changing its behavior. |
+| `revert` | Undo all or part of an earlier commit. |
+| `style` | Change code formatting without changing behavior. |
+| `chore` | Maintain tooling or repository configuration without changing runtime behavior. |
+
+- **Scope:** name the affected component in lowercase, such as `scene`,
+  `camera`, or `writer`.
+- **Subject:** use a short, lowercase imperative phrase, such as
+  `validate image dimensions`. Omit the trailing period.
+- **Body:** explain what changed and why when the subject needs context.
+- **Footer:** reference related issues using lowercase keywords, such as
+  `closes #999` when the change resolves that issue.
+
+For example:
+
+```text
+fix(camera): validate image dimensions
+
+Reject non-positive dimensions before rendering.
+
+closes #999
+```
+
+### Branch names
+
+Include the issue number and a short, lowercase description, separated by
+underscores:
+
+```text
+iss_<issue-number>_<short_description>
+```
+
+For example, a branch for issue #999 could be:
+
+```text
+iss_999_validate_camera_dimensions
+```
 
 ## Before requesting review
 

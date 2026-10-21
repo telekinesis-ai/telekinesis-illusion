@@ -19,7 +19,9 @@ from scipy.ndimage import map_coordinates
 
 from telekinesis.illusion.blender.storage import GlobalStorage
 from telekinesis.illusion.blender.camera import settings as CameraUtility
-from telekinesis.illusion.blender.math import change_source_coordinate_frame_of_transformation_matrix
+from telekinesis.illusion.blender.math import (
+    change_source_coordinate_frame_of_transformation_matrix,
+)
 
 
 def set_lens_distortion(
