@@ -51,7 +51,14 @@ def mesh(context, name="Body_INSTANCE_0", slots=("paint", "trim", "glass")):
         data.materials.append(material)
     for index, polygon in enumerate(data.polygons):
         polygon.material_index = index % max(len(slots), 1)
-    return context.add_mesh_object(MeshObject(obj), name)
+    wrapped = Object(
+        object=MeshObject(obj),
+        object_name=name,
+        category_name=name,
+        preprocess_model=False,
+    )
+    context.get_objects()[name] = wrapped
+    return wrapped
 
 
 def assigned(obj):

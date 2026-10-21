@@ -23,7 +23,6 @@ isolate_user_extensions()
 import bpy
 from telekinesis.illusion.blender import initialization as initialization
 from telekinesis.illusion.blender.labels import LabelIdMapping
-from telekinesis.illusion.blender.types.mesh_object import MeshObject
 from telekinesis.illusion.blender.types.material import Material
 from telekinesis.illusion.blender.initialization import clean_temp_dir
 from telekinesis.illusion.blender.setup import is_using_external_bpy_module
@@ -73,7 +72,6 @@ class Scene:
         self._assets: dict[str, ModelAsset] = {}
         self._prepared = False
         self._closed = False
-        self._persistent_names: set[str] = set()
         self._objects: Dict[str, Object] = {}
         self._lights: dict[str, Light] = {}
         self._object_groups: Dict[str, List[Object]] = {}
@@ -524,51 +522,9 @@ class Scene:
             self._visible_object_names.remove(name)
 
     def begin_sample(self) -> None:
-        """Reset pool activity; procedural geometry keeps its explicit state."""
+        """Reset object activity before the next sample."""
         for name in tuple(self._visible_object_names):
-            if name not in self._persistent_names:
-                self.deactivate(self._objects[name])
-
-    def add_mesh_object(
-        self,
-        mesh_object: MeshObject,
-        object_name: str,
-        category_name: str | None = None,
-        category_id: int | None = None,
-        active_in_simulation: bool = False,
-        collision_shape: str = "CONVEX_HULL",
-    ) -> Object:
-        """Register procedural Blender geometry with the context.
-
-        Unlike :meth:`add_model`, this method does not import a file or make
-        an instance pool.  It is intended for geometry created at runtime by
-        procedural scene builders.
-        """
-        if object_name in self._objects:
-            raise ValueError(
-                f"Object name '{object_name}' is already registered."
-            )
-
-        final_category_name, final_category_id = (
-            self._resolve_category_id_and_name(
-                object_name=object_name,
-                category_name=category_name,
-                category_id=category_id,
-            )
-        )
-        obj = Object(
-            object=mesh_object,
-            object_name=object_name,
-            category_name=final_category_name,
-            category_id=final_category_id,
-            active_in_simulation=active_in_simulation,
-            collision_shape=collision_shape,
-            preprocess_model=False,
-        )
-        self._objects[object_name] = obj
-        self._object_groups[object_name] = [obj]
-        self._persistent_names.add(object_name)
-        return obj
+            self.deactivate(self._objects[name])
 
 
 class MaterialManager:

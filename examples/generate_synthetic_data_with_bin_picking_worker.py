@@ -14,7 +14,7 @@ def main() -> None:
     spec_file = (
         Path(__file__).resolve().parents[1]
         / "configs"
-        / "example_bin_picking_gearwheel_2.yaml"
+        / "bin_picking_epson.yaml"
     )
     worker = BinPickingWorker(spec_file)
     worker.generate()

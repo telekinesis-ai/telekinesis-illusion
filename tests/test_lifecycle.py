@@ -37,6 +37,7 @@ from telekinesis.illusion.blender.camera import settings
 from telekinesis.illusion.blender.math import build_transformation_mat
 from telekinesis.illusion.blender.rendering import renderer
 from telekinesis.illusion.types.render_result import RenderResult
+from telekinesis.illusion.types.object import Object
 from telekinesis.illusion.writer.writer import CocoWriter
 import bpy
 
@@ -105,15 +106,21 @@ def test_camera_samples_reuse_action_and_curves_without_accumulating_keys(
 
 @pytest.mark.integration
 def test_catch_plane_is_reused_across_samples_and_shards(context, monkeypatch):
-    container = context.add_mesh_object(
-        create_primitive("CUBE", location=[0, 0, 0.5], scale=[1, 1, 0.5]), "bin"
+    container = Object(
+        object=create_primitive("CUBE", location=[0, 0, 0.5], scale=[1, 1, 0.5]),
+        object_name="bin",
+        category_name="bin",
+        preprocess_model=False,
     )
-    part = context.add_mesh_object(
-        create_primitive("CUBE", scale=[0.1, 0.1, 0.1]),
-        "part",
+    part = Object(
+        object=create_primitive("CUBE", scale=[0.1, 0.1, 0.1]),
+        object_name="part",
+        category_name="part",
         active_in_simulation=True,
         collision_shape="BOX",
+        preprocess_model=False,
     )
+    context.get_objects().update(bin=container, part=part)
     engine = BlenderEngine(
         physics_config=PhysicsConfig(
             active=True,
@@ -201,7 +208,13 @@ def test_catch_plane_is_reused_across_samples_and_shards(context, monkeypatch):
 
 @pytest.mark.integration
 def test_catch_plane_is_inactive_after_physics_failure(context, monkeypatch):
-    container = context.add_mesh_object(create_primitive("CUBE"), "bin")
+    container = Object(
+        object=create_primitive("CUBE"),
+        object_name="bin",
+        category_name="bin",
+        preprocess_model=False,
+    )
+    context.get_objects()["bin"] = container
     context.activate(container)
     engine = BlenderEngine(
         physics_config=PhysicsConfig(
@@ -381,9 +394,10 @@ def test_undo_does_not_require_an_illusion_background(monkeypatch, context):
 def test_render_result_can_be_written_after_cleanup_with_aligned_views(
     context, tmp_path
 ):
-    cube = context.add_mesh_object(
-        create_primitive("CUBE"), "cube", category_id=9
-    )
+    cube = create_primitive("CUBE")
+    cube.set_name("cube")
+    cube.set_cp("category_id", 9)
+    context.get_categories().add("cube", 9)
     settings.set_resolution(32, 32)
     for frame in range(2):
         settings.add_camera_pose(
@@ -460,7 +474,11 @@ def test_procedural_worker_preserves_all_views_per_arrangement(tmp_path):
         "camera_pose_randomizer": {
             "sampler": "shell_sampler",
             "number_of_views": 2,
-            "params": {"radius_min": 5, "radius_max": 6},
+            "params": {
+                "radius_min": 5,
+                "radius_max": 6,
+                "center": [0, 0, 0],
+            },
         },
         "writer": {"include_camera_metadata": True},
     }
@@ -468,7 +486,10 @@ def test_procedural_worker_preserves_all_views_per_arrangement(tmp_path):
     path.write_text(yaml.safe_dump(spec))
 
     def build(scene, seed, layout):
-        scene.add_mesh_object(create_primitive("CUBE"), "cube", category_id=3)
+        cube = create_primitive("CUBE")
+        cube.set_name("cube")
+        cube.set_cp("category_id", 3)
+        scene.get_categories().add("cube", 3)
 
     worker = ProceduralSceneWorker(path, build)
     output = worker.generate()
