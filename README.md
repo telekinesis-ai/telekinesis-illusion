@@ -71,7 +71,7 @@ python examples/quickstart_flying_things.py --preview
 python examples/quickstart_parts_in_bin.py --preview
 ```
 ```bash
-python examples/generate_synthetic_data_with_bin_picking_worker.py
+python examples/generate_synthetic_data_with_bin_picking_worker.py --preview
 ```
 
 The checkout includes the original example assets. For another asset tree,
