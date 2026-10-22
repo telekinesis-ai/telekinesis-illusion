@@ -1,7 +1,10 @@
 <div align="center">
   <p>
-    <a href="https://gitlab.com/telekinesis/illusion">
-      <img width="100%" src="media/images/telekinesis_banner.png" />
+    <a align="center" href="https://telekinesis.ai/" target="_blank">
+      <img
+        width="100%"
+        src="https://telekinesis-public-assets.s3.us-east-1.amazonaws.com/Telekinesis+Banner.png"
+      >
     </a>
   </p>
 
@@ -42,6 +45,8 @@ Full documentation: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.
 1. Create the enviornment;
     ```bash
     conda create -n telekinesis-illusion python=3.11
+    ```
+    ```bash
     conda activate telekinesis-illusion
     ```
 2. Install the package:
@@ -54,9 +59,10 @@ Full documentation: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.
     ```bash
     git clone https://github.com/telekinesis-ai/telekinesis-illusion.git
     ```
-
     ```bash
     cd telekinesis-illusion
+    ```
+    ```bash
     python -m pip install -e .
     ```
 
@@ -74,9 +80,18 @@ setups; other configurations may also work.
 | Ubuntu 20.04.5 LTS | NVIDIA GeForce RTX 3080 |
 
 ## Quickstart
-The examples default to CUDA (`--device CUDA`); pass `--device CPU` to select CPU rendering:
 
-Run the exmamples:
+The example scripts are run from the Git checkout and are not included in the
+package installed from PyPI. Follow the GitHub installation above, then run
+these commands from the repository root. The examples rely on the checkout's
+`assets/` directory, and the worker example also uses `configs/`.
+
+The examples default to CUDA (`--device CUDA`); pass `--device CPU` to select
+CPU rendering:
+
+> [!NOTE]
+> On macOS, launching an example for the first time can take a long time.
+
 ```bash
 python examples/quickstart_flying_things.py --preview
 ```
@@ -91,9 +106,9 @@ The bin-picking worker defaults to this example YAML with preview disabled.
 Use `--spec_file PATH` to select another YAML and `--preview` or `--no-preview`
 to control the viewer.
 
-The checkout includes the original example assets. For another asset tree,
-pass `asset_dir` to `Scene`, or set `metadata.asset_directory` in the worker
-YAML. Relative YAML asset paths resolve against that YAML file. Interactive
+For another asset tree, pass `asset_dir` to `Scene`, or set
+`metadata.asset_directory` in the worker YAML. Relative YAML asset paths
+resolve against that YAML file. Interactive
 FiftyOne previews require the optional `viewer` dependencies:
 ```bash
 python -m pip install "telekinesis-illusion[viewer]"
@@ -125,10 +140,22 @@ Multiple extras can be installed together:
 
 ```bash
 python -m pip install -e ".[dev,docs,viewer]"
+python -m pip install -e ".[dev,docs,viewer]"
 ```
 
 The quoted commands work in Windows PowerShell and Command Prompt, as well as
 Linux shells such as Bash.
+
+## Tested configurations
+
+The following configurations have been manually tested with. This list records known-working
+setups; other configurations may also work.
+
+| Operating system | Hardware |
+|---|---|
+| Windows 11 Pro | CPU; NVIDIA GeForce RTX 3090; RTX 2060 |
+| macOS Tahoe 26.3 | Apple MacBook Pro with M5 Pro (CPU only) |
+| Ubuntu 20.04.5 LTS | CPU; NVIDIA GeForce RTX 3080 |
 
 ## Documentation
 
