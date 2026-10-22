@@ -108,11 +108,32 @@ to control the viewer.
 
 For another asset tree, pass `asset_dir` to `Scene`, or set
 `metadata.asset_directory` in the worker YAML. Relative YAML asset paths
-resolve against that YAML file. Interactive
-FiftyOne previews require the optional `viewer` dependencies:
+resolve against that YAML file.
+
+### View generated datasets
+
+Illusion writes generated datasets in a native sharded format. The shards can
+then be merged and exported to common formats such as COCO or YOLO. Generated
+images and annotations can always be inspected directly under `output/`, and
+COCO or YOLO exports can be opened with any compatible dataset viewer.
+
+Passing `--preview` to a quickstart opens Illusion's built-in COCO viewer after
+generation. This viewer uses Tkinter and Pillow for its interface.
+
+For interactive exploration with FiftyOne, install the optional dependencies
+and run the provided script on the final dataset directory:
+
 ```bash
-python -m pip install "telekinesis-illusion[viewer]"
+python -m pip install -e ".[viewer]"
 ```
+
+```bash
+python examples/view_dataset.py output/example_bin_picking_gearwheel_2/coco_format
+```
+
+The script detects native shards and merged datasets as well as exported COCO
+and YOLO datasets automatically.
+
 ### Optional dependencies
 
 Optional dependencies are grouped by use case and are not required for basic
