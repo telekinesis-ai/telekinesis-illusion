@@ -111,8 +111,30 @@ jobs:
       - name: Install downloaded wheel and dependencies from PyPI
         run: python -m pip install --index-url https://pypi.org/simple/ testpypi-dist/*.whl
 
-      - name: Verify import
-        run: python -I -c "from telekinesis.illusion.core import engine; print('Import OK')"
+      - name: Verify imports
+        run: |
+          set +e
+
+          python -I -c "import bpy; print('bpy import OK', flush=True)"
+          BPY_STATUS=$?
+
+          python -I -c "import cv2; print('cv2 import OK', flush=True)"
+          CV2_STATUS=$?
+
+          python -I -c "import bpy, cv2; print('bpy + cv2 import OK', flush=True)"
+          BPY_CV2_STATUS=$?
+
+          python -I -c "from telekinesis.illusion.core import engine; print('engine import OK', flush=True)"
+          ENGINE_STATUS=$?
+
+          echo "bpy: $BPY_STATUS"
+          echo "cv2: $CV2_STATUS"
+          echo "bpy + cv2: $BPY_CV2_STATUS"
+          echo "engine: $ENGINE_STATUS"
+
+          if [ $BPY_STATUS -ne 0 ] || [ $CV2_STATUS -ne 0 ] || [ $BPY_CV2_STATUS -ne 0 ] || [ $ENGINE_STATUS -ne 0 ]; then
+            exit 1
+          fi
 
   publish-pypi:
     name: Publish to PyPI

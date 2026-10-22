@@ -60,6 +60,19 @@ Full documentation: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.
     python -m pip install -e .
     ```
 
+## Tested configurations
+
+The following configurations have been manually tested with
+`telekinesis-illusion` 0.2.2 and Python 3.11. This list records known-working
+setups; other configurations may also work.
+
+| Operating system | Hardware |
+|---|---|
+| Windows 11 Pro | NVIDIA GeForce RTX 3090 |
+| Windows 11 Pro | NVIDIA GeForce RTX 2060 |
+| macOS Tahoe 26.3 | Apple MacBook Pro with M5 Pro (CPU only) |
+| Ubuntu 20.04.5 LTS | NVIDIA GeForce RTX 3080 |
+
 ## Quickstart
 The examples default to CUDA (`--device CUDA`); pass `--device CPU` to select CPU rendering:
 
