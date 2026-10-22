@@ -153,10 +153,9 @@ setups; other configurations may also work.
 
 | Operating system | Hardware |
 |---|---|
-| Windows 11 Pro | NVIDIA GeForce RTX 3090 |
-| Windows 11 Pro | NVIDIA GeForce RTX 2060 |
+| Windows 11 Pro | CPU; NVIDIA GeForce RTX 3090; RTX 2060 |
 | macOS Tahoe 26.3 | Apple MacBook Pro with M5 Pro (CPU only) |
-| Ubuntu 20.04.5 LTS | NVIDIA GeForce RTX 3080 |
+| Ubuntu 20.04.5 LTS | CPU; NVIDIA GeForce RTX 3080 |
 
 ## Documentation
 
