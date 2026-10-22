@@ -45,6 +45,7 @@ def main():
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--resolution", type=int, default=720)
     parser.add_argument("--samples", type=int, default=None)
+    parser.add_argument("--device", default="CUDA")
     parser.add_argument("--seed", type=int, default=None)
     args = parser.parse_args()
     if args.seed is not None:
@@ -194,7 +195,8 @@ def main():
         randomizer=randomizer,
         writer=writer,
         engine=BlenderEngine(
-            RenderConfig(samples=args.samples), PhysicsConfig(active=False)
+            RenderConfig(device=args.device, samples=args.samples),
+            PhysicsConfig(active=False),
         ),
     )
 

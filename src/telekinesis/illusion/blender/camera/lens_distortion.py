@@ -14,6 +14,7 @@ from typing import Union, List, Tuple, Optional
 import numpy as np
 import yaml
 import bpy
+from loguru import logger
 from scipy.ndimage import map_coordinates
 
 from telekinesis.illusion.blender.storage import GlobalStorage
@@ -146,7 +147,7 @@ def set_lens_distortion(
         # Take action if the optimization stalls or gets unstable
         # (distortion models are tricky if badly parameterized, especially in outer regions)
         if (it > 1) and (res[-1] > res[-2] * 0.99999):
-            print(
+            logger.warning(
                 "The residual for the worst distorted pixel got unstable/stalled."
             )
             # factor *= .5
@@ -155,32 +156,32 @@ def set_lens_distortion(
                     "The iterative distortion algorithm is unstable/stalled after 1000 iterations."
                 )
             if error > 1e9:
-                print(
+                logger.warning(
                     "Some (corner) pixels of the desired image are not defined by the used lens distortion model."
                 )
-                print("We invite you to double-check your distortion model.")
-                print(
+                logger.warning("We invite you to double-check your distortion model.")
+                logger.warning(
                     "The parameters k3,p1,p2 can easily overshoot for regions where the calibration "
                     "software had no datapoints."
                 )
-                print("You can either:")
-                print(
+                logger.warning("You can either:")
+                logger.warning(
                     "- take more projections (ideally image-filling) at the image corners and repeat calibration,"
                 )
-                print(
+                logger.warning(
                     "- reduce the # of released parameters to calibrate to k1,k2, or"
                 )
-                print(
+                logger.warning(
                     "- reduce the target image size (subtract some lines and columns from the desired resolution"
                 )
-                print(
+                logger.warning(
                     "  and subtract at most that number of lines and columns from the main point location)."
                 )
-                print(
+                logger.warning(
                     "Illusion will not generate incomplete images with void regions since these are not "
                     "useful for ML (data leakage)."
                 )
-                print(
+                logger.warning(
                     "For that, you can use the Matlab code in robotic.de/callab, which robustifies against "
                     "these unstable pixels."
                 )
@@ -431,7 +432,7 @@ def set_camera_parameters_from_config_file(
                 final_lines.append(line)
 
     extracted_camera_parameters = yaml.safe_load("\n".join(final_lines))
-    print(
+    logger.info(
         f"Interpreted intrinsics from DLR-RMC camera calibration file: {extracted_camera_parameters}"
     )
     # check version and origin parameters

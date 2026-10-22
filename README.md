@@ -61,7 +61,7 @@ Full documentation: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.
     ```
 
 ## Quickstart
-The examples default to CUDA; `BlenderEngine(RenderConfig(device="CPU"))` selects CPU rendering:
+The examples default to CUDA (`--device CUDA`); pass `--device CPU` to select CPU rendering:
 
 Run the exmamples:
 ```bash

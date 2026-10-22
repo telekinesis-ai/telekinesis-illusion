@@ -1090,7 +1090,7 @@ def set_render_devices(
     :param desired_gpu_ids: One or multiple GPU ids to specifically use. If none is given, all suitable GPUs are used.
     """
     # Mark beginning of selection to avoid confusion when calling set_render_devices multiple times:
-    print("Selecting render devices...")
+    logger.info("Selecting render devices...")
 
     if desired_gpu_device_type is None:
         # If no gpu types are specified, use the default types based on the OS
@@ -1122,7 +1122,7 @@ def set_render_devices(
         bpy.context.preferences.addons[
             "cycles"
         ].preferences.compute_device_type = "NONE"
-        print("Using only the CPU for rendering")
+        logger.info("Using only the CPU for rendering")
     else:
         # Use GPU
         bpy.context.scene.cycles.device = "GPU"
@@ -1144,13 +1144,13 @@ def set_render_devices(
                     # Only use gpus with specified ids
                     if desired_gpu_ids is None or i in desired_gpu_ids:
                         if device.type != "CPU":
-                            print(
+                            logger.info(
                                 f"Device {device.name} of type {device.type} found and used."
                             )
                             device.use = True
                             found = True
                         if not use_only_gpu and device.type == "CPU":
-                            print(
+                            logger.info(
                                 f"Device {device.name} of type {device.type} found and used."
                             )
                             device.use = True
@@ -1170,7 +1170,7 @@ def set_render_devices(
             bpy.context.preferences.addons[
                 "cycles"
             ].preferences.compute_device_type = "NONE"
-            print("Using only the CPU for rendering")
+            logger.info("Using only the CPU for rendering")
 
 
 def set_tiling(use_auto_tile: bool, tile_size: int):

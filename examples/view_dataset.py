@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import cast
 
 import yaml
+from loguru import logger
 from PIL import Image
 from pycocotools import mask as mask_utils
 
@@ -214,7 +215,7 @@ def _import_bop(
             if src.suffix.lower() in _BROWSER_INCOMPATIBLE_EXTS:
                 if cache_dir is None:
                     cache_dir = Path(tempfile.mkdtemp(prefix="fiftyone_bop_"))
-                    print(
+                    logger.info(
                         f"Converting TIFF images for browser display → {cache_dir}"
                     )
                 png_path = cache_dir / scene_dir.name / (src.stem + ".png")
@@ -387,7 +388,7 @@ def main() -> None:
 
     dataset = fo.Dataset(DATASET_NAME)
     fmt = _detect_format(DATASET_DIR)
-    print(f"Detected dataset format: {fmt}")
+    logger.info(f"Detected dataset format: {fmt}")
     bop_cache_dir: Path | None = None
     if fmt == "yolo":
         _import_yolo(dataset, DATASET_DIR, max_samples=MAX_SAMPLES)
@@ -436,18 +437,18 @@ def main() -> None:
         for s in splits_present
     }
 
-    print(f"\nDataset: {dataset.name} ({n_samples} samples)")
-    print("\nSamples per split:")
+    logger.info(f"Dataset: {dataset.name} ({n_samples} samples)")
+    logger.info("Samples per split:")
     for split, count in sorted(split_counts.items()):
-        print(f"  {split:6s} {count}")
+        logger.info(f"  {split:6s} {count}")
 
     images_with: dict[str, int] = {
         lb: cast(int, dataset.match(F(label_path).contains([lb])).count())
         for lb in total_counts
     }
 
-    print(f"\nClass distribution ({label_field_name}):")
-    print(
+    logger.info(f"Class distribution ({label_field_name}):")
+    logger.info(
         "  Columns: train/valid/test cells show count/share-of-split% "
         "(each column sums to 100%);\n"
         "           total = instances across all splits;\n"
@@ -466,9 +467,9 @@ def main() -> None:
         header += f" {s:>{col_w_split}}"
     for c in ("total", "images", "%"):
         header += f" {c:>{col_w}}"
-    print(header)
+    logger.info(header)
     dash_w = label_w + (col_w_split + 1) * len(splits_present) + (col_w + 1) * 3
-    print("  " + "-" * dash_w)
+    logger.info("  " + "-" * dash_w)
 
     for label, _ in sorted(total_counts.items(), key=lambda kv: -kv[1]):
         row = f"  {label:<{label_w}}"
@@ -482,7 +483,7 @@ def main() -> None:
         row += f" {images_with[label]:>{col_w}}"
         pct = (class_total / grand_total * 100) if grand_total else 0.0
         row += f" {pct:>{col_w - 1}.1f}%"
-        print(row)
+        logger.info(row)
 
     totals_row = f"  {'TOTAL':<{label_w}}"
     for s in splits_present:
@@ -490,8 +491,8 @@ def main() -> None:
     totals_row += f" {grand_total:>{col_w}}"
     totals_row += f" {n_samples:>{col_w}}"
     totals_row += f" {100.0:>{col_w - 1}.1f}%"
-    print(totals_row)
-    print(
+    logger.info(totals_row)
+    logger.info(
         "\nFor interactive in-app charts: in the FiftyOne app, click '+' next "
         "to the 'Samples' tab and add a 'Histograms' panel.\n"
     )
@@ -505,7 +506,7 @@ def main() -> None:
     finally:
         if bop_cache_dir is not None:
             shutil.rmtree(bop_cache_dir, ignore_errors=True)
-            print(f"Cleaned up temp image cache: {bop_cache_dir}")
+            logger.info(f"Cleaned up temp image cache: {bop_cache_dir}")
 
 
 if __name__ == "__main__":

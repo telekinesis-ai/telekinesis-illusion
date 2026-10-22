@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 import cv2
+from loguru import logger
 import numpy as np
 from tqdm import tqdm
 
@@ -161,7 +162,7 @@ def transform_shards(
         if annotation_files[0].name == ANNOTATIONS
         else "exported COCO"
     )
-    print(f"Detected {layout}: {len(datasets)} annotation file(s).")
+    logger.info(f"Detected {layout}: {len(datasets)} annotation file(s).")
 
     reference_stats = []
     for path in tqdm(references, desc="Reading references", unit="image"):
@@ -252,7 +253,7 @@ def main():
         )
     except (OSError, ValueError, KeyError, TypeError, cv2.error) as error:
         parser.exit(1, f"Error: {error}\n")
-    print(
+    logger.info(
         f"Wrote {images} images in {directories} COCO directories to {args.output_dir}"
     )
 

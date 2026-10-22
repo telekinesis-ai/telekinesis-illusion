@@ -5,6 +5,7 @@ import os
 from typing import Dict, List, Union
 
 import bpy
+from loguru import logger
 import numpy as np
 
 from telekinesis.illusion.blender.utils import load_image
@@ -69,7 +70,7 @@ def render_optical_flow(
         # only need to render once; both fwd and bwd flow will be saved
         temporary_fwd_flow_file_path = os.path.join(temp_dir, "fwd_flow_")
         temporary_bwd_flow_file_path = os.path.join(temp_dir, "bwd_flow_")
-        print(
+        logger.info(
             f"Rendering {bpy.context.scene.frame_end - bpy.context.scene.frame_start} frames of optical flow..."
         )
         RendererUtility.render(

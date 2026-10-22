@@ -7,6 +7,7 @@ import ssl
 
 import bpy
 import bmesh
+from loguru import logger
 from mathutils import Vector
 import numpy as np
 import imageio
@@ -180,11 +181,11 @@ def load_image(file_path: str, num_channels: int = 3) -> np.ndarray:
                 file_path, plugin="opencv", flags=cv2.IMREAD_UNCHANGED
             )[:, :, :num_channels]
         except ValueError:
-            print(
+            logger.warning(
                 "It seems the freeimage library which is necessary to read .exr files cannot "
                 "be found on your computer."
             )
-            print("Gonna try to download it automatically.")
+            logger.warning("Gonna try to download it automatically.")
 
             # Since PEP 476 the certificate of https connections is verified per default.
             # However, in the blender python env no local certificates seem to be found which makes

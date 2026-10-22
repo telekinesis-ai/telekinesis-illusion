@@ -13,6 +13,7 @@ import json
 from contextlib import contextmanager, redirect_stdout
 
 import bpy
+from loguru import logger
 import numpy as np
 
 # pylint: disable=wrong-import-position
@@ -539,7 +540,7 @@ class BlockStopWatch:
         self.start: float = 0.0
 
     def __enter__(self):
-        print(f"#### Start - {self.block_name} ####")
+        logger.info(f"#### Start - {self.block_name} ####")
         self.start = time.time()
 
     def __exit__(
@@ -548,7 +549,7 @@ class BlockStopWatch:
         exc_value: Optional[BaseException],
         traceback: Optional[TracebackType],
     ):
-        print(
+        logger.info(
             f"#### Finished - {self.block_name} (took {time.time() - self.start:.3f} seconds) ####"
         )
 
