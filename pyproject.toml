@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telekinesis-illusion"
-version = "0.2.4"
+version = "0.2.5"
 description = "A synthetic data generation package."
 readme = "README.md"
 requires-python = "~=3.11.14"
@@ -36,6 +36,7 @@ dependencies = [
 ]
 authors = [
     { name = "Telekinesis", email = "support@telekinesis.ai" },
+    { name = "Andranik Aristakesyan", email = "andranik.aristakesyan@telekinesis.ai" },
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
