@@ -10,6 +10,7 @@ import numpy as np
 import bpy
 import mathutils
 import h5py
+from loguru import logger
 
 from telekinesis.illusion.blender.postprocessing import (
     trim_redundant_channels,
@@ -94,7 +95,7 @@ def write_hdf5(
         )
         with h5py.File(hdf5_path, "w") as file:
             # Go through all the output types
-            print(f"Merging data for frame {frame} into {hdf5_path}")
+            logger.info(f"Merging data for frame {frame} into {hdf5_path}")
 
             adjusted_frame = frame - bpy.context.scene.frame_start
             for key, data_block in output_data_dict.items():
@@ -311,15 +312,15 @@ class _WriterUtility:
         if world_frame_change is None:
             world_frame_change = ["X", "Y", "Z"]
 
-        # Print warning if local_frame_change is used with other attributes than matrix_world
+        # Warn if local_frame_change is used with other attributes than matrix_world
         if local_frame_change != ["X", "Y", "Z"] and attribute_name in [
             "location",
             "rotation_euler",
             "rotation_forward_vec",
             "rotation_up_vec",
         ]:
-            print(
-                "Warning: The local_frame_change parameter is at the moment only supported by "
+            logger.warning(
+                "The local_frame_change parameter is at the moment only supported by "
                 "the matrix_world attribute."
             )
 

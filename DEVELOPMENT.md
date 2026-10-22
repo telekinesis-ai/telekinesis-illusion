@@ -131,20 +131,19 @@ directory when comparing runs so earlier images do not affect the result.
 Start with a small render and disable the viewer:
 
 ```bash
-python examples/quickstart_flying_things.py --no-preview --num-images 2 --resolution 128 --samples 4 --seed 17 --output-dir output/dev-flying
-python examples/quickstart_parts_in_bin.py --no-preview --num-images 2 --resolution 128 --samples 4 --seed 17 --output-dir output/dev-bin
+python examples/quickstart_flying_things.py --no-preview --device CPU --num-images 2 --resolution 128 --samples 4 --seed 17 --output-dir output/dev-flying
+python examples/quickstart_parts_in_bin.py --no-preview --device CPU --num-images 2 --resolution 128 --samples 4 --seed 17 --output-dir output/dev-bin
 ```
 
-These commands use CUDA. The first generates objects without physics; the
+These commands use CPU rendering. The first generates objects without physics; the
 second simulates parts in a bin. Each output directory contains
 `coco_annotations.json` and the image files referenced by it. Low resolution
 and sample counts are useful for checking the pipeline, not judging final
 image quality. The quickstarts enable preview by default, so retain
 `--no-preview` unless the `viewer` extra is installed and a viewer is wanted.
 
-The quickstarts do not expose a device CLI option. For CPU rendering, set
-`device="CPU"` in the existing `RenderConfig` in your local script, retaining
-its other settings. In a script that constructs its own engine:
+The quickstarts default to CUDA; pass `--device CPU` for CPU rendering. In a
+script that constructs its own engine:
 
 ```python
 from telekinesis.illusion.core import engine
@@ -331,7 +330,7 @@ ordinary contributions do not require publishing credentials or a version bump.
 | Installation rejects Python or cannot find `bpy` | Check `python --version`, the active environment, and wheel availability for `bpy==4.2.17`. Python 3.12+ does not satisfy this project's metadata. |
 | Imports use old code or fail after an edit | Check the IDE interpreter and `python -m pip show telekinesis-illusion`. Reinstall editable metadata when needed and restart Python. |
 | Missing asset directory, model, HDRI, or material | Check the working directory, YAML-relative asset root, and referenced files. A wheel does not supply the top-level example assets. |
-| CUDA device selection fails | Check the GPU and driver, or select CPU explicitly as described above. The quickstarts have no `--device` flag. |
+| CUDA device selection fails | Check the GPU and driver, or select CPU explicitly as described above. |
 | Viewer import fails or a preview starts unexpectedly | Install the `viewer` extra, or pass `--no-preview` to the quickstarts. |
 | NumPy/SciPy ABI error or imports resolve into Blender extensions | Check environment isolation and any `BLENDER_USER_EXTENSIONS` override. Blender extension wheels can shadow environment packages; see `utils/blender_env.py`. |
 | Windows process crashes after rendering | Use the documented batch wrappers for generation. Standard examples use normal Python shutdown and can encounter native `bpy` teardown failures. Preserve logs and verify output rather than assuming success from the last message. |

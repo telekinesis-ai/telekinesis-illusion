@@ -4,6 +4,7 @@
 from typing import Union, Optional, Dict, Tuple, List, Callable
 
 import mathutils
+from loguru import logger
 import numpy as np
 from mathutils import Vector, Euler, Matrix
 
@@ -196,8 +197,8 @@ class CollisionUtility:
                 @ obj2.get_mesh().vertices[0].co,
             )
             if inter:
-                print(
-                    "Warning: Detected that "
+                logger.warning(
+                    "Detected that "
                     + obj2.get_name()
                     + " is completely inside "
                     + obj1.get_name()
@@ -216,8 +217,8 @@ class CollisionUtility:
                 @ obj1.get_mesh().vertices[0].co,
             )
             if inter:
-                print(
-                    "Warning: Detected that "
+                logger.warning(
+                    "Detected that "
                     + obj1.get_name()
                     + " is completely inside "
                     + obj2.get_name()

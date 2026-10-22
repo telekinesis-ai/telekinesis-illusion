@@ -28,6 +28,7 @@ from subprocess import Popen
 import shutil
 
 import git
+from loguru import logger
 import numpy as np
 from typing import TYPE_CHECKING
 
@@ -80,10 +81,10 @@ def convex_decomposition(
     # Download v-hacd library if necessary
     if not os.path.exists(os.path.join(vhacd_path, "v-hacd")):
         os.makedirs(vhacd_path, exist_ok=True)
-        print("Downloading v-hacd library into " + str(vhacd_path))
+        logger.info("Downloading v-hacd library into " + str(vhacd_path))
         git.Git(vhacd_path).clone("https://github.com/kmammou/v-hacd.git")
 
-        print("Building v-hacd")
+        logger.info("Building v-hacd")
         if "NO_OPENCL" in os.environ and os.environ["NO_OPENCL"] == "1":
             os.system(
                 os.path.join(os.path.dirname(__file__), "build_linux.sh")
@@ -166,13 +167,13 @@ def convex_decomposition(
             )
 
         # Run V-HACD
-        print(f"\nExporting mesh for V-HACD: {off_filename}...")
+        logger.info(f"Exporting mesh for V-HACD: {off_filename}...")
         obj_export(mesh, off_filename)
         bpy.data.meshes.remove(mesh)
         cmd_line = f'"{vhacd_binary}" {off_filename} -r {resolution} -v {max_num_vertices_per_ch} -d {depth}'
         if os.path.exists(os.path.basename(log_file_name)):
             cmd_line += f"2>&1 > {log_file_name}"
-        print(f"Running V-HACD...\n{cmd_line}\n")
+        logger.info(f"Running V-HACD...\n{cmd_line}")
         with Popen(
             cmd_line, bufsize=-1, close_fds=True, shell=True, cwd=temp_dir
         ) as vhacd_process:

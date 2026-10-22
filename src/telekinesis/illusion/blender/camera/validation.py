@@ -7,6 +7,7 @@ from typing import Union, List, Set
 from collections import defaultdict
 
 import bpy
+from loguru import logger
 import numpy as np
 from mathutils import Matrix
 from mathutils.bvhtree import BVHTree
@@ -371,7 +372,7 @@ def check_novel_pose(
             return False
 
         diff = ((var - old_var) / old_var) * 100.0
-        print(f"Variance difference {mode}: {diff}")
+        logger.info(f"Variance difference {mode}: {diff}")
         if (
             diff < diff_threshold
         ):  # Check if the variance increased sufficiently

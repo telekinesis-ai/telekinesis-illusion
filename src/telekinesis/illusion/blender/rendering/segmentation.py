@@ -6,6 +6,7 @@ import os
 from typing import List, Tuple, Union, Dict, Optional, Any
 
 import bpy
+from loguru import logger
 import mathutils
 import numpy as np
 
@@ -139,7 +140,7 @@ def render_segmap(
                     + ".exr"
                 )
                 segmentation = load_image(file_path)
-                print(file_path, segmentation.shape)
+                logger.info(f"{file_path} {segmentation.shape}")
 
                 segmap = (
                     Utility.map_back_from_equally_spaced_equidistant_values(

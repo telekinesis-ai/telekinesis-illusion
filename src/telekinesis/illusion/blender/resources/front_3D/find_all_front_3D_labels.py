@@ -8,6 +8,8 @@ import json
 import os
 import glob
 
+from loguru import logger
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         "This detects all labels which are currently used in the 3D Front dataset."
@@ -70,7 +72,7 @@ if __name__ == "__main__":
             # add category name for each structure to the set
             category_name = used_obj_name.lower()
             all_category_names.add(category_name)
-        print(f"Done with {i} of {len(json_files)}")
+        logger.info(f"Done with {i} of {len(json_files)}")
 
     # this is already represented by void
     if "unknown" in all_category_names:
@@ -78,9 +80,9 @@ if __name__ == "__main__":
     if "void" in all_category_names:
         all_category_names.remove("void")
 
-    print(f"These are all categories: {list(all_category_names)}")
-    print(f"There are {len(all_category_names)} categories found.")
-    print(
+    logger.info(f"These are all categories: {list(all_category_names)}")
+    logger.info(f"There are {len(all_category_names)} categories found.")
+    logger.warning(
         f"There are {len(not_used_models)} models which have been defined but not found on disc!"
     )
 
@@ -96,4 +98,4 @@ if __name__ == "__main__":
     ) as file:
         file.write("\n".join(text))
 
-    print("Finished writing csv to disc!")
+    logger.info("Finished writing csv to disc!")

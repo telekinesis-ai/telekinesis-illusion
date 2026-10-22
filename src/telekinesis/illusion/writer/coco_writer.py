@@ -6,6 +6,7 @@ import os
 from typing import Optional, Dict, Union, Tuple, List
 
 import numpy as np
+from loguru import logger
 from skimage import measure
 import cv2
 from pycocotools import mask as mask_utils
@@ -165,7 +166,7 @@ def write_coco_annotations(
                 },
             )
         coco_output["categories"] = list(categories.values())
-    print("Writing coco annotations to " + coco_annotations_path)
+    logger.info("Writing coco annotations to " + coco_annotations_path)
     with open(coco_annotations_path, "w", encoding="utf-8") as fp:
         json.dump(coco_output, fp, indent=indent)
 

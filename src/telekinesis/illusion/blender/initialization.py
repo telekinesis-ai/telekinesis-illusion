@@ -9,6 +9,7 @@ import shutil
 from numpy import random as np_random
 from typing import Optional
 import bpy
+from loguru import logger
 
 from telekinesis.illusion.blender.storage import GlobalStorage
 from telekinesis.illusion.blender.utility import reset_keyframes
@@ -28,7 +29,7 @@ def clean_temp_dir():
     # pylint: enable=import-outside-toplevel
     assert is_using_external_bpy_module()
     if os.path.exists(Utility.temp_dir):
-        print("Cleaning temporary directory")
+        logger.info("Cleaning temporary directory")
         shutil.rmtree(Utility.temp_dir)
 
 
@@ -74,21 +75,18 @@ def init(clean_up_scene: bool = True, temp_dir: Optional[str] = None):
         not is_using_external_bpy_module()
         and bpy.context.preferences.view.language != "en_US"
     ):
-        print("Setting blender language settings to english during this run")
+        logger.info("Setting blender language settings to english during this run")
         bpy.context.preferences.view.language = "en_US"
 
     # Use cycles
     bpy.context.scene.render.engine = "CYCLES"
-
-    # Set default render devices
-    RendererUtility.set_render_devices(desired_gpu_device_type="CUDA")
 
     # Set default parameters
     _Initializer.set_default_parameters()
 
     random_seed = os.getenv("ILLUSION_RANDOM_SEED")
     if random_seed:
-        print(f"Got random seed: {random_seed}")
+        logger.info(f"Got random seed: {random_seed}")
         try:
             random_seed = int(random_seed)
         except ValueError as e:

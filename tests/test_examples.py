@@ -1,4 +1,4 @@
-"""Run the generation examples without previews using real CUDA rendering."""
+"""Run the generation examples without previews using real CPU rendering."""
 
 import json
 import os
@@ -98,6 +98,8 @@ def test_quickstarts_render_multiple_samples(tmp_path, name):
             64,
             "--samples",
             2,
+            "--device",
+            "CPU",
             "--seed",
             17,
             "--output-dir",
@@ -125,7 +127,7 @@ def test_worker_renders_and_exports_coco_shards(tmp_path):
     )
     spec["shard"]["size"] = 2
     spec["camera"].update(image_width=64, image_height=64)
-    spec["renderer"]["samples"] = 2
+    spec["renderer"].update(samples=2, device="CPU")
     spec_path = tmp_path / "spec.yaml"
     spec_path.write_text(yaml.safe_dump(spec), encoding="utf8")
     run_example(
