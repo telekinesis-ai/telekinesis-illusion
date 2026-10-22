@@ -31,7 +31,7 @@ jobs:
       - name: Run quickstart and worker examples
         # shortcut: tests are skipped, TODO: re-enable after CPU runner validation.
         if: ${{ false }}
-        run: python tools/run_tests.py tests/test_examples.py
+        run: python -m pytest tests/test_examples.py
 
       - name: Build package
         run: |

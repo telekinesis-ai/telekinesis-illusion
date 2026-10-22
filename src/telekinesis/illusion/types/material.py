@@ -18,7 +18,7 @@ Color: TypeAlias = (
 Parameter: TypeAlias = Scalar | Color | Uniform
 _BLENDER_FLOAT_MAX = 3.4028234663852886e38
 
-# Public parameter -> Blender 4.2 socket, component count, valid bounds.
+# Public parameter -> Blender 4.5 socket, component count, valid bounds.
 PARAMETERS = MappingProxyType(
     {
         "base_color": ("Base Color", 4, 0.0, 1.0),

@@ -15,17 +15,17 @@ license-files = [
     "LICEN[CS]E*",
 ]
 dependencies = [
-    "numpy>=1.26",
+    "numpy>=1.26,<2",
     "Pillow>=10",
     "h5py>=3.10",
     "loguru>=0.7.3",
     # Headless required: Blender/OpenCV combination has a documented Linux crash 
     # involving OpenCV’s bundled Qt/XKB libraries: https://github.com/opencv/opencv/issues/24161
-    "opencv-contrib-python-headless==4.13.0.90",
+    "opencv-contrib-python-headless==4.11.0.86",
     "tqdm>=4.67.1",
     "pycocotools>=2.0.11",
     # Blender
-    "bpy==4.2.17",
+    "bpy==4.5.14",
     "trimesh==4.12.2",
     "imageio>=2.34.1",
     "scikit-learn>=1.5.0",

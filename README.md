@@ -94,10 +94,41 @@ to control the viewer.
 The checkout includes the original example assets. For another asset tree,
 pass `asset_dir` to `Scene`, or set `metadata.asset_directory` in the worker
 YAML. Relative YAML asset paths resolve against that YAML file. Interactive
-FiftyOne previews are optional: 
+FiftyOne previews require the optional `viewer` dependencies:
 ```bash
-python -m pip install -e ".[viewer]"
+python -m pip install "telekinesis-illusion[viewer]"
 ```
+### Optional dependencies
+
+Optional dependencies are grouped by use case and are not required for basic
+dataset generation.
+
+| Extra | Purpose |
+|---|---|
+| `viewer` | Installs FiftyOne for interactive dataset previews. Generation with `--no-preview` does not require it. |
+| `dev` | Installs pytest, coverage, benchmarking, Ruff, and Pylint for developing and checking the package. |
+| `docs` | Installs MkDocs and the plugins used to build the project documentation. |
+
+Install an extra with the published package:
+
+```bash
+python -m pip install "telekinesis-illusion[viewer]"
+```
+
+For an editable source checkout, include the extra in the local install:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Multiple extras can be installed together:
+
+```bash
+python -m pip install -e ".[dev,docs,viewer]"
+```
+
+The quoted commands work in Windows PowerShell and Command Prompt, as well as
+Linux shells such as Bash.
 
 ## Documentation
 

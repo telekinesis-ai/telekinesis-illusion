@@ -3,7 +3,7 @@
 Importing the pip ``bpy`` module makes Blender prepend the *user* extensions
 site-packages -- on Windows that is::
 
-    %APPDATA%/Blender Foundation/Blender/4.2/extensions/.local/lib/python3.11/site-packages
+    %APPDATA%/Blender Foundation/Blender/4.5/extensions/.local/lib/python3.11/site-packages
 
 -- ahead of the active environment's ``site-packages``. That directory is where
 Blender unpacks the wheels bundled with installed extensions, including our own
