@@ -253,5 +253,5 @@ jobs:
           "
 
           git add pyproject.toml
-          git commit -m "chore: bump version to $NEW_VERSION [skip ci]"
+          git commit -m "chore: bump version to $NEW_VERSION"
           git push origin develop
