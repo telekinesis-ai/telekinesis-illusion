@@ -49,13 +49,28 @@ class BlenderEngine:
         self._physics_catch_plane: mesh_object.MeshObject | None = None
 
     def clean_up(self) -> None:
-        """Release the engine-owned catch-plane object and mesh."""
+        """Release engine-owned physics and rendering resources.
+
+        Standalone ``bpy`` can unregister Cycles RNA properties before its
+        render engine is destroyed during interpreter shutdown. This causes
+        non-fatal ``AttributeError`` and ``ReferenceError`` messages after a
+        completed run. Switching to Workbench here destroys the Cycles engine
+        while its RNA types are still available. Interactive Blender is left
+        unchanged because it manages the renderer lifecycle itself.
+        """
         if self._physics_catch_plane is not None:
             plane_object = self._physics_catch_plane.blender_obj
             plane_mesh = plane_object.data
             bpy.data.objects.remove(plane_object, do_unlink=True)
             bpy.data.meshes.remove(plane_mesh)
             self._physics_catch_plane = None
+
+        # Release Cycles before standalone bpy unregisters its RNA properties.
+        if (
+            not bpy.app.binary_path
+            and bpy.context.scene.render.engine == "CYCLES"
+        ):
+            bpy.context.scene.render.engine = "BLENDER_WORKBENCH"
 
     def prepare(self, segmentation_config: dict) -> None:
         if self._prepared:

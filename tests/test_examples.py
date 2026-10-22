@@ -20,21 +20,12 @@ def run_example(name, args, log_path):
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
     env["PYTHONUNBUFFERED"] = "1"
-    # bpy can crash during Windows interpreter teardown after a successful run.
     runner = """
-import os
 import runpy
 import sys
 
 sys.argv = sys.argv[1:]
 runpy.run_path(sys.argv[0], run_name="__main__")
-if sys.platform == "win32":
-    from telekinesis.illusion.blender.initialization import clean_temp_dir
-
-    clean_temp_dir()
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(0)
 """
     with log_path.open("w", encoding="utf8") as log:
         result = subprocess.run(

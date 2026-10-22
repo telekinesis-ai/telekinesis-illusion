@@ -60,6 +60,19 @@ Full documentation: [Telekinesis Agentic OS: Illusion](https://docs.telekinesis.
     python -m pip install -e .
     ```
 
+## Tested configurations
+
+The following configurations have been manually tested with
+`telekinesis-illusion` 0.2.2 and Python 3.11. This list records known-working
+setups; other configurations may also work.
+
+| Operating system | Hardware |
+|---|---|
+| Windows 11 Pro | NVIDIA GeForce RTX 3090 |
+| Windows 11 Pro | NVIDIA GeForce RTX 2060 |
+| macOS Tahoe 26.3 | Apple MacBook Pro with M5 Pro (CPU only) |
+| Ubuntu 20.04.5 LTS | NVIDIA GeForce RTX 3080 |
+
 ## Quickstart
 The examples default to CUDA (`--device CUDA`); pass `--device CPU` to select CPU rendering:
 
@@ -81,10 +94,41 @@ to control the viewer.
 The checkout includes the original example assets. For another asset tree,
 pass `asset_dir` to `Scene`, or set `metadata.asset_directory` in the worker
 YAML. Relative YAML asset paths resolve against that YAML file. Interactive
-FiftyOne previews are optional: 
+FiftyOne previews require the optional `viewer` dependencies:
 ```bash
-python -m pip install -e ".[viewer]"
+python -m pip install "telekinesis-illusion[viewer]"
 ```
+### Optional dependencies
+
+Optional dependencies are grouped by use case and are not required for basic
+dataset generation.
+
+| Extra | Purpose |
+|---|---|
+| `viewer` | Installs FiftyOne for interactive dataset previews. Generation with `--no-preview` does not require it. |
+| `dev` | Installs pytest, coverage, benchmarking, Ruff, and Pylint for developing and checking the package. |
+| `docs` | Installs MkDocs and the plugins used to build the project documentation. |
+
+Install an extra with the published package:
+
+```bash
+python -m pip install "telekinesis-illusion[viewer]"
+```
+
+For an editable source checkout, include the extra in the local install:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Multiple extras can be installed together:
+
+```bash
+python -m pip install -e ".[dev,docs,viewer]"
+```
+
+The quoted commands work in Windows PowerShell and Command Prompt, as well as
+Linux shells such as Bash.
 
 ## Documentation
 
