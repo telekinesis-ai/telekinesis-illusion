@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telekinesis-illusion"
-version = "0.2.3"
+version = "0.2.4"
 description = "A synthetic data generation package."
 readme = "README.md"
 requires-python = "~=3.11.14"
@@ -19,12 +19,9 @@ dependencies = [
     "Pillow>=10",
     "h5py>=3.10",
     "loguru>=0.7.3",
-    # Headless required: Blender/OpenCV combination has a documented Linux crash 
-    # involving OpenCV’s bundled Qt/XKB libraries: https://github.com/opencv/opencv/issues/24161
     "opencv-contrib-python-headless==4.11.0.86",
     "tqdm>=4.67.1",
     "pycocotools>=2.0.11",
-    # Blender
     "bpy==4.5.14",
     "trimesh==4.12.2",
     "imageio>=2.34.1",
@@ -58,7 +55,9 @@ dev = [
     "pytest-cov>=5.0.0",
     "pytest-benchmark>=4.0.0",
 ]
-viewer = ["fiftyone==1.17.0"]
+viewer = [
+    "fiftyone==1.17.0",
+]
 docs = [
     "mkdocs>=1.6,<2",
     "mkdocstrings[python]>=0.25,<1",
@@ -81,15 +80,31 @@ where = [
     "src",
 ]
 namespaces = true
-exclude = ["*.__pycache__*"]
+exclude = [
+    "*.__pycache__*",
+]
 
 [tool.setuptools.package-data]
-"telekinesis.illusion.blender" = ["NOTICE.md", "LICENSE.upstream", "resources/**/*", "external/vhacd/*.sh"]
+"telekinesis.illusion.blender" = [
+    "NOTICE.md",
+    "LICENSE.upstream",
+    "resources/**/*",
+    "external/vhacd/*.sh",
+]
 
 [tool.setuptools.exclude-package-data]
-"*" = ["**/__pycache__/*", "**/*.pyc"]
+"*" = [
+    "**/__pycache__/*",
+    "**/*.pyc",
+]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
-markers = ["integration: real bpy rendering and physics"]
+pythonpath = [
+    "src",
+]
+testpaths = [
+    "tests",
+]
+markers = [
+    "integration: real bpy rendering and physics",
+]
