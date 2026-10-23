@@ -220,7 +220,7 @@ captured by the engine, but `CocoWriter` does not export those arrays.
 ## Workers, shards, and dataset processing
 
 [BinPickingWorker](src/telekinesis/illusion/workers/bin_picking_worker.py)
-resolves a YAML specification into an environment, randomization nodes,
+resolves a YAML config file into an environment, randomization nodes,
 rendering settings, and a writer. Relative asset roots are anchored to the YAML
 file. Its generation loop changes the writer's output directory for each shard
 and reuses prepared pools until the run completes or fails, then cleans up.

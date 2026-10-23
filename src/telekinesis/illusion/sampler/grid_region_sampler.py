@@ -115,7 +115,7 @@ class GridRegionSampler:
         Re-tune the grid in place, discarding the cached cells so the next
         next_location() rebuilds with the new values.
 
-        Intended for interactive tools (e.g. the Blender spec editor) that
+        Intended for interactive tools (e.g. the Blender config editor) that
         adjust the grid between scenes - the cells are only rebuilt lazily, so
         an unchanged call costs nothing.
 

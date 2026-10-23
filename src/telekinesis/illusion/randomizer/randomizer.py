@@ -218,7 +218,7 @@ class Randomizer:
         Swap the RandomizerNode registered under 'node_name' for another one,
         leaving the DAG topology and the node's config untouched.
 
-        Intended for interactive tools (e.g. the Blender spec editor) that
+        Intended for interactive tools (e.g. the Blender config editor) that
         re-tune a randomizer's parameters between runs without paying for a
         full worker rebuild. 'randomize()' recomputes the execution order on
         every call, so the replacement takes effect immediately.

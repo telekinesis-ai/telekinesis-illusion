@@ -105,25 +105,25 @@ def test_quickstarts_render_multiple_samples(tmp_path, name):
 @pytest.mark.integration
 def test_worker_renders_and_exports_coco_shards(tmp_path):
     """The YAML example renders shards, merges them, and exports COCO splits."""
-    spec = yaml.safe_load(
+    config = yaml.safe_load(
         (ROOT / "configs/example_bin_picking_gearwheel_2.yaml").read_text(
             encoding="utf8"
         )
     )
-    spec["metadata"].update(
+    config["metadata"].update(
         asset_directory=str(ROOT / "assets"),
         base_output_directory=str(tmp_path),
         dataset_name="test_bins",
         num_images=3,
     )
-    spec["shard"]["size"] = 2
-    spec["camera"].update(image_width=64, image_height=64)
-    spec["renderer"].update(samples=2, device="CPU")
-    spec_path = tmp_path / "spec.yaml"
-    spec_path.write_text(yaml.safe_dump(spec), encoding="utf8")
+    config["shard"]["size"] = 2
+    config["camera"].update(image_width=64, image_height=64)
+    config["renderer"].update(samples=2, device="CPU")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf8")
     run_example(
         "generate_synthetic_data_with_bin_picking_worker.py",
-        ["--spec_file", spec_path],
+        ["--config-file", config_path],
         tmp_path / "run.log",
     )
     dataset = tmp_path / "test_bins"

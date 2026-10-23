@@ -114,7 +114,7 @@ DEFAULT_PHYSICS_SIMULATOR_PARAMS = {
 }
 
 # Material type tags per supercategory, matched against the sub-directories of
-# <asset_dir>/materials. Overridable via the spec's `material_randomizer`
+# <asset_dir>/materials. Overridable via the config's `material_randomizer`
 # section; an empty list for a role skips that MaterialRandomizer entirely.
 DEFAULT_MATERIAL_RANDOMIZER_CFG = {
     "part": ["metal"],
@@ -123,14 +123,14 @@ DEFAULT_MATERIAL_RANDOMIZER_CFG = {
 }
 
 # HDRI categories, matched against the sub-directories of <asset_dir>/hdris.
-# Overridable via the spec's `background_randomizer` section.
+# Overridable via the config's `background_randomizer` section.
 DEFAULT_BACKGROUND_RANDOMIZER_CFG = {
     "categories": ["indoor/industrial", "indoor/misc"],
 }
 
 # Only 'container' has a default here; 'part' and 'distractor' fall back to the
 # top-level min/max_number_visible_models / _distractors keys, which every
-# existing spec already sets. Overridable via `instance_randomizer`.
+# existing config already sets. Overridable via `instance_randomizer`.
 DEFAULT_INSTANCE_RANDOMIZER_CFG = {
     "container": {"min": 1, "max": 1},
 }
@@ -146,42 +146,41 @@ class BinPickingWorker:
 
     def __init__(
         self,
-        spec_file_path: Path,
+        config_file_path: Path,
     ) -> None:
         """
         Initial internal states.
 
         Args:
-            spec_file_path: Path
-                The path to the specifications YAML-file.
+            config_file_path: Path
+                The path to the YAML config file.
 
         """
-        self._spec_file_path = Path(spec_file_path)
-        self._specs = self._load_specs(self._spec_file_path)
+        self._config_file_path = Path(config_file_path)
+        self._config = self._load_config(self._config_file_path)
 
-        # A relative metadata.asset_directory is anchored on the spec file, so
-        # a spec stays valid no matter which directory it is run from.
+        # A relative metadata.asset_directory is anchored on the config file, so
+        # a config stays valid no matter which directory it is run from.
         self._asset_dir = resolve_asset_dir(
-            self._specs["metadata"].get("asset_directory"),
-            base_dir=self._spec_file_path.parent,
+            self._config["metadata"].get("asset_directory"),
+            base_dir=self._config_file_path.parent,
         )
 
-        self._num_image = self._specs["metadata"]["num_images"]
+        self._num_image = self._config["metadata"]["num_images"]
         self._num_shards = math.ceil(
-            self._num_image / self._specs["shard"]["size"]
+            self._num_image / self._config["shard"]["size"]
         )
 
-        max_size_gb = self._specs.get("output", {}).get("max_size_gb", 10)
+        max_size_gb = self._config.get("output", {}).get("max_size_gb", 10)
         self._max_output_size_bytes = max_size_gb * (1024**3)
 
         self._grid_sampler = None
         self._parse_tunable_cfg()
 
-        # Prepare configs from spec
         # TODO: Reuse blender.camera.settings.set_intrinsics_from_K_matrix
         # for measured camera calibration and add_depth_of_field for the
         # target lens's aperture and focus distance.
-        self._camera_config = CameraConfig(**self._specs.get("camera", {}))
+        self._camera_config = CameraConfig(**self._config.get("camera", {}))
 
         # Create the environment
         self._environment = Environment(
@@ -189,8 +188,8 @@ class BinPickingWorker:
             asset_dir=self._asset_dir,
         )
 
-        self._info = self._specs["metadata"]["info"]
-        self._licenses = self._specs["metadata"]["licenses"]
+        self._info = self._config["metadata"]["info"]
+        self._licenses = self._config["metadata"]["licenses"]
 
         # Add models to environment
         self._model_supercatgory_map = {}
@@ -212,7 +211,7 @@ class BinPickingWorker:
         # nearest-neighbor interpolation for IDs, and derive masks/boxes
         # from the remapped instance maps.
         self._output_base = None
-        renderer = self._specs.get("renderer", {})
+        renderer = self._config.get("renderer", {})
         self._writer = CocoWriter(
             create_output_dir_on_init=False,
             info=self._info,
@@ -242,25 +241,25 @@ class BinPickingWorker:
 
         # Create shard merger and arguments for splitter
         self._merger = None
-        self._dataset_format = self._specs.get("output", {}).get(
+        self._dataset_format = self._config.get("output", {}).get(
             "dataset_format", None
         )
-        self._train_val_tes_ratio = self._specs.get("output", {}).get(
+        self._train_val_tes_ratio = self._config.get("output", {}).get(
             "train_val_tes_ratio", (0.7, 0.2, 0.1)
         )
-        self._splitter_seed = self._specs.get("output", {}).get("seed", 42)
-        self._splitter_stratify = self._specs.get("output", {}).get(
+        self._splitter_seed = self._config.get("output", {}).get("seed", 42)
+        self._splitter_stratify = self._config.get("output", {}).get(
             "stratify", True
         )
 
     def _parse_tunable_cfg(self) -> None:
         """
-        Derive the tunable randomizer configs from self._specs.
+        Derive the tunable randomizer configs from self._config.
 
-        Split out of __init__ so apply_spec_updates() can re-derive them from
-        an edited spec without rebuilding the worker.
+        Split out of __init__ so apply_config_updates() can re-derive them from
+        an edited config without rebuilding the worker.
         """
-        pose_sampling_cfg = self._specs.get(
+        pose_sampling_cfg = self._config.get(
             "pose_sampling", DEFAULT_POSE_SAMPLING_CFG
         )
         self._sample_on_surface = pose_sampling_cfg.get(
@@ -279,7 +278,7 @@ class BinPickingWorker:
             **ps_params.get("grid", {}),
         }
         # Physics simulation params
-        physics_cfg = self._specs.get("physics_simulator", {})
+        physics_cfg = self._config.get("physics_simulator", {})
         catch_plane_cfg = {
             **DEFAULT_PHYSICS_SIMULATOR_PARAMS["catch_plane"],
             **physics_cfg.get("catch_plane", {}),
@@ -291,9 +290,9 @@ class BinPickingWorker:
         }
 
         # Randomizer params that used to be hard-coded in _add_randomizers().
-        # Merged per key so a spec that overrides only one role still picks up
+        # Merged per key so a config that overrides only one role still picks up
         # the defaults for the others.
-        material_cfg = self._specs.get("material_randomizer", {})
+        material_cfg = self._config.get("material_randomizer", {})
         self._material_rules = None
         if isinstance(material_cfg, Mapping) and "rules" in material_cfg:
             unknown = set(material_cfg) - {"active", "rules"}
@@ -326,21 +325,21 @@ class BinPickingWorker:
             }
         self._background_cfg = {
             **DEFAULT_BACKGROUND_RANDOMIZER_CFG,
-            **self._specs.get("background_randomizer", {}),
+            **self._config.get("background_randomizer", {}),
         }
         self._instance_cfg = {
             **DEFAULT_INSTANCE_RANDOMIZER_CFG,
-            **self._specs.get("instance_randomizer", {}),
+            **self._config.get("instance_randomizer", {}),
         }
         self._light_nodes = self._parse_light_randomizers(
-            self._specs.get("light_randomizer", {})
+            self._config.get("light_randomizer", {})
         )
 
         # The grid hands out cell centers in order and starts over once it runs
         # out, so more parts than cells means parts share a center and only the
         # jitter keeps them apart. Nothing downstream checks this, so say so
-        # here - derived from the spec alone, which keeps this valid both at
-        # construction and on every apply_spec_updates().
+        # here - derived from the config alone, which keeps this valid both at
+        # construction and on every apply_config_updates().
         if self._pose_sampling_strategy == "grid":
             capacity = (
                 self._grid_cfg["rows"]
@@ -349,14 +348,14 @@ class BinPickingWorker:
             )
             loadable_parts = sum(
                 model["instances"]["max"]
-                for model in self._specs.get("models", [])
+                for model in self._config.get("models", [])
                 if model["supercategory"] == "part"
             )
             part_cfg = self._instance_cfg.get("part")
             configured_max = (
                 part_cfg["max"]
                 if part_cfg
-                else self._specs.get(
+                else self._config.get(
                     "max_number_visible_models", loadable_parts
                 )
             )
@@ -388,13 +387,13 @@ class BinPickingWorker:
 
     def get_environment(self) -> Environment:
         """
-        Get the Environment built from the spec, with its models and camera.
+        Get the Environment built from the config, with its models and camera.
         """
         return self._environment
 
     def get_randomizer(self) -> Randomizer:
         """
-        Get the Randomizer built from the spec.
+        Get the Randomizer built from the config.
         """
         return self._randomizer
 
@@ -404,7 +403,7 @@ class BinPickingWorker:
 
         Visible instances, materials, background and sampled light properties
         are retained while the caller iterates on layout and framing. Interactive
-        tools (the Blender spec editor's "Preview Scene") use this; a real
+        tools (the Blender config editor's "Preview Scene") use this; a real
         generation run always calls randomize() unfiltered.
 
         Visible objects are the ones that get re-posed, so the caller is
@@ -416,21 +415,21 @@ class BinPickingWorker:
         """
         self._randomizer.randomize(environment, stages=self.GEOMETRY_STAGES)
 
-    def _load_specs(self, spec_file_path: Path) -> Dict:
+    def _load_config(self, config_file_path: Path) -> Dict:
         """
-        Helper function to load and print the provided specs.
+        Helper function to load and print the provided config.
 
         Args:
-            spec_file_path: Path
-                The path to the specifications YAML-file.
+            config_file_path: Path
+                The path to the YAML config file.
 
         Returns:
-            The specifications as a dict.
+            The configuration as a dict.
         """
-        with open(spec_file_path, "r", encoding="utf-8") as f:
-            specs = yaml.load(f, Loader=yaml.SafeLoader)
-        self._print_specs(specs)
-        return specs
+        with open(config_file_path, "r", encoding="utf-8") as f:
+            config = yaml.load(f, Loader=yaml.SafeLoader)
+        self._print_config(config)
+        return config
 
     def _get_output_size_bytes(self) -> int:
         """Return the total size in bytes of all files under the output directory."""
@@ -442,15 +441,15 @@ class BinPickingWorker:
             if f.is_file()
         )
 
-    def _print_specs(self, specs: Dict) -> None:
+    def _print_config(self, config: Dict) -> None:
         """
-        Helper function to print the provided specs.
+        Helper function to print the provided config.
 
         Args:
-            specs: Dict
-                A dictionary containing the specifications.
+            config: Dict
+                A dictionary containing the configuration.
         """
-        md = specs["metadata"]
+        md = config["metadata"]
         width = max(len(k) for k in md.keys())
         for k, v in md.items():
             logger.info(f"{k:<{width}} : {v}")
@@ -458,8 +457,8 @@ class BinPickingWorker:
     def _counts_for(self, names: list[str]) -> dict[str, tuple[int, int]]:
         entries = {
             entry["name"]: entry
-            for entry in self._specs.get("models", [])
-            + self._specs.get("distractors", [])
+            for entry in self._config.get("models", [])
+            + self._config.get("distractors", [])
         }
         return {
             name: (
@@ -475,11 +474,11 @@ class BinPickingWorker:
 
     def _add_models_to_environment(self) -> None:
         """
-        Add the listed models from the specs to the environment.
+        Add the listed models from the config to the environment.
         """
         model_supercategory_map = defaultdict(list)
         id_supercategory_map = defaultdict(list)
-        for model in self._specs["models"]:
+        for model in self._config["models"]:
             model_path = str(resolve_asset_path(model["path"], self._asset_dir))
             self._environment.add(
                 ModelAsset(
@@ -501,8 +500,8 @@ class BinPickingWorker:
             model_supercategory_map[model["supercategory"]].append(
                 model["name"]
             )
-            # category_id may be auto-assigned by Environment when the spec uses
-            # null. Record the resolved ID that rendering will actually emit.
+            # category_id may be auto-assigned when the config uses null.
+            # Record the resolved ID that rendering will actually emit.
             resolved_id = self._environment.get_assets()[
                 model["name"]
             ].category_id
@@ -513,9 +512,9 @@ class BinPickingWorker:
 
     def _add_distractors_to_environment(self) -> None:
         """
-        Add the listed distractors from the specs to the environment.
+        Add the listed distractors from the config to the environment.
         """
-        for distractor in self._specs.get("distractors", []):
+        for distractor in self._config.get("distractors", []):
             distractor_path = str(
                 resolve_asset_path(distractor["path"], self._asset_dir)
             )
@@ -553,17 +552,17 @@ class BinPickingWorker:
         """
         Resolve the instance-count bounds for a supercategory.
 
-        Prefers the spec's `instance_randomizer.<role>` section and falls back
-        to the top-level min/max_number_visible_* keys, which every spec
+        Prefers the config's `instance_randomizer.<role>` section and falls back
+        to the top-level min/max_number_visible_* keys, which every config
         predating that section already sets.
 
         Args:
             role: str
                 The supercategory to look up ('part', 'container', ...).
             legacy_min_key: Optional[str]
-                Top-level spec key holding the lower bound, if any.
+                Top-level config key holding the lower bound, if any.
             legacy_max_key: Optional[str]
-                Top-level spec key holding the upper bound, if any.
+                Top-level config key holding the upper bound, if any.
 
         Returns:
             The (min, max) instance counts as a tuple.
@@ -571,35 +570,35 @@ class BinPickingWorker:
         cfg = self._instance_cfg.get(role)
         if cfg:
             return cfg["min"], cfg["max"]
-        return self._specs[legacy_min_key], self._specs[legacy_max_key]
+        return self._config[legacy_min_key], self._config[legacy_max_key]
 
-    def apply_spec_updates(self, specs: Dict) -> List[str]:
+    def apply_config_updates(self, config: Dict) -> List[str]:
         """
-        Re-apply the tunable parts of a spec to the already-built Environment
+        Re-apply the tunable parts of a config to the already-built Environment
         and Randomizer, without re-importing any models.
 
-        Built for interactive tools (the Blender spec editor) where rebuilding
+        Built for interactive tools (the Blender config editor) where rebuilding
         the whole worker on every slider drag is far too slow. Everything the
         randomizers read per scene is updated in place; anything that is baked
         into the imported geometry is reported back instead of being silently
         ignored.
 
         Args:
-            specs: Dict
-                The edited spec, same schema as the file passed to __init__.
+            config: Dict
+                The edited config, same schema as the file passed to __init__.
 
         Returns:
             Human-readable descriptions of changes that could NOT be applied
             and need a full reload. Empty when everything took effect.
         """
-        self._specs = specs
+        self._config = config
         self._parse_tunable_cfg()
 
         needs_reload = self._apply_model_scales()
 
         # Capacity cannot grow in a prepared environment. Existing pools remain
         # usable for appearance/pose edits and smaller instance ranges.
-        for entry in self._specs.get("models", []) + self._specs.get(
+        for entry in self._config.get("models", []) + self._config.get(
             "distractors", []
         ):
             group = self._environment.get_object_group(entry["name"])
@@ -729,7 +728,7 @@ class BinPickingWorker:
                     ),
                 )
 
-        light_config = self._specs.get("light_randomizer", {})
+        light_config = self._config.get("light_randomizer", {})
         if light_config != self._loaded_light_config:
             light_types = {
                 name: nodes[0] for name, nodes in self._light_nodes.items()
@@ -754,7 +753,7 @@ class BinPickingWorker:
             "camera_pose_randomizer"
         )
         if camera_node is not None:
-            cpr_cfg = self._specs.get(
+            cpr_cfg = self._config.get(
                 "camera_pose_randomizer", DEFAULT_CAMERA_POSE_RANDOMIZER_CFG
             )
             sampler_name = cpr_cfg.get(
@@ -781,7 +780,7 @@ class BinPickingWorker:
 
     def _apply_model_scales(self) -> List[str]:
         """
-        Re-scale already-imported models whose spec scale changed.
+        Re-scale already-imported models whose config scale changed.
 
         Object.__init__ bakes the scale into the mesh vertices and resets the
         object scale to 1, so this applies the *relative* factor to the same
@@ -794,7 +793,7 @@ class BinPickingWorker:
         """
         problems: List[str] = []
 
-        for entry in self._specs.get("models", []) + self._specs.get(
+        for entry in self._config.get("models", []) + self._config.get(
             "distractors", []
         ):
             name = entry["name"]
@@ -846,7 +845,7 @@ class BinPickingWorker:
         Build the 'random' pose-sampling function.
 
         Reads self._sample_on_surface / self._pose_sampling_params on every
-        call rather than capturing them, so apply_spec_updates() can retune
+        call rather than capturing them, so apply_config_updates() can retune
         the sampling box without rebuilding the randomizer.
 
         Returns:
@@ -891,7 +890,7 @@ class BinPickingWorker:
         Build the 'grid' pose-sampling function, creating self._grid_sampler.
 
         The z-rotation range is read from self._grid_cfg per call instead of
-        being captured, so apply_spec_updates() can retune it in place - the
+        being captured, so apply_config_updates() can retune it in place - the
         grid geometry itself is retuned through
         GridRegionSampler.update_grid_params().
 
@@ -1278,7 +1277,7 @@ class BinPickingWorker:
                 node_config=NodeConfig(stage=STAGE_POSE),
             )
         self._loaded_light_config = deepcopy(
-            self._specs.get("light_randomizer", {})
+            self._config.get("light_randomizer", {})
         )
 
         # Add camera pose randomizer
@@ -1299,7 +1298,7 @@ class BinPickingWorker:
         # TODO: Resample only failed camera views with a bounded retry budget
         # and report exhaustion. Preserve the settled arrangement and accepted
         # views; randomized views of one arrangement remain separate images.
-        cpr_cfg = self._specs.get(
+        cpr_cfg = self._config.get(
             "camera_pose_randomizer", DEFAULT_CAMERA_POSE_RANDOMIZER_CFG
         )
         sampler_name = cpr_cfg.get(
@@ -1327,20 +1326,20 @@ class BinPickingWorker:
 
     def generate(self) -> None:
         """
-        Generate shards based on the provided specs.
+        Generate shards based on the provided config.
 
         Each shard is written to its own output directory whose name includes a
         UUID so that multiple workers can run simultaneously without collisions.
         """
-        shard_size = self._specs["shard"]["size"]
+        shard_size = self._config["shard"]["size"]
         remaining_images = self._num_image
-        output_cfg = self._specs.get("output", {})
+        output_cfg = self._config.get("output", {})
         name_template = output_cfg.get(
             "shard_name_template", "shard_{date}_{uuid}"
         )
 
-        dataset_name = self._specs["metadata"]["dataset_name"]
-        base_output_directory = self._specs["metadata"]["base_output_directory"]
+        dataset_name = self._config["metadata"]["dataset_name"]
+        base_output_directory = self._config["metadata"]["base_output_directory"]
         if base_output_directory:
             self._output_base = Path(base_output_directory) / dataset_name
         else:
@@ -1442,7 +1441,7 @@ class BinPickingWorker:
         self._merger.merge()
 
         if self._dataset_format:
-            output_dir = Path(self._specs["metadata"]["dataset_name"]) / Path(
+            output_dir = Path(self._config["metadata"]["dataset_name"]) / Path(
                 self._dataset_format + "_format"
             )
             output_dir = self._output_base.parent / output_dir

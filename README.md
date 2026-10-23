@@ -99,12 +99,12 @@ python examples/quickstart_flying_things.py --preview
 python examples/quickstart_parts_in_bin.py --preview
 ```
 ```bash
-python examples/generate_synthetic_data_with_bin_picking_worker.py --spec_file configs/example_bin_picking_gearwheel_2.yaml --preview
+python examples/generate_synthetic_data_with_bin_picking_worker.py --config-file configs/example_bin_picking_gearwheel_2.yaml --preview
 ```
 
 The bin-picking worker defaults to this example YAML with preview disabled.
-Use `--spec_file PATH` to select another YAML and `--preview` or `--no-preview`
-to control the viewer.
+Use `--config-file config.yaml` to select another config file and `--preview`
+or `--no-preview` to control the viewer.
 
 For another asset tree, pass `asset_dir` to `Environment`, or set
 `metadata.asset_directory` in the worker YAML. Relative YAML asset paths

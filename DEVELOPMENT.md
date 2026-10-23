@@ -164,7 +164,7 @@ Use the tracked
 entrypoint that supports CLI overrides:
 
 ```bash
-python examples/bat_scripts/generate_synthetic_data_with_bin_picking_worker.py --spec-file configs/example_bin_picking_gearwheel_2.yaml --dataset-name dev-gearwheels --output-dir output --num-images 20 --shard-size 10 --resolution 128 --samples 4 --seed 17 --no-preview
+python examples/bat_scripts/generate_synthetic_data_with_bin_picking_worker.py --config-file configs/example_bin_picking_gearwheel_2.yaml --dataset-name dev-gearwheels --output-dir output --num-images 20 --shard-size 10 --resolution 128 --samples 4 --seed 17 --no-preview
 ```
 
 This writes shards and merged annotations under `output/dev-gearwheels/`. The
@@ -184,7 +184,7 @@ renderer:
 
 The standard `examples/generate_synthetic_data_with_bin_picking_worker.py`
 defaults to `configs/example_bin_picking_gearwheel_2.yaml` with preview disabled.
-Use `--spec_file PATH` to select another configuration and `--preview` or
+Use `--config-file config.yaml` to select another config file and `--preview` or
 `--no-preview` to control the viewer.
 
 On Windows, the batch entrypoints bypass native interpreter teardown after a

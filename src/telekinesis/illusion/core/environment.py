@@ -172,7 +172,7 @@ class Environment:
     ) -> List[Object]:
         """
         Get every instance of a model, keyed by the 'object_name' it was added
-        under (i.e. the spec's model name, not the '<name>_INSTANCE_<n>' keys
+        under (i.e. the config's model name, not the '<name>_INSTANCE_<n>' keys
         used by get_objects()).
 
         Args:
