@@ -16,19 +16,19 @@ from telekinesis.illusion.blender.camera import settings as camera_settings
 from telekinesis.illusion.blender.sampling.shell import shell as sample_shell
 from mathutils import Matrix  # Only importable once bpy is loaded
 
-from telekinesis.illusion.core.context import Context
+from telekinesis.illusion.core.environment import Environment
 from telekinesis.illusion.types.object import compute_poi
 
 
 def _resolve_target_objects(
-    context: Context,
+    environment: Environment,
     target_names: List[str] | None = None,
     visible_only: bool = True,
 ) -> List:
     """
-    Resolve objects from context by optional name prefixes and visibility.
+    Resolve objects from environment by optional name prefixes and visibility.
     """
-    objects = context.get_objects()
+    objects = environment.get_objects()
 
     if target_names is None:
         resolved = list(objects.values())
@@ -47,7 +47,7 @@ def _resolve_target_objects(
 
 
 def shell_sampler(
-    context: Context = None,
+    environment: Environment = None,
     center: np.ndarray | None | List[str] = None,
     radius_min: float = 0.4,
     radius_max: float = 0.6,
@@ -68,13 +68,13 @@ def shell_sampler(
     - If `center` is an np.ndarray, it is used directly as the POI.
     """
     if center is None:
-        target_objects = _resolve_target_objects(context, visible_only=True)
+        target_objects = _resolve_target_objects(environment, visible_only=True)
         if not target_objects:
             raise ValueError("No objects available for shell_sampler center.")
         center = compute_poi(target_objects)
     elif isinstance(center, list):
         target_objects = _resolve_target_objects(
-            context=context, target_names=center, visible_only=True
+            environment=environment, target_names=center, visible_only=True
         )
         if not target_objects:
             raise ValueError(
@@ -110,7 +110,7 @@ def shell_sampler(
 
 
 def volume_sampler(
-    context: Context = None,
+    environment: Environment = None,
     point_of_interst: np.ndarray | None | List[str] = None,
     volume_size: tuple[float, float, float] | None = None,
     distance_range: tuple[float, float] | None = None,
@@ -128,7 +128,7 @@ def volume_sampler(
     bbox_target_names = None
 
     if point_of_interst is None:
-        target_objects = _resolve_target_objects(context, visible_only=True)
+        target_objects = _resolve_target_objects(environment, visible_only=True)
         if not target_objects:
             raise ValueError("No objects available to compute camera POI.")
         poi = compute_poi(target_objects)
@@ -139,7 +139,7 @@ def volume_sampler(
         if all(isinstance(x, str) for x in point_of_interst):
             bbox_target_names = point_of_interst
             target_objects = _resolve_target_objects(
-                context=context,
+                environment=environment,
                 target_names=point_of_interst,
                 visible_only=True,
             )
@@ -161,7 +161,9 @@ def volume_sampler(
     bbox = None
     if volume_size is None or volume_center is None:
         bbox = compute_axis_aligned_bbox(
-            context=context, target_objects=bbox_target_names, visible_only=True
+            environment=environment,
+            target_objects=bbox_target_names,
+            visible_only=True,
         )
 
     if volume_size is None:
@@ -178,7 +180,7 @@ def volume_sampler(
     if volume_center is None:
         if bbox is None:
             _, _, _, center = compute_axis_aligned_bbox(
-                context=context,
+                environment=environment,
                 target_objects=bbox_target_names,
                 visible_only=True,
             )
@@ -196,9 +198,9 @@ def volume_sampler(
     location = local_location + volume_center
 
     if distance_range is None:
-        focal_length_mm = context.get_camera().focal_length
-        sensor_width = context.get_camera().sensor_width
-        sensor_height = context.get_camera().sensor_height
+        focal_length_mm = environment.get_camera().focal_length
+        sensor_width = environment.get_camera().sensor_width
+        sensor_height = environment.get_camera().sensor_height
 
         max_distance = min_distance = autocompute_distance(
             focal_length_mm, sensor_width, sensor_height, length, width, height
@@ -226,7 +228,7 @@ def volume_sampler(
 
 
 def compute_axis_aligned_bbox(
-    context: Context = None,
+    environment: Environment = None,
     target_objects: None | List[str] = None,
     visible_only: bool = True,
 ) -> tuple[float, float, float, np.ndarray]:
@@ -234,7 +236,9 @@ def compute_axis_aligned_bbox(
     Compute the world-space axis-aligned bounding box of selected objects.
     """
     resolved = _resolve_target_objects(
-        context=context, target_names=target_objects, visible_only=visible_only
+        environment=environment,
+        target_names=target_objects,
+        visible_only=visible_only,
     )
     if not resolved:
         raise ValueError(
@@ -267,7 +271,7 @@ def autocompute_distance(
     bbox_height: float,
 ) -> float:
     """
-    Estimate a camera distance that frames the scene bounding box.
+    Estimate a camera distance that frames the environment bounding box.
     """
     x_c_max = max(bbox_length, bbox_width)
     x_i_max = max(sensor_width, sensor_height)

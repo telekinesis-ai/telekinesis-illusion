@@ -26,7 +26,7 @@ from loguru import logger
 from telekinesis.illusion.core.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
-from telekinesis.illusion.core.scene import Scene as Context
+from telekinesis.illusion.core.environment import Environment
 from telekinesis.illusion.core.engine import BlenderEngine, RenderConfig
 from telekinesis.illusion.types.camera import CameraConfig
 from telekinesis.illusion.types.object import Object
@@ -103,7 +103,7 @@ DEFAULT_PHYSICS_SIMULATOR_PARAMS = {
     "solver_iters": 10,
     "verbose": False,
     "use_volume_com": False,
-    "clean_up_scene": False,
+    "clean_up_environment": False,
     "catch_plane": {
         "active": True,
         "distance_fraction": 0.25,
@@ -183,8 +183,8 @@ class BinPickingWorker:
         # target lens's aperture and focus distance.
         self._camera_config = CameraConfig(**self._specs.get("camera", {}))
 
-        # Create the context
-        self._context = Context(
+        # Create the environment
+        self._environment = Environment(
             camera_config=self._camera_config,
             asset_dir=self._asset_dir,
         )
@@ -192,14 +192,14 @@ class BinPickingWorker:
         self._info = self._specs["metadata"]["info"]
         self._licenses = self._specs["metadata"]["licenses"]
 
-        # Add models to context
+        # Add models to environment
         self._model_supercatgory_map = {}
         self._id_supercategory_map = {}
-        self._add_models_to_context()
+        self._add_models_to_environment()
 
-        # Add dsitractors to context
+        # Add dsitractors to environment
         self._distractor_names = []
-        self._add_distractors_to_context()
+        self._add_distractors_to_environment()
 
         # Create the randomizer
         self._randomizer = Randomizer()
@@ -222,13 +222,13 @@ class BinPickingWorker:
             jpg_quality=renderer.get("jpg_quality", 90),
         )
 
-        # Create the data generator with context, randomizer and writer
+        # Create the data generator with environment, randomizer and writer
         # TODO: For RGB-D datasets, enable RenderConfig.depth and reuse
         # blender.postprocessing.add_kinect_azure_noise/add_gaussian_shifts
         # only when they match the target sensor. Preserve clean depth and
         # write noisy sensor depth separately; CocoWriter writes neither.
         self._data_generator = SyntheticDataGenerator(
-            context=self._context,
+            environment=self._environment,
             randomizer=self._randomizer,
             writer=self._writer,
             engine=BlenderEngine(
@@ -386,11 +386,11 @@ class BinPickingWorker:
         else:
             raise RuntimeError("self._output_base is None.")
 
-    def get_context(self) -> Context:
+    def get_environment(self) -> Environment:
         """
-        Get the Context built from the spec (models loaded, camera configured).
+        Get the Environment built from the spec, with its models and camera.
         """
-        return self._context
+        return self._environment
 
     def get_randomizer(self) -> Randomizer:
         """
@@ -398,7 +398,7 @@ class BinPickingWorker:
         """
         return self._randomizer
 
-    def randomize_geometry(self, context: Context) -> None:
+    def randomize_geometry(self, environment: Environment) -> None:
         """
         Re-sample object, light and camera poses.
 
@@ -411,10 +411,10 @@ class BinPickingWorker:
         responsible for composing a scene before sampling poses.
 
         Args:
-            context: Context
-                A shared context with assets.
+            environment: Environment
+                The environment whose current scene receives the new poses.
         """
-        self._randomizer.randomize(context, stages=self.GEOMETRY_STAGES)
+        self._randomizer.randomize(environment, stages=self.GEOMETRY_STAGES)
 
     def _load_specs(self, spec_file_path: Path) -> Dict:
         """
@@ -473,15 +473,15 @@ class BinPickingWorker:
         """Prepare linked pools before an interactive preview or generation."""
         self._data_generator.prepare()
 
-    def _add_models_to_context(self) -> None:
+    def _add_models_to_environment(self) -> None:
         """
-        Add the listed models from the specs to the context.
+        Add the listed models from the specs to the environment.
         """
         model_supercategory_map = defaultdict(list)
         id_supercategory_map = defaultdict(list)
         for model in self._specs["models"]:
             model_path = str(resolve_asset_path(model["path"], self._asset_dir))
-            self._context.add(
+            self._environment.add(
                 ModelAsset(
                     model_path,
                     object_name=model["name"],
@@ -501,23 +501,25 @@ class BinPickingWorker:
             model_supercategory_map[model["supercategory"]].append(
                 model["name"]
             )
-            # category_id may be auto-assigned by Context when the spec uses
+            # category_id may be auto-assigned by Environment when the spec uses
             # null. Record the resolved ID that rendering will actually emit.
-            resolved_id = self._context.get_assets()[model["name"]].category_id
+            resolved_id = self._environment.get_assets()[
+                model["name"]
+            ].category_id
             id_supercategory_map[resolved_id] = model["supercategory"]
         # Convert from defaultdict back to normal dict
         self._model_supercatgory_map = dict(model_supercategory_map)
         self._id_supercategory_map = dict(id_supercategory_map)
 
-    def _add_distractors_to_context(self) -> None:
+    def _add_distractors_to_environment(self) -> None:
         """
-        Add the listed distractors from the specs to the context.
+        Add the listed distractors from the specs to the environment.
         """
         for distractor in self._specs.get("distractors", []):
             distractor_path = str(
                 resolve_asset_path(distractor["path"], self._asset_dir)
             )
-            self._context.add(
+            self._environment.add(
                 ModelAsset(
                     distractor_path,
                     object_name=distractor["name"],
@@ -535,7 +537,7 @@ class BinPickingWorker:
                 )
             )
             self._distractor_names.append(distractor["name"])
-            resolved_id = self._context.get_assets()[
+            resolved_id = self._environment.get_assets()[
                 distractor["name"]
             ].category_id
             self._id_supercategory_map[resolved_id] = distractor[
@@ -573,8 +575,8 @@ class BinPickingWorker:
 
     def apply_spec_updates(self, specs: Dict) -> List[str]:
         """
-        Re-apply the tunable parts of a spec to the already-built Context and
-        Randomizer, without re-importing any models.
+        Re-apply the tunable parts of a spec to the already-built Environment
+        and Randomizer, without re-importing any models.
 
         Built for interactive tools (the Blender spec editor) where rebuilding
         the whole worker on every slider drag is far too slow. Everything the
@@ -595,13 +597,13 @@ class BinPickingWorker:
 
         needs_reload = self._apply_model_scales()
 
-        # Capacity cannot grow in a prepared scene. Existing pools remain
+        # Capacity cannot grow in a prepared environment. Existing pools remain
         # usable for appearance/pose edits and smaller instance ranges.
         for entry in self._specs.get("models", []) + self._specs.get(
             "distractors", []
         ):
-            group = self._context.get_object_group(entry["name"])
-            if self._context._prepared and entry["instances"]["max"] > len(
+            group = self._environment.get_object_group(entry["name"])
+            if self._environment._prepared and entry["instances"]["max"] > len(
                 group
             ):
                 needs_reload.append(
@@ -630,8 +632,8 @@ class BinPickingWorker:
                 continue
             minimum, maximum = self._instance_bounds(role, *(legacy or ()))
             wanted_counts = self._counts_for(node.target_objects)
-            if not self._context._prepared or all(
-                bounds[1] <= len(self._context.get_object_group(name))
+            if not self._environment._prepared or all(
+                bounds[1] <= len(self._environment.get_object_group(name))
                 for name, bounds in wanted_counts.items()
             ):
                 node.counts = wanted_counts
@@ -689,7 +691,7 @@ class BinPickingWorker:
                     MaterialRandomizer.from_config(
                         target_objects=targets,
                         config=config,
-                        context=self._context,
+                        environment=self._environment,
                     ),
                 )
         else:
@@ -708,7 +710,7 @@ class BinPickingWorker:
                         MaterialRandomizer.from_config(
                             target_objects=node.target_objects,
                             config=types,
-                            context=self._context,
+                            environment=self._environment,
                         ),
                     )
 
@@ -797,7 +799,7 @@ class BinPickingWorker:
         ):
             name = entry["name"]
             new_scale = entry.get("scale", 1.0)
-            group = self._context.get_object_group(name)
+            group = self._environment.get_object_group(name)
             if not group:
                 problems.append(
                     f"'{name}' is not loaded - reload assets to add it"
@@ -861,8 +863,8 @@ class BinPickingWorker:
             if self._sample_on_surface:
                 target = [self._sample_on_surface]
             else:
-                # Get visible container in the context
-                visible = self._context.get_visible_object_names()
+                # Get visible container in the environment
+                visible = self._environment.get_visible_object_names()
                 containers = self._model_supercatgory_map["container"]
                 target = next(
                     (
@@ -873,7 +875,7 @@ class BinPickingWorker:
                     None,
                 )
             sample_location = upper_region_sampler(
-                self._context,
+                self._environment,
                 object_names_to_sample_on=target,  # type: ignore[arg-type]
                 **self._pose_sampling_params,
             )
@@ -897,7 +899,7 @@ class BinPickingWorker:
             A callable taking the Object to place.
         """
         self._grid_sampler = GridRegionSampler(
-            context=self._context,
+            environment=self._environment,
             rows=self._grid_cfg["rows"],
             cols=self._grid_cfg["cols"],
             layers=self._grid_cfg["layers"],
@@ -1109,8 +1111,8 @@ class BinPickingWorker:
         if self._pose_sampling_strategy == "grid":
             sample_pose_grid = self._make_sample_pose_grid()
 
-            def resolve_container_surface(context: Context) -> str:
-                visible = context.get_visible_object_names()
+            def resolve_container_surface(environment: Environment) -> str:
+                visible = environment.get_visible_object_names()
                 containers = self._model_supercatgory_map["container"]
                 match = next(
                     (
@@ -1191,7 +1193,7 @@ class BinPickingWorker:
                     randomizer_node=MaterialRandomizer.from_config(
                         target_objects=targets,
                         config=config,
-                        context=self._context,
+                        environment=self._environment,
                     ),
                     node_name=name,
                     node_config=NodeConfig(stage=STAGE_APPEARANCE),
@@ -1215,7 +1217,7 @@ class BinPickingWorker:
                 randomizer_node=MaterialRandomizer.from_config(
                     target_objects=target_objects,
                     config=types,
-                    context=self._context,
+                    environment=self._environment,
                 ),
                 node_name=node_name,
                 node_config=NodeConfig(stage=STAGE_APPEARANCE),
@@ -1263,7 +1265,7 @@ class BinPickingWorker:
 
         self._loaded_light_types = {}
         for name, (light_type, properties, pose) in self._light_nodes.items():
-            self._context.add(Light(name, light_type))
+            self._environment.add(Light(name, light_type))
             self._loaded_light_types[name] = light_type
             self._randomizer.add_randomizer(
                 properties,
@@ -1356,7 +1358,7 @@ class BinPickingWorker:
 
                 logger.info(
                     f"[shard {i + 1}/{self._num_shards}] "
-                    f"Generating {current_shard_size} scenes -> {shard_dir.name}"
+                    f"Generating {current_shard_size} environments -> {shard_dir.name}"
                 )
 
                 self._data_generator.generate(
@@ -1389,7 +1391,7 @@ class BinPickingWorker:
                     use_volume_com=self._physics_simulator_params[
                         "use_volume_com"
                     ],
-                    clean_up_scene=False,
+                    clean_up_environment=False,
                     physics_catch_plane={
                         **self._physics_simulator_params["catch_plane"],
                         "container_names": self._model_supercatgory_map[

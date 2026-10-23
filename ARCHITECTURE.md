@@ -1,9 +1,18 @@
 # Architecture
 
-`telekinesis-illusion` turns scene definitions and randomization rules into
-rendered datasets. The generator coordinates the run, the scene holds assets
-and current state, the engine simulates and captures that state, and the writer
+`telekinesis-illusion` turns an environment and randomization rules into
+rendered datasets. `Environment` represents the active Blender scene and owns
+the reusable generation assets. A **scene** is one particular realization of
+that environment under the randomizer tree's rules. The generator coordinates
+these realizations, the engine simulates and captures them, and the writer
 converts the captured results into dataset files.
+
+An environment persists across samples; each sample realizes a scene with its
+selected instances, poses, materials, lighting, background, and camera views.
+One scene can produce multiple images. The current realization lives in the
+environment's mutable Blender state; there is no separate `Scene` object or
+retained snapshot. Blender's own `bpy.types.Scene`, accessed through
+`bpy.context.scene`, is the underlying container reused across realizations.
 
 For a first dataset run, see [TUTORIAL.md](TUTORIAL.md). Environment setup,
 validation commands, and troubleshooting are in [DEVELOPMENT.md](DEVELOPMENT.md).
@@ -14,7 +23,8 @@ validation commands, and troubleshooting are in [DEVELOPMENT.md](DEVELOPMENT.md)
 flowchart TB
     Entry[Python script / YAML worker / Blender extension]
     Generator[SyntheticDataGenerator]
-    Scene[Scene: Assets and Current State]
+    Environment[Environment: Blender Scene and Reusable Assets]
+    Scene[Scene: One Randomizer Realization]
     Randomizer[Randomizer: Randomization Tree]
     Engine[Engine: Rendering and Physics]
     Writer[Writer: Images, Annotations and Metadata]
@@ -23,12 +33,13 @@ flowchart TB
     Dataset[Dataset: Images and Annotations]
 
     Entry --> Generator
-    Generator --> Scene
+    Generator --> Environment
     Generator --> Randomizer
     Generator --> Engine
-    Scene -->|owns| Assets
-    Scene --> |metadata| RenderResult
-    Randomizer -->|randomizes| Scene
+    Environment -->|owns| Assets
+    Environment -->|holds current realization| Scene
+    Scene -->|metadata| RenderResult
+    Randomizer -->|randomizes| Environment
     Engine -->|simulates and renders| Scene
     Engine -->|produces| RenderResult
     RenderResult --> Writer
@@ -51,8 +62,9 @@ entrypoint are not included in this source tree.
 | Component | Responsibility |
 | --- | --- |
 | [SyntheticDataGenerator](src/telekinesis/illusion/core/synthetic_data_generator.py) | Coordinates preparation, sampling, simulation, rendering, writing, and cleanup. Enforces the requested image or sample count. |
-| [Scene](src/telekinesis/illusion/core/scene.py) | Owns registered models, object pools, activity, category mappings, lights, camera, background, and material resources. |
-| [Randomizer](src/telekinesis/illusion/randomizer/randomizer.py) | Plans instance capacity and executes randomization nodes in dependency order to change the scene. |
+| [Environment](src/telekinesis/illusion/core/environment.py) | Represents the active Blender scene, owns reusable assets and instance pools, and holds the current realization. |
+| Scene (realization) | The selected instances and sampled properties for one generation sample, including its camera views. |
+| [Randomizer](src/telekinesis/illusion/randomizer/randomizer.py) | Plans instance capacity and executes the rules that realize or update a scene in the environment. |
 | [BlenderEngine](src/telekinesis/illusion/core/engine.py) | Configures rendering and physics, simulates the scene, and produces captured batches. Uses `RenderConfig` and `PhysicsConfig`. |
 | [RenderResult](src/telekinesis/illusion/types/render_result.py) | Carries rendered pass data, category mappings, and capture metadata independently of the scene's lifetime. |
 | [Writer / CocoWriter](src/telekinesis/illusion/writer/writer.py) | Declares required segmentation attributes and writes a captured batch, returning the number of images written. |
@@ -66,19 +78,19 @@ after generation. The dataset node represents files on disk.
 `SyntheticDataGenerator.generate()` owns the following sequence:
 
 1. **Prepare.** Ask the randomizer for finite instance capacities, prepare the
-   scene's pools, prepare randomizer resources, and configure the engine using
-   the writer's segmentation requirements.
+   environment's pools, prepare randomizer resources, and configure the engine
+   using the writer's segmentation requirements.
 2. **Begin a sample.** Deactivate the previously active pooled objects. This
    resets activity; it does not restore every pose or material to a default.
 3. **Randomize.** Execute the enabled nodes to select instances and change
-   poses, materials, backgrounds, lights, and camera views.
+   poses, materials, backgrounds, lights, and camera views for this scene.
 4. **Simulate when enabled.** Run physics, then resample enabled light-pose nodes
    against the resulting geometry.
 5. **Capture and write.** Render the camera views into a `RenderResult`, pass it
    to the writer, and verify that the writer reports the captured image count.
    Repeat from the start of the next sample until the requested count is met.
-6. **Clean up.** Release engine resources and scene state in `finally`, unless
-   the caller explicitly retains the prepared scene between generation calls.
+6. **Clean up.** Release engine and environment resources in `finally`, unless
+   the caller retains the prepared environment between generation calls.
 
 `num_images` requests an exact number of camera views. The engine limits the
 last batch to the remaining views. `num_samples` instead requests randomized
@@ -88,17 +100,17 @@ mutually exclusive, and `generate()` returns the number of images written.
 Explicit `generator.prepare()` supports setting fixed transforms before the
 first sample. Repeated preparation reuses existing pools while checking that
 they can satisfy the requested capacity. A caller using
-`clean_up_scene=False` owns the final `generator.clean_up()` call, including
+`clean_up_environment=False` owns the final `generator.clean_up()` call, including
 when a later operation fails.
 
-## Scene assets and current state
+## Environment assets and scene realizations
 
 ### Registration and instance pools
 
 A [ModelAsset](src/telekinesis/illusion/types/model_asset.py) describes a model;
-constructing it does not import geometry. `Scene.add()` validates its path,
+constructing it does not import geometry. `Environment.add()` validates its path,
 scale, name, and annotation category, then returns a normalized copy without
-changing the input specification. The scene exposes registered definitions
+changing the input specification. The environment exposes registered definitions
 through a read-only mapping. It also accepts constructed `Light` objects,
 registered separately from model definitions and mesh instances.
 
@@ -110,25 +122,26 @@ Instance counts belong to randomization nodes, independently of model metadata.
 
 Model registration closes after preparation. Counts can change within the
 prepared capacity, but adding models or increasing capacity requires a new
-scene. No model imports or implicit pool growth occur in the sample loop.
+environment. No model imports or implicit pool growth occur in the sample loop.
 
 ### Activity and Blender state
 
 Blender is the source of truth for transforms, geometry, and shader state;
-Illusion accesses them through its wrappers. `Scene.activate()` and
+Illusion accesses them through its wrappers. `Environment.activate()` and
 `deactivate()` coordinate visibility, rigid-body participation, and the active
 object index. Calling a low-level hide operation alone does not perform that
 whole transition.
 
-The scene creates its camera, background, and material manager during
-construction. Lights must be constructed after the scene. Its asset directory
-supplies background and material catalogs. Workers resolve model paths against
-their configured asset directory; direct `ModelAsset` paths are relative to the
-working directory unless absolute.
+The environment creates its camera, background, and material manager during
+construction. Lights must be constructed after the environment. Its asset
+directory supplies background and material catalogs. Workers resolve model
+paths against their configured asset directory; direct `ModelAsset` paths are
+relative to the working directory unless absolute.
 
-There is one active Blender scene per process. Constructing another `Scene`
-resets the shared Blender state. A cleaned scene cannot be prepared again, and
-wrappers belonging to it must not be reused.
+There is one active Blender scene per process. Constructing another `Environment`
+resets the shared Blender state. A cleaned environment cannot be prepared again,
+and wrappers belonging to it must not be reused. Generating the next scene
+reuses the active environment rather than constructing another Blender scene.
 
 ## Randomization tree
 
@@ -150,9 +163,14 @@ properties, light poses, and camera poses. Optional stage filtering supports
 partial scene updates; enabled nodes assigned to the default stage are never
 filtered out. Normal generation executes all enabled nodes.
 
+Randomizer methods and nodes accept the shared `environment` argument. Camera
+and light pose nodes invoke their samplers as
+`sampler(environment=environment, **kwargs)`; custom samplers must accept that
+keyword. `BinPickingWorker.get_environment()` exposes the worker's environment.
+
 Camera pose randomization stores views at Blender frame indices and overwrites
 those indices on subsequent samples. It reuses the camera animation rather than
-clearing it. Keep the configured view count fixed within a prepared scene:
+clearing it. Keep the configured view count fixed within a prepared environment:
 reducing it leaves earlier frames and animation keys in place.
 
 ## Rendering and dataset output
@@ -173,14 +191,14 @@ Each `RenderResult` carries:
 
 - `data`: per-view pass arrays and associated data, including colors, instance
   segmentation maps, and instance attribute maps for COCO output.
-- `categories`: a snapshot mapping category IDs to names from the scene.
+- `categories`: a snapshot mapping category IDs to names from the environment.
 - `captures`: per-view frame index, camera world transform, and lens focal
   length in millimeters.
 
-The engine captures this information before scene cleanup and checks that color
-images and capture records have matching counts. It restores the current frame
-and frame range after capture. The captured result can be written after the
-scene has been cleaned up.
+The engine captures this information before the environment is randomized
+again or cleaned up, and checks that color images and capture records have
+matching counts. It restores the current frame and frame range after capture.
+The captured result can be written after the environment has been cleaned up.
 
 ### Writer and output contract
 
@@ -202,7 +220,7 @@ captured by the engine, but `CocoWriter` does not export those arrays.
 ## Workers, shards, and dataset processing
 
 [BinPickingWorker](src/telekinesis/illusion/workers/bin_picking_worker.py)
-resolves a YAML specification into scene definitions, randomization nodes,
+resolves a YAML specification into an environment, randomization nodes,
 rendering settings, and a writer. Relative asset roots are anchored to the YAML
 file. Its generation loop changes the writer's output directory for each shard
 and reuses prepared pools until the run completes or fails, then cleans up.
@@ -211,11 +229,6 @@ The output-size limit is checked after each shard.
 The default shard naming template includes a UUID. A new run with the same
 dataset name adds shards rather than resuming an unfinished sample. Stable
 category IDs and names are required across those runs.
-
-[ProceduralSceneWorker](src/telekinesis/illusion/workers/procedural_scene_worker.py)
-builds a fresh scene for each arrangement through a supplied layout builder.
-It generates one sample with all configured camera views, attaches arrangement
-metadata, and cleans up that scene before the next arrangement.
 
 [CocoShardMerger](src/telekinesis/illusion/dataset/dataset_generator.py)
 combines shard annotations into `merged_coco_annotations.json`, assigns unique
@@ -244,6 +257,6 @@ configuration. Wrappers created inside a reverted block must not escape it.
 | [utils/](src/telekinesis/illusion/utils/) | Asset-path resolution and isolation from Blender user-extension packages. |
 | [viewer/](src/telekinesis/illusion/viewer/) | Optional inspection of generated datasets. |
 
-`Context` remains a compatibility name for `Scene`. Existing workers also use
-legacy physics keywords accepted by the generator; the engine's `PhysicsConfig`
-and `RenderConfig` hold those settings for new integrations.
+Existing workers use legacy physics keywords accepted by the generator;
+the engine's `PhysicsConfig` and `RenderConfig` hold those settings for new
+integrations.

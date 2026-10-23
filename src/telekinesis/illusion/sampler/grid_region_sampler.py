@@ -9,7 +9,7 @@ import random
 import numpy as np
 from loguru import logger
 
-from telekinesis.illusion.core.context import Context
+from telekinesis.illusion.core.environment import Environment
 from telekinesis.illusion.sampler.upper_region_sampler import (
     Region2D,
     select_upper_region,
@@ -20,17 +20,17 @@ class GridRegionSampler:
     """
     Stateful sampler that returns the next grid cell center on the upper face
     of the currently visible container. Used for structured (grid) part
-    placement in bin picking scenes.
+    placement in bin picking scenes within a shared environment.
 
     The grid is computed lazily against the bin's top face the first time it
     is requested, and re-computed when the visible container changes (e.g.
-    across scenes that randomize between several bin geometries) or when all
-    slots have been consumed for the current scene.
+    across scenes that select different bin geometries) or when all slots in
+    the current grid have been consumed.
     """
 
     def __init__(
         self,
-        context: Context,
+        environment: Environment,
         rows: int,
         cols: int,
         layers: int = 1,
@@ -44,8 +44,8 @@ class GridRegionSampler:
     ) -> None:
         """
         Args:
-            context: Context
-                The scene context for resolving the currently visible container.
+            environment: Environment
+                The environment holding the current scene's visible container.
             rows: int
                 Number of grid rows along the first in-plane face vector.
             cols: int
@@ -63,8 +63,7 @@ class GridRegionSampler:
                 Maximum extra height above the top face for the lowest layer.
                 If equal to min_height, no jitter is applied.
             shuffle: bool
-                If True, the order in which cells are handed out is shuffled
-                per scene.
+                If True, shuffle the cell order whenever the grid is rebuilt.
             xy_jitter: float
                 Maximum positional offset as a fraction of cell spacing
                 (0.0 – 0.5). Each cell center is randomly displaced along the
@@ -86,7 +85,7 @@ class GridRegionSampler:
                 f"max_height ({max_height}) must be >= min_height ({min_height})"
             )
 
-        self._context = context
+        self._environment = environment
         self._rows = rows
         self._cols = cols
         self._layers = layers
@@ -220,7 +219,7 @@ class GridRegionSampler:
         return location
 
     def _resolve_visible_bin_name(self, target_object_names: List[str]) -> str:
-        visible = self._context.get_visible_object_names()
+        visible = self._environment.get_visible_object_names()
         bin_name = next(
             (
                 name
@@ -232,12 +231,12 @@ class GridRegionSampler:
         if bin_name is None:
             raise RuntimeError(
                 f"No visible container matching {target_object_names} found in "
-                "the context."
+                "the environment."
             )
         return bin_name
 
     def _rebuild_grid(self, bin_name: str) -> None:
-        illusion_object = self._context.get_objects_by_name(bin_name)
+        illusion_object = self._environment.get_objects_by_name(bin_name)
         mesh_object = illusion_object.get_object()
         region: Region2D = select_upper_region(mesh_object, self._upper_dir)
 

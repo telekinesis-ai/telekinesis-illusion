@@ -1,4 +1,4 @@
-"""Model specifications for deferred scene registration and loading."""
+"""Model specifications for deferred environment registration and loading."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,20 +8,20 @@ from numpy.typing import ArrayLike
 
 @dataclass(frozen=True, slots=True)
 class ModelAsset:
-    """Frozen specification for a single-mesh model registered with Scene.add.
+    """Frozen single-mesh model specification registered with Environment.add.
 
-    Construction does not load or validate the model. Scene.add returns a
-    normalized copy; the model is imported when the scene is prepared.
+    Construction does not load or validate the model. Environment.add returns a
+    normalized copy; the model is imported when the environment is prepared.
 
     Attributes:
         model_path: Model file path, relative to the current working directory
             or absolute. Registration resolves it to an absolute Path.
-        object_name: Non-empty, unique model name within the scene.
+        object_name: Non-empty, unique model name within the environment.
         category_name: Annotation category. If both category fields are omitted,
             object_name is used. "distractor" disables category assignment.
         category_id: Explicit annotation ID. An existing ID supplies its category
             name when category_name is omitted; a new ID uses object_name.
-            Omitted IDs reuse the named category or are allocated by the scene.
+            Omitted IDs reuse the named category or are allocated by the environment.
             Conflicting name/ID pairs are rejected during registration.
         active_in_simulation: Whether active instances participate in physics.
         collision_shape: Blender collision shape, such as "CONVEX_HULL" or "MESH".

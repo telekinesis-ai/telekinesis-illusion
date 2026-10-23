@@ -1,6 +1,6 @@
 """Internal state shared by the retained Blender rendering helpers.
 
-Cleared when initializing a new Scene. See NOTICE.md for attribution.
+Cleared when initializing a new Environment. See NOTICE.md for attribution.
 """
 
 from typing import Any

@@ -23,7 +23,10 @@ from telekinesis.illusion.types.material import (
 )
 
 if TYPE_CHECKING:
-    from telekinesis.illusion.core.context import Context, MaterialManager
+    from telekinesis.illusion.core.environment import (
+        Environment,
+        MaterialManager,
+    )
     from telekinesis.illusion.types.object import Object
 
 
@@ -51,8 +54,8 @@ class MaterialTarget:
                 raise ValueError("objects contains duplicate names.")
             object.__setattr__(self, "objects", names)
 
-    def resolve(self, context: "Context") -> list["Object"]:
-        available = context.get_objects()
+    def resolve(self, environment: "Environment") -> list["Object"]:
+        available = environment.get_objects()
         names = sorted(available) if self.objects is None else self.objects
         missing = [name for name in names if name not in available]
         if missing:

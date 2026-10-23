@@ -4,7 +4,7 @@ import argparse
 
 import numpy as np
 
-from telekinesis.illusion.core.scene import Scene
+from telekinesis.illusion.core.environment import Environment
 from telekinesis.illusion.core.engine import (
     BlenderEngine,
     RenderConfig,
@@ -57,8 +57,8 @@ def main():
         random.seed(args.seed)
         np.random.seed(args.seed)
 
-    # Create the context
-    scene = Scene(
+    # Create the environment
+    environment = Environment(
         camera_config=CameraConfig(
             image_width=args.resolution, image_height=args.resolution
         )
@@ -66,14 +66,14 @@ def main():
 
     assets_dir = resolve_asset_dir()
 
-    scene.add(Light("softbox", "AREA", power=80.0, size=0.4))
-    scene.add(Light("spot", "SPOT", power=20.0, radius=0.03))
+    environment.add(Light("softbox", "AREA", power=80.0, size=0.4))
+    environment.add(Light("spot", "SPOT", power=20.0, radius=0.03))
 
-    # Add models to the context
+    # Add models to the environment
     model_1_path = str(
         assets_dir / "models" / "mechanical_parts" / "gearwheel_1.glb"
     )
-    scene.add(
+    environment.add(
         ModelAsset(
             model_1_path,
             object_name="part_1",
@@ -85,7 +85,7 @@ def main():
     model_2_path = str(
         assets_dir / "models" / "mechanical_parts" / "pipe_fixture_1.glb"
     )
-    scene.add(
+    environment.add(
         ModelAsset(
             model_2_path,
             object_name="part_2",
@@ -96,7 +96,7 @@ def main():
     )
 
     model_3_path = str(assets_dir / "models" / "bins" / "plastic_bin_2.glb")
-    scene.add(
+    environment.add(
         ModelAsset(
             model_3_path,
             object_name="crate_2",
@@ -204,6 +204,7 @@ def main():
         node_name="spot_light_properties",
     )
     # Keep both emitters above and clear of the bin and parts.
+    # Light and camera nodes pass environment= to their pose samplers.
     randomizer.add_randomizer(
         LightPoseRandomizer(
             shell_sampler,
@@ -233,9 +234,9 @@ def main():
         output_dir=args.output_dir, include_camera_metadata=True
     )
 
-    # Create the data generator with context, randomizer and writer
+    # Create the data generator with environment, randomizer and writer
     data_generator = SyntheticDataGenerator(
-        scene=scene,
+        environment=environment,
         randomizer=randomizer,
         writer=writer,
         engine=BlenderEngine(
@@ -246,7 +247,7 @@ def main():
 
     # Preparation creates the objects once; static transforms can now be set.
     data_generator.prepare()
-    scene.get_objects_by_name("crate_2").set_location(
+    environment.get_objects_by_name("crate_2").set_location(
         np.array([0.0, 0.0, -0.05])
     )
 

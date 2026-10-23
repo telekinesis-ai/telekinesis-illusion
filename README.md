@@ -106,7 +106,7 @@ The bin-picking worker defaults to this example YAML with preview disabled.
 Use `--spec_file PATH` to select another YAML and `--preview` or `--no-preview`
 to control the viewer.
 
-For another asset tree, pass `asset_dir` to `Scene`, or set
+For another asset tree, pass `asset_dir` to `Environment`, or set
 `metadata.asset_directory` in the worker YAML. Relative YAML asset paths
 resolve against that YAML file.
 

@@ -1,6 +1,5 @@
 """
-Defines the Randomizer class that is responsible for executing ranodmizer nodes
-on the context to generate scenes.
+Execute randomizer nodes to realize scenes in a reusable environment.
 """
 
 from collections.abc import Set as AbstractSet
@@ -12,7 +11,7 @@ from telekinesis.illusion.randomizer.randomizer_node import (
     NodeConfig,
     STAGE_DEFAULT,
 )
-from telekinesis.illusion.core.context import Context
+from telekinesis.illusion.core.environment import Environment
 
 
 @dataclass(slots=True)
@@ -29,11 +28,19 @@ class EdgeConfig:
 
 class Randomizer:
     """
-    Class for executing the randomizer nodes on the context. The Randomizer is
-    implemented as a Directed Acyclic Graph (Graph) consisitng of
-    RandomizerNodes. The graphs internal data structures are based on an
-    adjacenjy list representation using Python dictionary datastructures similar
-    to NetworkX (https://pelegm-networkx.readthedocs.io/en/latest/index.html).
+    Define and execute the rules for scene realizations of an environment.
+
+    Nodes form a directed acyclic graph (DAG) and run in dependency order. They
+    select active instances and configure the environment's current scene.
+
+    Example:
+        from telekinesis.illusion.randomizer import randomizer_node
+
+        randomizer = Randomizer()
+        randomizer.add_randomizer(
+            randomizer_node.ObjectInstanceRandomizer({"gear": (1, 3)}),
+            "counts",
+        )
     """
 
     def __init__(
@@ -275,11 +282,12 @@ class Randomizer:
             name: entry["config"].stage for name, entry in self._node.items()
         }
 
-    def prepare(self, context: Context) -> None:
+    def prepare(self, environment: Environment) -> None:
+        """Prepare enabled nodes' resources before sampling scenes."""
         for name in self._topological_order():
             entry = self._node[name]
             if entry["config"].enabled:
-                entry["randomizer"].prepare(context)
+                entry["randomizer"].prepare(environment)
 
     def required_instances(self) -> dict[str, int]:
         """Sum enabled DAG nodes once in topological order; no Blender work."""
@@ -304,18 +312,18 @@ class Randomizer:
 
     def randomize(
         self,
-        context: Context,
+        environment: Environment,
         stages: AbstractSet[str] | None = None,
     ):
         """
-        Execute the RandomizerNodes in dependency order.
+        Apply enabled nodes in dependency order to realize or update a scene.
 
-        Each node must be stored under 'self._node[name]["randomizer"]' and
-        expose a '.randomize(...)' method.
+        Nodes mutate the supplied environment's current scene in place.
+        Stage filtering permits partial updates to that realization.
 
         Args:
-            context: Context
-                A shared context with assets.
+            environment: Environment
+                The environment supplying assets and holding the current scene.
             stages: set[str] or None
                 When given, only nodes whose NodeConfig.stage is in this set are
                 executed. Nodes left at STAGE_DEFAULT always run, so a node that
@@ -339,9 +347,9 @@ class Randomizer:
                 continue
 
             randomizer_node = node_entry["randomizer"]
-            randomizer_node.randomize(context)
+            randomizer_node.randomize(environment)
 
-    def randomize_light_poses(self, context: Context) -> None:
+    def randomize_light_poses(self, environment: Environment) -> None:
         """Resample enabled light poses after physics changes mesh geometry."""
         for name in self._topological_order():
             entry = self._node[name]
@@ -349,4 +357,4 @@ class Randomizer:
             if entry["config"].enabled and isinstance(
                 node, LightPoseRandomizer
             ):
-                node.randomize(context)
+                node.randomize(environment)

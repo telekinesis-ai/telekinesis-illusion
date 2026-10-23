@@ -1,5 +1,5 @@
 """
-Owns model definitions, linked instance pools, and current scene activity.
+Reusable Blender environment resources and the current scene realization.
 """
 
 import random
@@ -40,23 +40,31 @@ from telekinesis.illusion.utils.assets import (
 
 
 # pylint: disable=too-many-instance-attributes
-class Scene:
+class Environment:
     """
-    Class for managing the context for synthetic data generation.
+    Represent the active Blender scene and its reusable generation resources.
+
+    The environment owns registered assets, instance pools, a camera, lights,
+    background, and materials. A scene is one realization of these resources
+    produced by the randomizer tree: active instances, poses, appearance, and
+    camera views. Successive scenes reuse the same prepared environment.
+
+    The current realization lives in the environment's mutable Blender state.
+    Constructing another environment resets the shared Blender scene; only
+    one environment can be active per process.
 
     Example:
-        scene = Scene()
-        scene.add(Light("key", power=40.0))
+        environment = Environment()
+        environment.add(Light("key", power=40.0))
     """
 
     def __init__(
         self,
-        auto_config: bool = True,
         camera_config: CameraConfig = None,
         asset_dir: str | Path | None = None,
     ) -> None:
         """
-        Initialize internal state and the Blender scene.
+        Initialize reusable resources and reset the active Blender scene.
 
         Args:
             asset_dir: str, Path or None
@@ -67,7 +75,7 @@ class Scene:
         initialization.init()
 
         # Resolve the asset directory once and share it with everything in the
-        # context that reads assets
+        # environment that reads assets
         self._asset_dir = resolve_asset_dir(asset_dir)
 
         # Initialize internal data structures
@@ -96,13 +104,13 @@ class Scene:
 
     def get_asset_dir(self) -> Path:
         """
-        Get the asset directory the context reads models, hdris and materials
-        from.
+        Get the directory supplying models, HDRIs, and materials to the
+        environment.
         """
         return self._asset_dir
 
     def clean_up(self) -> None:
-        """Release scene and temporary resources owned by the context."""
+        """Release the environment's Blender data and temporary resources."""
         if self._closed:
             return
         initialization.clean_up()
@@ -131,13 +139,13 @@ class Scene:
 
     def get_categories(self) -> LabelIdMapping:
         """
-        Get the categories in the context.
+        Get the categories registered in the environment.
         """
         return self._categories
 
     def get_objects(self) -> Dict:
         """
-        Get all objects from the context.
+        Get all pooled objects, including those inactive in the current scene.
         """
         return self._objects
 
@@ -146,7 +154,7 @@ class Scene:
         name: str,
     ) -> List[Object] | Object:
         """
-        Get a specific object from the context by its name.
+        Get pooled objects from the environment by matching their names.
         If multiple instances of this object are present, a list of all the
         objects is returned.
         """
@@ -179,25 +187,25 @@ class Scene:
 
     def get_background(self) -> Background:
         """
-        Return the background of the scene.
+        Return the background of the environment.
         """
         return self._background
 
     def get_materials(self) -> List:
         """
-        Return all the materials available in the context.
+        Return all the materials available in the environment.
         """
         return self._materials
 
     def set_materials(self, material_list: List) -> None:
         """
-        Set the available materials in the context.
+        Set the available materials in the environment.
         """
         self._materials = material_list
 
     def get_visible_object_names(self) -> List[str]:
         """
-        Return the name of the hidden objects in the scene.
+        Return the names of pooled objects active in the current scene.
         """
         return list(self._visible_object_names)
 
@@ -206,7 +214,7 @@ class Scene:
         names = set(visible_object_names)
         unknown = names - self._objects.keys()
         if unknown:
-            raise ValueError(f"Unknown scene objects: {unknown}")
+            raise ValueError(f"Unknown environment objects: {unknown}")
         for name in tuple(self._visible_object_names):
             if name not in names:
                 self.deactivate(self._objects[name])
@@ -217,8 +225,7 @@ class Scene:
         self,
     ) -> None:
         """
-        Configure the scene for default data generation by picking a default
-        background HDRI.
+        Configure the environment's background with a default HDRI.
         """
         self._background.set_background_texture(
             str(
@@ -385,7 +392,8 @@ class Scene:
         Models are validated and assigned an annotation category without
         importing meshes. Register them before preparation; instance counts
         belong to ObjectInstanceRandomizer.counts. Lights are constructed after
-        the Scene and are registered separately from models and mesh instances.
+        the Environment and are registered separately from models and mesh
+        instances.
 
         Args:
             asset: ModelAsset specification or a constructed Light.
@@ -412,7 +420,7 @@ class Scene:
         if not isinstance(asset, ModelAsset):
             raise TypeError("asset must be a ModelAsset or Light.")
         if self._prepared or self._closed:
-            raise RuntimeError("Register models before preparing the scene.")
+            raise RuntimeError("Register models before preparing the environment.")
         if (
             not asset.object_name
             or asset.object_name in self._assets
@@ -448,18 +456,19 @@ class Scene:
         return asset
 
     def get_assets(self):
-        """Definitions by exact model name; the scene owns this mapping."""
+        """Definitions by exact model name; the environment owns this mapping."""
         return MappingProxyType(self._assets)
 
     def prepare(self, required_instances: dict[str, int]) -> None:
         """Import each requested asset once, then create linked duplicates.
 
-        Repeated preparation reuses the pool. Increasing capacity requires a
-        new Scene; there is no hidden rebuilding during dataset generation.
+        The pool is reused across scene realizations. Repeated preparation
+        validates its capacity; increasing capacity requires a new Environment.
+        No geometry is imported while sampling scenes.
         """
         if self._closed:
             raise RuntimeError(
-                "This scene was cleaned up; construct a new Scene."
+                "This environment was cleaned up; construct a new Environment."
             )
         for name, count in required_instances.items():
             if name not in self._assets:
@@ -476,7 +485,8 @@ class Scene:
             for name, count in required_instances.items():
                 if count > len(self._object_groups.get(name, ())):
                     raise ValueError(
-                        f"{name!r} now needs {count} instances; build a new Scene."
+                        f"{name!r} now needs {count} instances; "
+                        "build a new Environment."
                     )
             return
         try:
@@ -503,10 +513,10 @@ class Scene:
         self._prepared = True
 
     def activate(self, obj: Object) -> None:
-        """Make a pooled object participate in rendering and physics."""
+        """Activate a pooled object for the current scene's render and physics."""
         name = obj.get_name()
         if self._objects.get(name) is not obj:
-            raise ValueError("Object does not belong to this scene.")
+            raise ValueError("Object does not belong to this environment.")
         if name not in self._visible_object_names:
             obj.hide(False)
             obj.enable_rigid_body()
@@ -521,14 +531,18 @@ class Scene:
             self._visible_object_names.remove(name)
 
     def begin_sample(self) -> None:
-        """Reset object activity before the next sample."""
+        """Deactivate pooled objects before randomizing the next scene.
+
+        Registered assets and instance pools remain available. Poses and
+        materials are not restored to defaults.
+        """
         for name in tuple(self._visible_object_names):
             self.deactivate(self._objects[name])
 
 
 class MaterialManager:
     """
-    Class for managing the materials in the synthetic data generation context.
+    Class for managing materials shared across an environment's scenes.
     Currently, it implements a simple dictionary for managing different material
     types.
     """
@@ -556,7 +570,7 @@ class MaterialManager:
         types: Sequence[str] | None = None,
     ) -> None:
         """
-        Updates the available materials in the context.
+        Update the materials available to the environment's scenes.
         """
         # Check if materials are already loaded
         # If not, load them

@@ -16,11 +16,11 @@ isolate_user_extensions()
 
 
 
-from telekinesis.illusion.core.context import Context
+from telekinesis.illusion.core.environment import Environment
 
 
 def upper_region_sampler(
-    context: Context,
+    environment: Environment,
     object_names_to_sample_on: str | List[str],
     face_sample_range: np.ndarray | List[float] | None = None,
     min_height: float = 0.0,
@@ -39,13 +39,16 @@ def upper_region_sampler(
 
     .. code-block:: python
 
-    UpperRegionSampler.sample(
-        objects_to_sample_on=objs,
+    upper_region_sampler(
+        environment=environment,
+        object_names_to_sample_on="bin",
         min_height=1.5,
         max_height=1.8
     )
 
     Args:
+        environment: Environment
+            The environment containing the target objects.
         object_names_to_sample_on: str or List[str]
             Object names, on which to sample on.
         face_sample_range: np.ndarray or List[float] or None
@@ -94,10 +97,10 @@ def upper_region_sampler(
         object_names_to_sample_on = [object_names_to_sample_on]
 
     # Retrieve the MeshObjects from provided illusion objects
-    # Get object from context
+    # Get object from environment
     objects_to_sample_on = []
     for object_name in object_names_to_sample_on:
-        illusion_object = context.get_objects_by_name(object_name)
+        illusion_object = environment.get_objects_by_name(object_name)
         mesh_object = illusion_object.get_object()
         objects_to_sample_on.append(mesh_object)
 

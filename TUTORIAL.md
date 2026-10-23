@@ -1,8 +1,12 @@
 # Generate your first dataset
 
 Create six images of a gear from randomized camera positions, with COCO
-instance-segmentation annotations. This tutorial introduces the scene,
+instance-segmentation annotations. This tutorial introduces the environment,
 randomizer, engine, writer, and generator through one small dataset run.
+
+The environment owns reusable assets and represents the active Blender scene.
+Each execution of the randomizer tree realizes a scene within that environment;
+the generator renders that scene from the configured camera views.
 
 ## 1. Prepare your environment
 
@@ -19,17 +23,21 @@ background assets. No interactive viewer is needed.
 Save this as `generate_gears.py` in the repository root:
 
 ```python
-from telekinesis.illusion.core import engine, scene, synthetic_data_generator
+from telekinesis.illusion.core import (
+    engine,
+    environment,
+    synthetic_data_generator,
+)
 from telekinesis.illusion.randomizer import randomizer, randomizer_node
 from telekinesis.illusion.sampler import camera_pose_sampler
 from telekinesis.illusion.types import camera, light, model_asset
 from telekinesis.illusion.writer import writer
 
 
-dataset_scene = scene.Scene(
+dataset_environment = environment.Environment(
     camera_config=camera.CameraConfig(image_width=128, image_height=128),
 )
-dataset_scene.add(
+dataset_environment.add(
     model_asset.ModelAsset(
         "assets/models/mechanical_parts/gearwheel_1.glb",
         object_name="gear",
@@ -37,7 +45,7 @@ dataset_scene.add(
         category_id=1,
     )
 )
-dataset_scene.add(
+dataset_environment.add(
     light.Light("key", "POINT", power=40.0, location=(0.0, 0.0, 1.0))
 )
 
@@ -57,7 +65,7 @@ randomization.add_randomizer(
 )
 
 generator = synthetic_data_generator.SyntheticDataGenerator(
-    scene=dataset_scene,
+    environment=dataset_environment,
     randomizer=randomization,
     engine=engine.BlenderEngine(
         engine.RenderConfig(device="CPU", samples=8),
@@ -71,7 +79,7 @@ The script builds the run in this order:
 
 1. **Register a model and light.** `object_name="gear"` identifies the model to
    the randomizer. The category name and ID identify it in the annotations.
-   Create the scene before constructing its lights.
+   Create the environment before constructing its lights.
 2. **Choose the active instances.** The `(1, 1)` bounds activate exactly one
    gear per sample. Counts belong to the randomizer rather than model metadata.
 3. **Choose camera views.** The camera node runs after the count node, sampling
@@ -80,10 +88,11 @@ The script builds the run in this order:
 4. **Render and write.** The engine renders RGB and segmentation data; the
    writer saves images and COCO annotations. Physics is disabled by default.
 
-`generate()` prepares the scene automatically, runs the randomizers, renders
-each batch of views, writes the results, and cleans up. With two views per
-sample, `num_images=6` produces three samples. `num_samples=6` would instead
-produce twelve images; pass only one of these count arguments.
+`generate()` prepares the environment automatically, runs the randomizers,
+renders each scene's views, writes the results, and cleans up the environment.
+With two views per scene, `num_images=6` produces three scene realizations.
+`num_samples=6` would instead produce six scenes and twelve images; pass only
+one of these count arguments.
 
 ## 3. Run and inspect the result
 

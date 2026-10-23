@@ -4,7 +4,7 @@ import argparse
 
 import numpy as np
 
-from telekinesis.illusion.core.scene import Scene
+from telekinesis.illusion.core.environment import Environment
 from telekinesis.illusion.core.engine import (
     BlenderEngine,
     RenderConfig,
@@ -54,8 +54,8 @@ def main():
         random.seed(args.seed)
         np.random.seed(args.seed)
 
-    # Create the context
-    scene = Scene(
+    # Create the environment
+    environment = Environment(
         camera_config=CameraConfig(
             image_width=args.resolution, image_height=args.resolution
         )
@@ -63,14 +63,14 @@ def main():
 
     assets_dir = resolve_asset_dir()
 
-    scene.add(Light("key", "POINT", power=40.0, radius=0.05))
-    scene.add(Light("sun", "SUN", power=0.2))
+    environment.add(Light("key", "POINT", power=40.0, radius=0.05))
+    environment.add(Light("sun", "SUN", power=0.2))
 
-    # Add models to the context
+    # Add models to the environment
     model_1_path = str(
         assets_dir / "models" / "mechanical_parts" / "gearwheel_1.glb"
     )
-    scene.add(
+    environment.add(
         ModelAsset(
             model_1_path,
             object_name="part_1",
@@ -81,7 +81,7 @@ def main():
     model_2_path = str(
         assets_dir / "models" / "mechanical_parts" / "pipe_1.glb"
     )
-    scene.add(
+    environment.add(
         ModelAsset(
             model_2_path,
             object_name="part_2",
@@ -158,6 +158,7 @@ def main():
         node_name="sun_properties",
     )
     # Sample overhead poses aimed at the parts, keeping the emitter clear.
+    # Light and camera nodes pass environment= to their pose samplers.
     randomizer.add_randomizer(
         LightPoseRandomizer(
             shell_sampler,
@@ -189,9 +190,9 @@ def main():
         output_dir=args.output_dir, include_camera_metadata=True
     )
 
-    # Create the data generator with context, randomizer and writer
+    # Create the data generator with environment, randomizer and writer
     data_generator = SyntheticDataGenerator(
-        scene=scene,
+        environment=environment,
         randomizer=randomizer,
         writer=writer,
         engine=BlenderEngine(

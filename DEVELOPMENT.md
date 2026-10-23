@@ -102,15 +102,15 @@ assets/
 ```
 
 The top-level `assets/` directory is not included in the Python wheel. Even a
-basic `Scene` needs assets because it initializes its background and material
-catalog. Keep the asset tree available when running examples.
+basic `Environment` needs assets because it initializes its background and
+material catalog. Keep the asset tree available when running examples.
 
 Asset lookup is implemented in
 [utils/assets.py](src/telekinesis/illusion/utils/assets.py):
 
 1. An explicit asset directory takes precedence. A relative
-   `Scene(asset_dir=...)` path is relative to the working directory; a worker's
-   `metadata.asset_directory` is relative to its YAML file.
+   `Environment(asset_dir=...)` path is relative to the working directory;
+   a worker's `metadata.asset_directory` is relative to its YAML file.
 2. Without an explicit directory, lookup checks `./assets` in the working
    directory, then the repository's `assets/` next to an editable checkout.
 3. Model paths in worker YAML are relative to the resolved asset directory;
@@ -155,7 +155,7 @@ render_engine = engine.BlenderEngine(
 ```
 
 Pass that engine to `SyntheticDataGenerator`. Set `PhysicsConfig(active=True)`
-when the scene requires simulation.
+when the environment requires simulation.
 
 ### YAML-driven bin picking
 
@@ -198,12 +198,12 @@ Paths below are relative to `src/telekinesis/illusion/`:
 
 | Directory | Responsibility |
 | --- | --- |
-| `core/` | Scene ownership, generation lifecycle, rendering and physics configuration. |
+| `core/` | Environment ownership, generation lifecycle, rendering and physics configuration. |
 | `types/` | Assets, objects, cameras, lights, materials, and render results. |
 | `randomizer/`, `sampler/` | Randomization DAG, instance counts, property and pose sampling. |
 | `blender/` | Local Blender wrappers, loading, rendering, physics, and camera utilities. |
 | `writer/` | Writing images and COCO annotations from render results. |
-| `workers/` | YAML-driven generation, arrangements, and shard orchestration. |
+| `workers/` | YAML-driven generation and shard orchestration. |
 | `dataset/` | Shard merging and dataset format conversion. |
 | `utils/`, `viewer/` | Asset resolution, environment isolation, and optional previews. |
 
@@ -215,14 +215,16 @@ constraints:
 
 - Register assets before preparation. Instance-count bounds determine the pool
   capacity; imports and pool growth do not belong in the sample loop.
-- A process has one active Blender scene. Constructing another `Scene` replaces
-  Blender state; wrappers from a cleaned scene must not be reused.
-- Use scene activation/deactivation to keep visibility and physics participation
-  consistent. Hiding a Blender object alone is not equivalent.
+- A process has one active Blender scene. Constructing another `Environment`
+  resets Blender state; wrappers from a cleaned environment must not be reused.
+  Each randomized scene is a realization within the same prepared environment.
+- Use environment activation/deactivation to keep the current scene's
+  visibility and physics participation consistent. Hiding a Blender object
+  alone is not equivalent.
 - `num_images` counts camera views; `num_samples` counts randomized scenes.
   Keep images, masks, category IDs, and capture metadata aligned.
-- Normal generation cleans up in `finally`. Code retaining a scene between
-  shards must explicitly clean up at the end, including on failure.
+- Normal generation cleans up in `finally`. Code retaining an environment
+  between shards must explicitly clean up at the end, including on failure.
 
 Review callers and the relevant examples before changing a public
 signature, default, unit, return value, or side effect. Adapted Blender helpers
