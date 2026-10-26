@@ -102,8 +102,11 @@ assets/
 ```
 
 The top-level `assets/` directory is not included in the Python wheel. Even a
-basic `Environment` needs assets because it initializes its background and
-material catalog. Keep the asset tree available when running examples.
+basic `Environment` needs an asset directory for relative paths such as surface
+imperfections. Models, materials, and HDRIs are not registered automatically:
+add them with `Environment.add()`, for example
+`environment.add(MaterialAsset.discover(assets_dir / "materials"))`. Keep the
+asset tree available when running examples.
 
 Asset lookup is implemented in
 [utils/assets.py](src/telekinesis/illusion/utils/assets.py):
@@ -198,7 +201,7 @@ Paths below are relative to `src/telekinesis/illusion/`:
 
 | Directory | Responsibility |
 | --- | --- |
-| `core/` | Environment ownership, generation lifecycle, rendering and physics configuration. |
+| `core/` | Asset managers, environment coordination, generation lifecycle, rendering and physics configuration. |
 | `types/` | Assets, models, cameras, lights, materials, and render results. |
 | `randomizer/`, `sampler/` | Randomization DAG, instance counts, property and pose sampling. |
 | `blender/` | Local Blender wrappers, loading, rendering, physics, and camera utilities. |

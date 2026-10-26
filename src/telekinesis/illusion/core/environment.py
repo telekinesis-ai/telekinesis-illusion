@@ -2,39 +2,31 @@
 Reusable Blender environment resources and the current scene realization.
 """
 
-import random
-from dataclasses import asdict, replace
-from types import MappingProxyType
-from telekinesis.illusion.types.model_asset import ModelAsset
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Dict, List
 
-import numpy as np
-from loguru import logger
-
+from telekinesis.illusion.types.model_asset import ModelAsset
+from telekinesis.illusion.types.material_asset import MaterialAsset
+from telekinesis.illusion.types.background_asset import BackgroundAsset
+from telekinesis.illusion.core.background_manager import BackgroundManager
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 # Must run before bpy is imported. See blender_env.py for why.
 isolate_user_extensions()
 
 # pylint: disable=wrong-import-order
-import bpy
 from telekinesis.illusion.blender import initialization as initialization
 from telekinesis.illusion.blender.labels import LabelIdMapping
-from telekinesis.illusion.blender.types.material import Material
 from telekinesis.illusion.blender.initialization import clean_temp_dir
 from telekinesis.illusion.blender.setup import is_using_external_bpy_module
 
-from telekinesis.illusion.blender.loaders.material_loader import (
-    load_ccmaterials,
-)
+from telekinesis.illusion.core.material_manager import MaterialManager
+from telekinesis.illusion.core.model_manager import ModelManager
 from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.types.background import Background
 from telekinesis.illusion.types.camera import Camera, CameraConfig
 from telekinesis.illusion.types.light import Light
 from telekinesis.illusion.utils.assets import (
-    pick_default_hdri,
     resolve_asset_dir,
 )
 
@@ -44,10 +36,14 @@ class Environment:
     """
     Represent the active Blender scene and its reusable generation resources.
 
-    The environment owns registered assets, instance pools, a camera, lights,
-    background, and materials. A scene is one realization of these resources
-    produced by the randomizer tree: active instances, poses, appearance, and
-    camera views. Successive scenes reuse the same prepared environment.
+    The environment coordinates model, material, and background managers and
+    owns a camera, lights, and the live background. ModelManager owns model
+    registration, categories, instance pools, and activity. Existing model
+    accessors and lifecycle methods remain available on Environment.
+
+    A scene is one realization of these resources produced by the randomizer
+    tree: active instances, poses, appearance, and camera views. Successive
+    scenes reuse the same prepared environment.
 
     The current realization lives in the environment's mutable Blender state.
     Constructing another environment resets the shared Blender scene; only
@@ -68,7 +64,9 @@ class Environment:
 
         Args:
             asset_dir: str, Path or None
-                Directory holding the models, hdris and materials. If 'None',
+                Directory against which relative asset paths, such as
+                surface-imperfection directories, are resolved. Assets are
+                not discovered from it; register them with add(). If 'None',
                 it is resolved by
                 telekinesis.illusion.utils.assets.resolve_asset_dir().
         """
@@ -78,45 +76,36 @@ class Environment:
         # environment that reads assets
         self._asset_dir = resolve_asset_dir(asset_dir)
 
-        # Initialize internal data structures
-        self._assets: dict[str, ModelAsset] = {}
-        self._prepared = False
         self._closed = False
-        self._models: Dict[str, Model] = {}
+        # TODO: Add LightManager
         self._lights: dict[str, Light] = {}
-        self._model_groups: Dict[str, List[Model]] = {}
-        self._categories = LabelIdMapping()
-        self._next_category_id = 1
-        self._visible_model_names = []
 
-        # Initialize background
-        self._background = Background(assets_root=self._asset_dir)
+        self.model_manager = ModelManager()
 
-        # Initialize randomizers
-        self._pose_randomizer = None
-        self._background_randomizer = None
+        self.background_manager = BackgroundManager()
+        self._background = Background()
 
-        # Initialize materials
-        self._materials = None
         self.material_manager = MaterialManager(asset_dir=self._asset_dir)
 
+        # TODO: Add CameraManager
         self._camera = Camera(camera_config)
 
     def get_asset_dir(self) -> Path:
         """
-        Get the directory supplying models, HDRIs, and materials to the
-        environment.
+        Get the directory against which relative asset paths are resolved.
         """
         return self._asset_dir
 
     def clean_up(self) -> None:
-        """Release the environment's Blender data and temporary resources."""
+        """Reset shared Blender data, close model pools, and remove temp files.
+
+        Repeated calls have no effect. Registered model definitions and category
+        metadata remain readable, but the environment cannot be prepared again.
+        """
         if self._closed:
             return
         initialization.clean_up()
-        self._models.clear()
-        self._model_groups.clear()
-        self._visible_model_names.clear()
+        self.model_manager.clean_up()
         self._closed = True
         if is_using_external_bpy_module():
             clean_temp_dir()
@@ -141,34 +130,29 @@ class Environment:
         """
         Get the categories registered in the environment.
         """
-        return self._categories
+        return self.model_manager.get_categories()
 
-    def get_models(self) -> Dict:
+    def get_models(self) -> dict[str, Model]:
         """
         Get all pooled models, including those inactive in the current scene.
         """
-        return self._models
+        return self.model_manager.get_models()
 
     def get_models_by_name(
         self,
         name: str,
-    ) -> List[Model] | Model:
-        """
-        Get pooled models from the environment by matching their names.
-        If multiple instances of this model are present, return all of them.
-        """
-        matches = [value for key, value in self._models.items() if name in key]
+    ) -> list[Model] | Model:
+        """Return pooled instances whose names contain the supplied substring.
 
-        if not matches:
-            raise ValueError(f"No model with the name {name}")
-        if len(matches) == 1:
-            return matches[0]  # return single value
-        return matches
+        Return a Model for one match or a list for multiple matches. Raise
+        ValueError if no instance matches.
+        """
+        return self.model_manager.get_models_by_name(name)
 
     def get_model_group(
         self,
         model_name: str,
-    ) -> List[Model]:
+    ) -> list[Model]:
         """
         Get every instance of a model, keyed by the 'model_name' it was added
         under (i.e. the config's model name, not the '<name>_INSTANCE_<n>' keys
@@ -179,10 +163,10 @@ class Environment:
                 The model_name of the ModelAsset registered with add().
 
         Returns:
-            The list of Model instances, or an empty list if the name is
-            not registered.
+            The live list of instances, including inactive models. Return an
+            empty list if no instances were prepared for this name.
         """
-        return self._model_groups.get(model_name, [])
+        return self.model_manager.get_model_group(model_name)
 
     def get_background(self) -> Background:
         """
@@ -190,203 +174,30 @@ class Environment:
         """
         return self._background
 
-    def get_materials(self) -> List:
-        """
-        Return all the materials available in the environment.
-        """
-        return self._materials
-
-    def set_materials(self, material_list: List) -> None:
-        """
-        Set the available materials in the environment.
-        """
-        self._materials = material_list
-
-    def get_visible_model_names(self) -> List[str]:
+    def get_visible_model_names(self) -> list[str]:
         """
         Return the names of pooled models active in the current scene.
         """
-        return list(self._visible_model_names)
+        return self.model_manager.get_visible_model_names()
 
-    def set_visible_model_names(self, visible_model_names: List[str]) -> None:
+    def set_visible_model_names(self, visible_model_names: list[str]) -> None:
         """Compatibility setter; keep visibility and physics consistent."""
-        names = set(visible_model_names)
-        unknown = names - self._models.keys()
-        if unknown:
-            raise ValueError(f"Unknown environment models: {unknown}")
-        for name in tuple(self._visible_model_names):
-            if name not in names:
-                self.deactivate(self._models[name])
-        for name in dict.fromkeys(visible_model_names):
-            self.activate(self._models[name])
+        self.model_manager.set_visible_model_names(visible_model_names)
 
-    def auto_config(
+    def add(
         self,
-    ) -> None:
-        """
-        Configure the environment's background with a default HDRI.
-        """
-        self._background.set_background_texture(
-            str(
-                pick_default_hdri(
-                    self._asset_dir / "hdris",
-                    preferred_category="indoor/industrial",
-                )
-            ),
-        )
+        asset: ModelAsset
+        | MaterialAsset
+        | BackgroundAsset
+        | Light
+        | Iterable[ModelAsset | MaterialAsset | BackgroundAsset | Light],
+    ) -> ModelAsset | MaterialAsset | BackgroundAsset | Light | list:
+        """Register a descriptor, an existing light, or an iterable of them.
 
-    def _get_next_available_category_id(self) -> int:
-        """
-        Finds the next available category ID by skipping over IDs that are already in use.
-        This method modifies self._next_category_id to point to the returned ID.
-
-        Returns:
-            The next category ID as int.
-        """
-        while self._categories.has_id(self._next_category_id):
-            self._next_category_id += 1
-        return self._next_category_id
-
-    def _resolve_category_id_and_name(
-        self,
-        model_name: str,
-        category_name: str | None,
-        category_id: int | None = None,
-    ) -> tuple[str, int]:
-        """
-        Return (final_category_name, final_category_id) following the 4 rules described below:
-
-        1. If no ID and category_name is provided:
-            - Use the mandatory model_name as the category_name
-            - Check if that category_name already has an ID assigned
-            - If no ID is assigned, get the next_id
-            - If ID exists, use the existing ID
-
-        2. If category_name is provided:
-            - If the name is 'distractor', return 'distractor', None
-            - Check if a category already exists with that name
-            - Use that category ID and category name
-
-        3. If category_id is provided:
-            - Check if the category ID exists
-            - Use that ID and respective category name
-
-        4. If both category_id and category_name are provided:
-            - Check if that exact combination already exists
-            - If it exists, use that combination
-            - If the exact combination doesn't exist, but either the ID or the name is already used,
-                throw an error saying that combination is already used and only pass either id or name
-            - If the combination doesn't exist and neither the ID nor the name are assigned,
-                create a new mapping and assign it
-
-        Args:
-            model_name: str
-                The name of the model to set category id and name.
-            category_name: str or None
-                The category name for the model.
-            category_id: int or None
-                The category id for the model.
-
-        Returns:
-            A tuple consisting of the category_name and category_id
-
-        Raises:
-            ValueError:
-                - If a combination of category name and category id is provided
-                that contains an already registered category name or category id
-                but doesn't match the already registered combination.
-        """
-        cats = self._categories
-
-        def bump_next(start: int) -> None:
-            """Set _next_category_id to the next free id >= start."""
-            self._next_category_id = max(self._next_category_id, start)
-            while cats.has_id(self._next_category_id):
-                self._next_category_id += 1
-
-        def alloc_id() -> int:
-            """Get next available id and advance _next_category_id."""
-            cid = self._get_next_available_category_id()
-            bump_next(cid + 1)
-            return cid
-
-        def add_mapping(name: str, cid: int) -> tuple[str, int]:
-            cats.add(name, cid)
-            bump_next(cid + 1)
-            return name, cid
-
-        # Normalize fallback name (rule 1 + part of rule 3)
-        if category_name is None and category_id is None:
-            category_name = model_name
-            logger.info(
-                f"No category name provided. Using model name '{model_name}' as category name."
-            )
-
-        # Case A: name provided (id optional)
-        if category_name is not None:
-            if category_name == "distractor":
-                logger.info("Skipping category name update for distractor...")
-                return "distractor", None
-            name_exists = cats.has_label(category_name)
-            id_exists = category_id is not None and cats.has_id(category_id)
-
-            # If name exists, it wins unless the user also provided a conflicting id
-            if name_exists:
-                existing_id = cats.id_from_label(category_name)
-                if category_id is not None and category_id != existing_id:
-                    raise ValueError(
-                        f"Category combination conflict: category name '{category_name}' is already mapped "
-                        f"to ID {existing_id}, but you provided category_id={category_id}. "
-                        f"Please provide only category_name or category_id, not both."
-                    )
-                logger.info(
-                    f"Category name '{category_name}' already exists with ID {existing_id}. Reusing existing mapping."
-                )
-                return category_name, existing_id
-
-            # Name doesn't exist
-            if category_id is None:
-                cid = alloc_id()
-                logger.info(
-                    f"Created new category '{category_name}' with auto-assigned ID {cid}."
-                )
-                return add_mapping(category_name, cid)
-
-            # Both provided and name is new:
-            if id_exists:
-                existing_name = cats.label_from_id(category_id)
-                raise ValueError(
-                    f"Category combination conflict: category ID {category_id} is already mapped to "
-                    f"'{existing_name}', but you provided category_name='{category_name}'. "
-                    f"Please provide only category_id or category_name, not both category_id and category_name."
-                )
-
-            logger.info(
-                f"Created new category '{category_name}' with ID {category_id}."
-            )
-            return add_mapping(category_name, category_id)
-
-        # Case B: only id provided
-        assert category_id is not None  # (since name is None here)
-
-        if cats.has_id(category_id):
-            name = cats.label_from_id(category_id)
-            logger.info(
-                f"Category ID {category_id} already exists with name '{name}'. Reusing existing mapping."
-            )
-            return name, category_id
-
-        # ID doesn't exist: create mapping using model_name
-        name = model_name
-        logger.info(
-            f"Category ID {category_id} does not exist. Using model name '{model_name}' as category name "
-            f"and creating new mapping."
-        )
-
-        return add_mapping(name, category_id)
-
-    def add(self, asset: ModelAsset | Light) -> ModelAsset | Light:
-        """Register a model definition or an existing light by its exact name.
+        Models, materials, and backgrounds are all registered here and are
+        selected afterwards by the randomizers, by group or name. Nothing is
+        registered implicitly, so add every collection that a randomizer should
+        be able to select, for example the result of MaterialAsset.discover().
 
         Models are validated and assigned an annotation category without
         importing meshes. Register them before preparation; instance counts
@@ -395,68 +206,58 @@ class Environment:
         instances.
 
         Args:
-            asset: ModelAsset specification or a constructed Light.
+            asset: A model, material, or background descriptor, a live Light,
+                or an iterable of these, such as the list returned by
+                discover(). Items are registered in order; an error leaves
+                the earlier items registered.
 
         Returns:
             For a model, the registered copy with an absolute Path, a float or
             three-float tuple scale, and resolved category metadata. The input
-            specification is unchanged. For a light, the supplied light.
+            specification is unchanged. Materials and backgrounds return a
+            normalized descriptor without loading or activating it. For a
+            light, return the supplied light. For an iterable, return the list
+            of these results.
 
         Raises:
-            TypeError: The asset is neither a ModelAsset nor a Light.
+            TypeError: The asset is not a supported descriptor, Light, or
+                iterable of them.
             RuntimeError: A model is added after preparation or cleanup.
             ValueError: A model name is empty or already registered, a light
                 name is already registered, scale is not a positive finite
-                scalar or three-vector, or category metadata conflicts.
-            FileNotFoundError: The model path does not point to a file.
+                scalar or three-vector, category metadata conflicts, or a
+                material/background descriptor is invalid or duplicates a name.
+            FileNotFoundError: An asset path is missing.
         """
+        if isinstance(asset, Iterable) and not isinstance(asset, str):
+            return [self.add(item) for item in asset]
+        if isinstance(asset, ModelAsset):
+            return self.model_manager.add(asset)
+        if isinstance(asset, MaterialAsset):
+            return self.material_manager.add(asset)
+        if isinstance(asset, BackgroundAsset):
+            return self.background_manager.add(asset)
         if isinstance(asset, Light):
-            light_name = asset.get_name()
-            if light_name in self._lights:
-                raise ValueError(f"Light {light_name!r} already exists.")
-            self._lights[light_name] = asset
-            return asset
-        if not isinstance(asset, ModelAsset):
-            raise TypeError("asset must be a ModelAsset or Light.")
-        if self._prepared or self._closed:
-            raise RuntimeError("Register models before preparing the environment.")
-        if (
-            not asset.model_name
-            or asset.model_name in self._assets
-            or asset.model_name in self._model_groups
-        ):
-            raise ValueError(
-                f"Model name {asset.model_name!r} is empty or already registered."
-            )
-        path = Path(asset.model_path).resolve()
-        if not path.is_file():
-            raise FileNotFoundError(path)
-        values = np.asarray(asset.scale, dtype=float)
-        if (
-            values.shape not in ((), (3,))
-            or not np.all(np.isfinite(values))
-            or np.any(values <= 0)
-        ):
-            raise ValueError(
-                "scale must be a positive scalar or three positive values."
-            )
-        scale = float(values) if values.ndim == 0 else tuple(map(float, values))
-        category_name, category_id = self._resolve_category_id_and_name(
-            asset.model_name, asset.category_name, asset.category_id
+            return self._add_light(
+                asset
+            )  # TODO: Needs to be replaced with LightManager
+        raise TypeError(
+            "asset must be a ModelAsset, MaterialAsset, BackgroundAsset, or Light."
         )
-        asset = replace(
-            asset,
-            model_path=path,
-            category_name=category_name,
-            category_id=category_id,
-            scale=scale,
-        )
-        self._assets[asset.model_name] = asset
+
+    def _add_light(
+        self, asset: Light
+    ) -> Light:  # TODO: Needs to be deprecated by a LightManager
+        """Register an existing light once under its exact Blender name."""
+        light_name = asset.get_name()
+        if light_name in self._lights:
+            raise ValueError(f"Light {light_name!r} already exists.")
+        self._lights[light_name] = asset
         return asset
 
-    def get_assets(self):
-        """Definitions by exact model name; the environment owns this mapping."""
-        return MappingProxyType(self._assets)
+    def get_assets(self) -> Mapping[str, ModelAsset]:
+        """Return a read-only view of definitions keyed by exact model name."""
+        return self.model_manager.get_assets()
 
     def prepare(self, required_instances: dict[str, int]) -> None:
         """Import each requested asset once, then create linked duplicates.
@@ -464,70 +265,31 @@ class Environment:
         The pool is reused across scene realizations. Repeated preparation
         validates its capacity; increasing capacity requires a new Environment.
         No geometry is imported while sampling scenes.
+
+        Invalid requests leave existing pools usable. Import or duplication
+        failures clean up the entire environment before propagating the error.
+
+        Args:
+            required_instances (dict[str, int]):
+                Exact registered names mapped to nonnegative integer capacities.
+                Zero and omitted entries create no pool, e.g.
+                `{'part_1': 3, 'part_2': 1}`.
         """
-        if self._closed:
-            raise RuntimeError(
-                "This environment was cleaned up; construct a new Environment."
-            )
-        for name, count in required_instances.items():
-            if name not in self._assets:
-                raise ValueError(f"Unknown registered model: {name!r}")
-            if (
-                isinstance(count, bool)
-                or not isinstance(count, int)
-                or count < 0
-            ):
-                raise ValueError(
-                    f"Capacity for {name!r} must be a nonnegative integer."
-                )
-        if self._prepared:
-            for name, count in required_instances.items():
-                if count > len(self._model_groups.get(name, ())):
-                    raise ValueError(
-                        f"{name!r} now needs {count} instances; "
-                        "build a new Environment."
-                    )
-            return
         try:
-            for name, count in required_instances.items():
-                if count == 0:
-                    continue
-                kwargs = asdict(self._assets[name])
-                kwargs["model_path"] = str(kwargs["model_path"])
-                if isinstance(kwargs["scale"], tuple):
-                    kwargs["scale"] = np.asarray(kwargs["scale"])
-                model = Model(**kwargs)
-                self._model_groups[name] = [model]
-                self._models[model.get_name()] = model
-                self.deactivate(model)
-                for _ in range(count - 1):
-                    duplicate = model.create_linked_duplicate()
-                    self._model_groups[name].append(duplicate)
-                    self._models[duplicate.get_name()] = duplicate
-                    self.deactivate(duplicate)
+            self.model_manager.prepare(required_instances)
         except Exception:
-            # A failed import can leave partial Blender data; don't reuse it.
-            self.clean_up()
+            # Validation leaves pools usable; failed imports require a scene reset.
+            if self.model_manager.is_closed:
+                self.clean_up()
             raise
-        self._prepared = True
 
     def activate(self, model: Model) -> None:
         """Activate a pooled model for the current scene's render and physics."""
-        name = model.get_name()
-        if self._models.get(name) is not model:
-            raise ValueError("Model does not belong to this environment.")
-        if name not in self._visible_model_names:
-            model.hide(False)
-            model.enable_rigid_body()
-            self._visible_model_names.append(name)
+        self.model_manager.activate(model)
 
     def deactivate(self, model: Model) -> None:
         """Hide a model and remove its rigid body and annotation eligibility."""
-        model.hide(True)
-        model.disable_rigid_body()
-        name = model.get_name()
-        if name in self._visible_model_names:
-            self._visible_model_names.remove(name)
+        self.model_manager.deactivate(model)
 
     def begin_sample(self) -> None:
         """Deactivate pooled models before randomizing the next scene.
@@ -535,102 +297,4 @@ class Environment:
         Registered assets and instance pools remain available. Poses and
         materials are not restored to defaults.
         """
-        for name in tuple(self._visible_model_names):
-            self.deactivate(self._models[name])
-
-
-class MaterialManager:
-    """
-    Class for managing materials shared across an environment's scenes.
-    Currently, it implements a simple dictionary for managing different material
-    types.
-    """
-
-    def __init__(
-        self,
-        asset_dir: str | Path | None = None,
-    ) -> None:
-        """
-        Args:
-            asset_dir: str, Path or None
-                Directory holding the materials, under a 'materials'
-                sub-directory. If 'None', it is resolved by
-                telekinesis.illusion.utils.assets.resolve_asset_dir().
-        """
-        self._materials = {}
-        self._asset_dir = resolve_asset_dir(asset_dir)
-
-    def get_asset_dir(self) -> Path:
-        """Return the root used for PBR and surface-imperfection assets."""
-        return self._asset_dir
-
-    def update_materials(
-        self,
-        types: Sequence[str] | None = None,
-    ) -> None:
-        """
-        Update the materials available to the environment's scenes.
-        """
-        # Check if materials are already loaded
-        # If not, load them
-        assets_path = self._asset_dir
-
-        if types:
-            # Check which materials are not loaded yet
-            missing = list(
-                dict.fromkeys(t for t in types if t not in self._materials)
-            )
-            for material in missing:
-                # Load missing material
-                materials_directory = assets_path / "materials" / material
-                self._materials[material] = load_ccmaterials(
-                    str(materials_directory),
-                    preload=False,
-                    use_all_materials=True,
-                )
-        else:
-            # Load all the available materials
-            materials_directory = assets_path / "materials"
-            for iter_dir in sorted(materials_directory.iterdir()):
-                if not iter_dir.is_dir():
-                    continue
-                material_type = iter_dir.name
-                if material_type in self._materials:
-                    continue
-                self._materials[material_type] = load_ccmaterials(
-                    str(iter_dir), preload=False, use_all_materials=True
-                )
-        available = types or list(self._materials)
-        if not available:
-            raise ValueError("No PBR material types are available.")
-        for name in available:
-            if not self._materials.get(name):
-                raise ValueError(
-                    f"No PBR materials available for type {name!r}."
-                )
-
-    def get_random_material(
-        self,
-        types: Sequence[str] | None = None,
-        rng=None,
-    ) -> Material:
-        """
-        Sample a random material of the types specified in types.
-
-        Args:
-            types: List[str] or None:
-                A list containing the material types for sampling a random
-                material. If 'None' is provided, the material is sampled from
-                all the available material types.
-        """
-        rng = random if rng is None else rng
-        available = types or list(self._materials)
-        if not available:
-            raise ValueError("No PBR material types are available.")
-        for name in available:
-            if not self._materials.get(name):
-                raise ValueError(
-                    f"No PBR materials available for type {name!r}."
-                )
-        random_type = rng.choice(available)
-        return rng.choice(self._materials[random_type])
+        self.model_manager.begin_sample()

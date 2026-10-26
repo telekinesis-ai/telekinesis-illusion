@@ -31,6 +31,9 @@ from telekinesis.illusion.core.engine import BlenderEngine, RenderConfig
 from telekinesis.illusion.types.camera import CameraConfig
 from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types import material_asset
+from telekinesis.illusion.types.background_asset import BackgroundAsset
+from telekinesis.illusion.types.material_asset import MaterialAsset
 from telekinesis.illusion.types.model_asset import ModelAsset
 from telekinesis.illusion.types.distribution import Uniform, uniform
 from telekinesis.illusion.sampler.camera_pose_sampler import (
@@ -187,6 +190,23 @@ class BinPickingWorker:
             camera_config=self._camera_config,
             asset_dir=self._asset_dir,
         )
+
+        materials_directory = self._asset_dir / "materials"
+        if materials_directory.is_dir():
+            # Transparent sets (those with an opacity map) are not used for
+            # opaque parts, so they are not registered.
+            self._environment.add(
+                asset
+                for asset in MaterialAsset.discover(materials_directory)
+                if not Path(
+                    str(material_asset.find_color_texture(asset.path)).replace(
+                        "Color", "Opacity"
+                    )
+                ).exists()
+            )
+        hdris_directory = self._asset_dir / "hdris"
+        if hdris_directory.is_dir():
+            self._environment.add(BackgroundAsset.discover(hdris_directory))
 
         self._info = self._config["metadata"]["info"]
         self._licenses = self._config["metadata"]["licenses"]
@@ -602,8 +622,9 @@ class BinPickingWorker:
             "distractors", []
         ):
             group = self._environment.get_model_group(entry["name"])
-            if self._environment._prepared and entry["instances"]["max"] > len(
-                group
+            if (
+                self._environment.model_manager.is_prepared
+                and entry["instances"]["max"] > len(group)
             ):
                 needs_reload.append(
                     f"'{entry['name']}' capacity increased; reload assets to apply it"
@@ -631,7 +652,7 @@ class BinPickingWorker:
                 continue
             minimum, maximum = self._instance_bounds(role, *(legacy or ()))
             wanted_counts = self._counts_for(node.target_models)
-            if not self._environment._prepared or all(
+            if not self._environment.model_manager.is_prepared or all(
                 bounds[1] <= len(self._environment.get_model_group(name))
                 for name, bounds in wanted_counts.items()
             ):
@@ -713,18 +734,17 @@ class BinPickingWorker:
                         ),
                     )
 
-        # Background: the hdri catalog is built at construction.
+        # Rebuild the background selection when its requested groups change.
         background_node = self._randomizer.get_randomizer_node(
             "background_randomizer"
         )
         categories = self._background_cfg.get("categories")
         if background_node is not None and categories:
-            if list(categories) != list(background_node.categories or []):
+            if list(categories) != list(background_node.groups or []):
                 self._randomizer.replace_randomizer(
                     "background_randomizer",
                     BackgroundRandomizer(
-                        hdris_root=self._asset_dir / "hdris",
-                        categories=list(categories),
+                        groups=list(categories),
                     ),
                 )
 
@@ -1247,8 +1267,7 @@ class BinPickingWorker:
         background_categories = self._background_cfg.get("categories")
         if background_categories:
             background_randomizer = BackgroundRandomizer(
-                hdris_root=self._asset_dir / "hdris",
-                categories=background_categories,
+                groups=background_categories,
             )
 
             self._randomizer.add_randomizer(

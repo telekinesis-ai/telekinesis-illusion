@@ -23,10 +23,8 @@ from telekinesis.illusion.types.material import (
 )
 
 if TYPE_CHECKING:
-    from telekinesis.illusion.core.environment import (
-        Environment,
-        MaterialManager,
-    )
+    from telekinesis.illusion.core.environment import Environment
+    from telekinesis.illusion.core.material_manager import MaterialManager
     from telekinesis.illusion.types.model import Model
 
 
@@ -128,19 +126,33 @@ class MaterialSource(Protocol):
 
 @dataclass(frozen=True)
 class PBRMaterial:
-    """Choose a texture material from the existing MaterialManager catalog."""
+    """Choose a registered PBR material by selection group or name.
 
-    types: tuple[str, ...] | None = None
+    groups selects normalized groups and names selects individual materials;
+    the selection is their union. With neither, all registered top-level
+    groups are used. Preparation loads textures; generation reuses cached
+    materials. Materials registered after preparation load when first selected.
+
+    Example:
+        source = PBRMaterial(("metal",))
+    """
+
+    groups: Sequence[str] | None = None
+    names: Sequence[str] | None = None
 
     def __post_init__(self):
-        if self.types is not None:
-            object.__setattr__(self, "types", _names(self.types, "PBR types"))
+        if self.groups is not None:
+            object.__setattr__(
+                self, "groups", _names(self.groups, "PBR groups")
+            )
+        if self.names is not None:
+            object.__setattr__(self, "names", _names(self.names, "PBR names"))
 
     def prepare(self, manager: "MaterialManager") -> None:
-        manager.update_materials(self.types)
+        manager.update_materials(self.groups, self.names)
 
     def generate(self, manager: "MaterialManager", rng) -> Material:
-        return manager.get_random_material(self.types, rng=rng)
+        return manager.get_random_material(self.groups, self.names, rng=rng)
 
 
 @dataclass(frozen=True)

@@ -110,6 +110,50 @@ For another asset tree, pass `asset_dir` to `Environment`, or set
 `metadata.asset_directory` in the worker YAML. Relative YAML asset paths
 resolve against that YAML file.
 
+### Register local assets
+
+`ModelAsset`, `MaterialAsset`, and `BackgroundAsset` describe files without
+loading Blender data. `from_path()` creates one descriptor; `discover()`
+recursively returns descriptors in deterministic order. `Environment.add()`
+registers one descriptor or an iterable of descriptors, such as the list
+returned by `discover()`:
+
+```python
+from telekinesis.illusion.types import BackgroundAsset, MaterialAsset, ModelAsset
+
+environment.add(ModelAsset.from_path("extra_assets/gear.glb", model_name="gear"))
+environment.add(MaterialAsset.from_path(
+    "extra_assets/Steel_1K", groups="metal/steel"))
+environment.add(BackgroundAsset.discover(
+    "extra_assets/hdris/industrial", group_prefix="indoor/industrial"
+))
+```
+
+Material directories use `<directory-name>_Color.png`, `.jpg`, or `.jpeg`;
+other texture maps are optional. Backgrounds accept `.hdr` and `.exr` files.
+Names default to the material directory name or file stem and must be unique
+within each asset type. Existing `ModelAsset(path, model_name, ...)` calls remain
+valid; model selection groups do not change annotation categories.
+
+`environment.model_manager` owns model registration, categories, instance pools,
+activation, and sample resets. Existing `Environment` model methods remain
+available. Use `environment.prepare()` and `environment.clean_up()` to coordinate
+the model lifecycle with shared Blender scene setup and teardown.
+
+Direct material and background descriptors require groups. `indoor/industrial`
+includes membership in both `indoor` and `indoor/industrial`. Discovery derives
+groups from relative parent directories. Supply `group_prefix` when the root
+itself contains assets or represents part of an existing hierarchy.
+
+The environment registers nothing implicitly: add every model, material, and
+background that a randomizer should be able to choose. Randomizers only select
+from the registered assets, by group or by name:
+`MaterialRandomizer(target_models, groups=["metal/steel"])` and
+`BackgroundRandomizer(groups=["indoor/industrial"])`, or `names=[...]` for
+individual assets. Without a selection, every registered asset is eligible.
+Registration does not load a material or activate a background; randomizers
+apply them later. URL download and archive support are deferred.
+
 ### View generated datasets
 
 Illusion writes generated datasets in a native sharded format. The shards can

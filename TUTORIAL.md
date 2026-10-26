@@ -38,7 +38,7 @@ dataset_environment = environment.Environment(
     camera_config=camera.CameraConfig(image_width=128, image_height=128),
 )
 dataset_environment.add(
-    model_asset.ModelAsset(
+    model_asset.ModelAsset.from_path(
         "assets/models/mechanical_parts/gearwheel_1.glb",
         model_name="gear",
         category_name="gear",

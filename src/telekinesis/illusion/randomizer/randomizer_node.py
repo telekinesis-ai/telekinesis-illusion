@@ -9,7 +9,6 @@ from typing import Callable, List, Dict, Tuple
 import random
 import numpy as np
 from loguru import logger
-from pathlib import Path
 from copy import deepcopy
 from collections.abc import Mapping, Sequence
 
@@ -32,7 +31,6 @@ from telekinesis.illusion.types.distribution import Uniform
 from telekinesis.illusion.core.environment import Environment
 from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.types.light import AREA_SHAPES, Light, _vector
-from telekinesis.illusion.utils.assets import resolve_asset_dir
 from telekinesis.illusion.randomizer.materials import (
     AllSlots,
     MaterialChoice,
@@ -723,126 +721,49 @@ class ModelInstanceRandomizer(RandomizerNode):
 
 
 class BackgroundRandomizer(RandomizerNode):
-    """
-    Class for choosing a background for each scene realization.
+    """Choose one of the HDRIs registered in the environment.
+
+    Selects the union of the assets in the requested groups and the requested
+    asset names. Groups are exact normalized groups, including ancestors such
+    as "indoor". Without a selection, every registered background is eligible.
+    Backgrounds are registered with Environment.add(); this randomizer does
+    not discover files.
+
+    Example:
+        randomizer = BackgroundRandomizer(groups=["indoor/industrial"])
+        randomizer.randomize(environment)
     """
 
     def __init__(
         self,
-        hdris_root: Path | None = None,
-        categories: List[str] | None = None,
+        groups: Sequence[str] | None = None,
+        names: Sequence[str] | None = None,
     ) -> None:
-        """
-        Initialize internal states and create the catalog dictionary
-        usage.
+        """Create a selection over registered backgrounds.
 
         Args:
-            hdris_root: Path or None
-                Path to the root directory where the hdris are located. If
-                'None', the 'hdris' sub-directory of the default asset
-                directory (see resolve_asset_dir()) is used.
-            categories: List[str] or None
-                List of hdri categories that should be used for the background
-                randomization. Available categories are:
-                - indoor/industrial
-                - indoor/studio
-                - indoor/misc
-                - outdoor/day
-                - outdorr/evening
-                - outdorr/morning
-                - outdoor/night
+            groups: Groups whose backgrounds are eligible. None or empty adds
+                no groups to the selection.
+            names: Names of individual backgrounds that are eligible. None or
+                empty adds no names to the selection.
 
+        Unknown groups or names, or an empty selection, raise ValueError when
+        the randomizer is prepared against an environment.
         """
-        self._background = None
-        self._categories = categories
-        self._hdris_root = self._validate_hdris_root(hdris_root)
-        self.catalog = self._build_catalog(self._categories)
+        self.groups = None if groups is None else list(groups)
+        self.names = None if names is None else list(names)
 
-    @property
-    def categories(self) -> List[str] | None:
-        """
-        The hdri categories this randomizer samples the background from.
-        """
-        return self._categories
-
-    @staticmethod
-    def _validate_hdris_root(
-        hdris_root: str | Path = None,
-    ) -> Path:
-        """
-        Validates the hdris root directory.
-
-        Args:
-            hdris_root: str, Path or None
-                Path to the root directory of the hdri assets. If 'None', the
-                'hdris' sub-directory of the default asset directory is used.
-        """
-        if hdris_root is None:
-            # Fall back to the 'hdris' sub-directory of the default asset dir
-            default_hdris_root = resolve_asset_dir() / "hdris"
-            logger.info(f"Using the default HDRIs root '{default_hdris_root}'.")
-            return default_hdris_root
-
-        path = Path(hdris_root)
-
-        if not path.exists():
-            raise FileNotFoundError(f"HDRIs root '{path}' does not exist.")
-
-        if not path.is_dir():
-            raise NotADirectoryError(f"HDRIs root '{path}' is not a directory.")
-
-        return path
-
-    def _build_catalog(self, categories: List[str] | None = None) -> list[Path]:
-        """
-        Scans self._hdris_root for .exr files and returns them as a list.
-
-        Args:
-            categories: List[str] or None
-                List of hdri categories that should be used for the background
-                randomization. Available categories are lsited in the docstring
-                of the __init__ method.
-
-        Raises:
-            FileNotFoundError: if no .exr files are found.
-        """
-        if categories:
-            # Include only the exrs for the provided categories
-            exrs = sorted(
-                p
-                for p in self._hdris_root.rglob("*.exr")
-                if p.is_file()
-                and any(category in p.as_posix() for category in categories)
-            )
-        else:
-            # Include all the categories
-            exrs = sorted(
-                p for p in self._hdris_root.rglob("*.exr") if p.is_file()
-            )
-
-        if not exrs:
-            raise FileNotFoundError(
-                f"No .exr files found under HDRI root '{self._hdris_root}'."
-            )
-
-        return exrs
-
-    def get_random_hdri(self) -> Path:
-        """
-        Return a random .exr-path from the catalog.
-
-        Returns:
-            A random .exr-path as Path() instance.
-        """
-        return random.choice(self.catalog)
+    def prepare(self, environment: Environment) -> None:
+        """Validate the selection against the environment's backgrounds."""
+        environment.background_manager.get_names(self.groups, self.names)
 
     def randomize(self, environment: Environment) -> None:
-        """
-        Sets a random background texture from the hdris root.
-        """
-        random_hdri_path = self.get_random_hdri()
-        background = environment.get_background()
-        background.set_background_texture(str(random_hdri_path))
+        """Select a registered HDRI and apply it to the environment's world."""
+        manager = environment.background_manager
+        name = random.choice(manager.get_names(self.groups, self.names))
+        environment.get_background().set_background_texture(
+            str(manager.assets_by_name[name].path)
+        )
 
 
 class MaterialRandomizer(RandomizerNode):
@@ -860,7 +781,8 @@ class MaterialRandomizer(RandomizerNode):
         self,
         target_models: list[str] | MaterialTarget,
         environment: Environment | None = None,
-        types: list[str] | None = None,
+        groups: Sequence[str] | None = None,
+        names: Sequence[str] | None = None,
         *,
         mode: MaterialMode | None = None,
         materials: Sequence[MaterialChoice] | None = None,
@@ -873,8 +795,9 @@ class MaterialRandomizer(RandomizerNode):
             self.target_models = list(_names(target_models, "target_models"))
         if mode not in (None, "active", "model", "slots"):
             raise ValueError("mode must be 'active', 'model' or 'slots'.")
-        if types is not None and materials is not None:
-            raise ValueError("Use either types or materials, not both.")
+        selects_registered = groups is not None or names is not None
+        if selects_registered and materials is not None:
+            raise ValueError("Use either groups/names or materials, not both.")
         if material_slots is not None and mode not in (None, "slots"):
             raise ValueError("material_slots requires mode='slots'.")
         if seed is not None and (
@@ -889,10 +812,11 @@ class MaterialRandomizer(RandomizerNode):
             else "active"
         )
         self._rng = random if seed is None else random.Random(seed)
-        self._types = types
+        self.groups = None if groups is None else list(groups)
+        self.names = None if names is None else list(names)
         self.configuration = None
         if self._mode == "slots" and material_slots != "all":
-            if materials is not None or types is not None:
+            if materials is not None or selects_registered:
                 raise ValueError(
                     "Put material choices inside the slot mapping."
                 )
@@ -900,7 +824,9 @@ class MaterialRandomizer(RandomizerNode):
             self._pool = None
         else:
             self._pool = MaterialPool(
-                materials if materials is not None else [PBRMaterial(types)]
+                materials
+                if materials is not None
+                else [PBRMaterial(groups, names)]
             )
             self._slot_pools = (
                 [(AllSlots(), self._pool)] if self._mode == "slots" else []
@@ -921,10 +847,12 @@ class MaterialRandomizer(RandomizerNode):
     def from_config(cls, target_models, environment, config):
         """Build from a legacy PBR list or an explicit YAML/JSON mapping."""
         if isinstance(config, list):
-            result = cls(target_models, environment, types=config)
+            result = cls(target_models, environment, groups=config)
         elif isinstance(config, Mapping):
             unknown = set(config) - {
                 "types",
+                "groups",
+                "names",
                 "materials",
                 "material_slots",
                 "mode",
@@ -935,6 +863,11 @@ class MaterialRandomizer(RandomizerNode):
                     f"Unknown material randomizer keys: {unknown}."
                 )
             kwargs = dict(config)
+            # "types" is the configuration-file spelling of groups.
+            if "types" in kwargs:
+                if "groups" in kwargs:
+                    raise ValueError("Use either types or groups, not both.")
+                kwargs["groups"] = kwargs.pop("types")
             if "materials" in kwargs:
                 kwargs["materials"] = material_choices_from_config(
                     kwargs["materials"]
@@ -949,13 +882,6 @@ class MaterialRandomizer(RandomizerNode):
             raise TypeError("Material configuration must be a list or mapping.")
         result.configuration = deepcopy(config)
         return result
-
-    @property
-    def types(self) -> list[str] | None:
-        """
-        The material type tags this randomizer picks from.
-        """
-        return self._types
 
     def randomize(self, environment: Environment) -> None:
         self.prepare(environment)

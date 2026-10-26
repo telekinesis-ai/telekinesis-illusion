@@ -29,7 +29,9 @@ from telekinesis.illusion.sampler.camera_pose_sampler import (
     volume_sampler,
 )
 from telekinesis.illusion.types.distribution import uniform
+from telekinesis.illusion.types.background_asset import BackgroundAsset
 from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.material_asset import MaterialAsset
 from telekinesis.illusion.types.model_asset import ModelAsset
 from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.utils.assets import resolve_asset_dir
@@ -74,9 +76,10 @@ def main():
         assets_dir / "models" / "mechanical_parts" / "gearwheel_1.glb"
     )
     environment.add(
-        ModelAsset(
+        ModelAsset.from_path(
             model_1_path,
             model_name="part_1",
+            groups="mechanical_parts",
             uv_mapping="cube",
             active_in_simulation=True,
         )
@@ -86,9 +89,10 @@ def main():
         assets_dir / "models" / "mechanical_parts" / "pipe_fixture_1.glb"
     )
     environment.add(
-        ModelAsset(
+        ModelAsset.from_path(
             model_2_path,
             model_name="part_2",
+            groups="mechanical_parts",
             uv_mapping="cube",
             shading="SMOOTH",
             active_in_simulation=True,
@@ -97,13 +101,19 @@ def main():
 
     model_3_path = str(assets_dir / "models" / "bins" / "plastic_bin_2.glb")
     environment.add(
-        ModelAsset(
+        ModelAsset.from_path(
             model_3_path,
             model_name="crate_2",
+            groups="bins",
             uv_mapping="cube",
             collision_shape="MESH",
         )
     )
+
+    # Add materials and HDRIs to the environment. The randomizers below only
+    # select among the assets registered here.
+    environment.add(MaterialAsset.discover(assets_dir / "materials"))
+    environment.add(BackgroundAsset.discover(assets_dir / "hdris"))
 
     # Create the randomizer
     randomizer = Randomizer()
@@ -157,7 +167,7 @@ def main():
 
     # Add matrial randomizer
     material_randomizer = MaterialRandomizer(
-        target_models=["part_1", "part_2"], types=["metal"]
+        target_models=["part_1", "part_2"], groups=["metal"]
     )
 
     randomizer.add_randomizer(
@@ -166,7 +176,7 @@ def main():
     )
 
     material_randomizer = MaterialRandomizer(
-        target_models=["crate_2"], types=["plastic"]
+        target_models=["crate_2"], groups=["plastic"]
     )
 
     randomizer.add_randomizer(
@@ -176,7 +186,7 @@ def main():
 
     # Add background randomizer
     background_randomizer = BackgroundRandomizer(
-        categories=["indoor/industrial", "indoor/studio"]
+        groups=["indoor/industrial", "indoor/studio"]
     )
 
     randomizer.add_randomizer(

@@ -1,8 +1,13 @@
 """Offering to load the materials provided at ambientCG.com."""
 
 import os
+from pathlib import Path
 from typing import List
 
+from telekinesis.illusion.types.material_asset import (
+    MaterialAsset,
+    find_color_texture,
+)
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 # Must run before bpy is imported. See blender_env.py for why.
@@ -121,93 +126,108 @@ def load_ccmaterials(
                     continue
             current_path = os.path.join(folder_path, asset)
             if os.path.isdir(current_path):
-                base_image_path = next(
-                    (
-                        os.path.join(current_path, f"{asset}_Color{suffix}")
-                        for suffix in (".png", ".jpg", ".jpeg")
-                        if os.path.exists(
-                            os.path.join(current_path, f"{asset}_Color{suffix}")
-                        )
-                    ),
-                    None,
+                material = _load_ccmaterial(
+                    current_path,
+                    asset,
+                    preload,
+                    fill_used_empty_materials,
+                    add_custom_properties,
+                    skip_transparent_materials,
                 )
-
-                if base_image_path is None:
-                    continue
-
-                # construct all image paths
-                ambient_occlusion_image_path = base_image_path.replace(
-                    "Color", "AmbientOcclusion"
-                )
-                metallic_image_path = base_image_path.replace(
-                    "Color", "Metalness"
-                )
-                roughness_image_path = base_image_path.replace(
-                    "Color", "Roughness"
-                )
-                alpha_image_path = base_image_path.replace("Color", "Opacity")
-                normal_image_path = base_image_path.replace("Color", "Normal")
-                # Filenames have been changed (blender uses opengl normal maps)
-                if not os.path.exists(normal_image_path):
-                    normal_image_path = base_image_path.replace(
-                        "Color", "NormalGL"
-                    )
-                displacement_image_path = base_image_path.replace(
-                    "Color", "Displacement"
-                )
-
-                # All transparent materials have an opacity image. Skip them, if desired.
-                if skip_transparent_materials and os.path.exists(
-                    alpha_image_path
-                ):
-                    continue
-
-                # if the material was already created it only has to be searched
-                if fill_used_empty_materials:
-                    new_mat = MaterialLoaderUtility.find_cc_material_by_name(
-                        asset, add_custom_properties
-                    )
-                else:
-                    new_mat = MaterialLoaderUtility.create_new_cc_material(
-                        asset, add_custom_properties
-                    )
-
-                # if preload then the material is only created but not filled
-                if preload:
-                    # Set alpha to 0 if the material has an alpha texture, so it can be detected
-                    # e.q. in the material getter.
-                    nodes = new_mat.node_tree.nodes
-                    principled_bsdf = Utility.get_the_one_node_with_type(
-                        nodes, "BsdfPrincipled"
-                    )
-                    principled_bsdf.inputs["Alpha"].default_value = (
-                        0 if os.path.exists(alpha_image_path) else 1
-                    )
-                    # add it here for the preload case
-                    materials.append(Material(new_mat))
-                    continue
-                if (
-                    fill_used_empty_materials
-                    and not MaterialLoaderUtility.is_material_used(new_mat)
-                ):
-                    # now only the materials, which have been used should be filled
-                    continue
-
-                # create material based on these image paths
-                _CCMaterialLoader.create_material(
-                    new_mat,
-                    base_image_path,
-                    ambient_occlusion_image_path,
-                    metallic_image_path,
-                    roughness_image_path,
-                    alpha_image_path,
-                    normal_image_path,
-                    displacement_image_path,
-                )
-
-                materials.append(Material(new_mat))
+                if material is not None:
+                    materials.append(material)
         return materials
     raise FileNotFoundError(f"The folder path does not exist: {folder_path}")
+
+
+def load_material_asset(asset: MaterialAsset) -> Material:
+    """Load exactly one registered PBR directory, including opacity if present.
+
+    The descriptor name is used for the Blender material. The existing PBR
+    shader configuration and optional-map handling are preserved. An asset
+    whose color texture has disappeared raises ValueError.
+    """
+    material = _load_ccmaterial(
+        str(asset.path), asset.name, False, False, {}, False
+    )
+    if material is None:
+        raise ValueError(f"No PBR color texture found in '{asset.path}'.")
+    return material
+
+
+def _load_ccmaterial(
+    current_path: str,
+    asset: str,
+    preload: bool,
+    fill_used_empty_materials: bool,
+    add_custom_properties: dict,
+    skip_transparent_materials: bool,
+) -> Material | None:
+    """Load one PBR set, or return None when the legacy filters exclude it."""
+    color_texture = find_color_texture(Path(current_path))
+    if color_texture is None:
+        return None
+    base_image_path = str(color_texture)
+
+    # construct all image paths
+    ambient_occlusion_image_path = base_image_path.replace(
+        "Color", "AmbientOcclusion"
+    )
+    metallic_image_path = base_image_path.replace("Color", "Metalness")
+    roughness_image_path = base_image_path.replace("Color", "Roughness")
+    alpha_image_path = base_image_path.replace("Color", "Opacity")
+    normal_image_path = base_image_path.replace("Color", "Normal")
+    # Filenames have been changed (blender uses opengl normal maps)
+    if not os.path.exists(normal_image_path):
+        normal_image_path = base_image_path.replace("Color", "NormalGL")
+    displacement_image_path = base_image_path.replace("Color", "Displacement")
+
+    # All transparent materials have an opacity image. Skip them, if desired.
+    if skip_transparent_materials and os.path.exists(alpha_image_path):
+        return None
+
+    # if the material was already created it only has to be searched
+    if fill_used_empty_materials:
+        new_mat = MaterialLoaderUtility.find_cc_material_by_name(
+            asset, add_custom_properties
+        )
+    else:
+        new_mat = MaterialLoaderUtility.create_new_cc_material(
+            asset, add_custom_properties
+        )
+
+    # if preload then the material is only created but not filled
+    if preload:
+        # Set alpha to 0 if the material has an alpha texture, so it can be detected
+        # e.q. in the material getter.
+        nodes = new_mat.node_tree.nodes
+        principled_bsdf = Utility.get_the_one_node_with_type(
+            nodes, "BsdfPrincipled"
+        )
+        principled_bsdf.inputs["Alpha"].default_value = (
+            0 if os.path.exists(alpha_image_path) else 1
+        )
+        # add it here for the preload case
+        return Material(new_mat)
+    if fill_used_empty_materials and not MaterialLoaderUtility.is_material_used(
+        new_mat
+    ):
+        # now only the materials, which have been used should be filled
+        return None
+
+    # create material based on these image paths
+    _CCMaterialLoader.create_material(
+        new_mat,
+        base_image_path,
+        ambient_occlusion_image_path,
+        metallic_image_path,
+        roughness_image_path,
+        alpha_image_path,
+        normal_image_path,
+        displacement_image_path,
+    )
+
+    return Material(new_mat)
 
 
 class _CCMaterialLoader:

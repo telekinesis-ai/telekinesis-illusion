@@ -1,9 +1,10 @@
 # Architecture
 
 `telekinesis-illusion` turns an environment and randomization rules into
-rendered datasets. `Environment` represents the active Blender scene and owns
-the reusable generation assets. A **scene** is one particular realization of
-that environment under the randomizer tree's rules. The generator coordinates
+rendered datasets. `Environment` represents the active Blender scene and
+coordinates the managers that own reusable generation assets. A **scene** is
+one particular realization of that environment under the randomizer tree's
+rules. The generator coordinates
 these realizations, the engine simulates and captures them, and the writer
 converts the captured results into dataset files.
 
@@ -62,7 +63,9 @@ entrypoint are not included in this source tree.
 | Component | Responsibility |
 | --- | --- |
 | [SyntheticDataGenerator](src/telekinesis/illusion/core/synthetic_data_generator.py) | Coordinates preparation, sampling, simulation, rendering, writing, and cleanup. Enforces the requested image or sample count. |
-| [Environment](src/telekinesis/illusion/core/environment.py) | Represents the active Blender scene, owns reusable assets and instance pools, and holds the current realization. |
+| [Environment](src/telekinesis/illusion/core/environment.py) | Coordinates asset managers and shared Blender initialization and cleanup; owns the camera, lights, and live background. |
+| [ModelManager](src/telekinesis/illusion/core/model_manager.py) | Owns model definitions, annotation categories, pool preparation, instance activity, sample resets, and model cleanup state. |
+| [MaterialManager](src/telekinesis/illusion/core/material_manager.py) / [BackgroundManager](src/telekinesis/illusion/core/background_manager.py) | Register material and HDRI descriptors by name and selection group; MaterialManager also loads and caches Blender materials. |
 | Scene (realization) | The selected instances and sampled properties for one generation sample, including its camera views. |
 | [Randomizer](src/telekinesis/illusion/randomizer/randomizer.py) | Plans instance capacity and executes the rules that realize or update a scene in the environment. |
 | [BlenderEngine](src/telekinesis/illusion/core/engine.py) | Configures rendering and physics, simulates the scene, and produces captured batches. Uses `RenderConfig` and `PhysicsConfig`. |
@@ -109,13 +112,38 @@ when a later operation fails.
 
 A [ModelAsset](src/telekinesis/illusion/types/model_asset.py) is a frozen model
 reference and import configuration; constructing it does not import geometry.
-`Environment.add()` validates its path, scale, name, and annotation category,
-then returns a normalized copy without changing the input specification.
-The environment exposes registered definitions
-through a read-only mapping. It also accepts constructed `Light` instances,
-registered separately from model definitions and mesh instances.
+`Environment.add()` delegates model registration to `environment.model_manager`,
+which validates its path, scale, name, and annotation category, then returns a
+normalized copy without changing the input specification. Existing environment
+model methods delegate to the manager, including the read-only definition view
+returned by `get_assets()`. The environment also accepts constructed `Light`
+instances, registered separately from model definitions and mesh instances.
 
-Preparation imports each requested asset once and creates live
+`MaterialAsset` and `BackgroundAsset` are immutable, Blender-independent
+descriptors of one PBR texture directory or HDRI file. All three descriptors
+support local `from_path()` and recursive `discover()` creation through shared
+validation and traversal. Selection groups include slash-separated ancestors;
+model groups remain independent of annotation categories. Discovery stops at
+recognized material directories and derives groups from relative parents.
+
+`Environment.add()` explicitly dispatches each descriptor, or each item of an
+iterable such as a `discover()` result, to its owner. Nothing is registered
+implicitly. [ModelManager](src/telekinesis/illusion/core/model_manager.py),
+[MaterialManager](src/telekinesis/illusion/core/material_manager.py), and
+[BackgroundManager](src/telekinesis/illusion/core/background_manager.py)
+share one [AssetManager](src/telekinesis/illusion/core/asset_manager.py) base
+that stores descriptors in flat `assets_by_name` dictionaries and
+registration-ordered `names_by_group` lists. `get_names(groups, names)` is the
+single selection path: it returns the union of the requested groups and names,
+or every asset when neither is given. Duplicate names raise `ValueError`.
+Loaded Blender materials are cached separately; `Background` only applies a
+selected HDRI to the world. Registration does not load textures or activate
+HDRIs. Randomizers select registered assets by group or name; material
+preparation loads only the requested materials. Procedural
+`PrincipledMaterial` recipes, including their value ranges, are not assets and
+are passed directly to `MaterialRandomizer(materials=...)`.
+
+`ModelManager.prepare()` imports each requested asset once and creates live
 [Model](src/telekinesis/illusion/types/model.py) instances through linked
 duplication up to the capacity declared by the randomizer. Each instance exposes
 its transform, materials, visibility, and physics. Linked instances share mesh
@@ -131,20 +159,28 @@ environment. No model imports or implicit pool growth occur in the sample loop.
 
 Blender is the source of truth for transforms, geometry, and shader state;
 Illusion accesses them through its wrappers. `Environment.activate()` and
-`deactivate()` coordinate visibility, rigid-body participation, and the active
-model index. Calling a low-level hide operation alone does not perform that
-whole transition.
+`deactivate()` delegate to `ModelManager`, which coordinates visibility,
+rigid-body participation, and the active model index. `begin_sample()` also
+delegates to the manager to deactivate the previous sample's instances.
+Calling a low-level hide operation alone does not perform that whole transition.
 
-The environment creates its camera, background, and material manager during
+The environment creates its camera, background, and asset managers during
 construction. Lights must be constructed after the environment. Its asset
-directory supplies background and material catalogs. Workers resolve model
-paths against their configured asset directory; direct `ModelAsset` paths are
-relative to the working directory unless absolute.
+directory supplies the initial background and material registrations. Workers
+resolve model paths against their configured asset directory; direct
+`ModelAsset` paths are relative to the working directory unless absolute.
 
 There is one active Blender scene per process. Constructing another `Environment`
-resets the shared Blender state. A cleaned environment cannot be prepared again,
-and wrappers belonging to it must not be reused. Generating the next scene
-reuses the active environment rather than constructing another Blender scene.
+resets the shared Blender state. `Environment.clean_up()` resets that state and
+asks the model manager to release instance references and close registration;
+model definitions and category metadata remain readable. Call
+`Environment.prepare()` and `Environment.clean_up()` for environment-owned
+managers so shared scene cleanup is coordinated. Invalid preparation requests
+leave pools usable; import or duplication failures close the manager and cause
+the environment to reset the shared scene before propagating the error.
+A cleaned environment cannot be prepared again, and wrappers belonging to it
+must not be reused. Generating the next scene reuses the active environment
+rather than constructing another Blender scene.
 
 ## Randomization tree
 

@@ -6,8 +6,85 @@ This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) f
 
 ## Unreleased
 
+### Added
+
+- Added `ModelManager` in `telekinesis.illusion.core.model_manager`, exposed as
+  `environment.model_manager`. It owns model registration, annotation
+  categories, fixed-capacity instance pools, activation, sample resets, and
+  model cleanup state. Existing `Environment` model methods delegate to it;
+  the environment coordinates shared Blender scene initialization and teardown.
+  Preparation and cleanup state are available as `is_prepared` and `is_closed`
+  on the manager. Worker capacity updates use `is_prepared` instead of the
+  removed private `Environment._prepared` field.
+- Added Blender-independent, immutable `MaterialAsset` and `BackgroundAsset`
+  descriptors, exported alongside `ModelAsset` from `telekinesis.illusion.types`.
+  All three support local `from_path()` and deterministic recursive `discover()`.
+  Material discovery recognizes the existing color-texture convention and stops
+  descending at an asset directory; model formats match the existing loader.
+  Background discovery accepts `.hdr` and `.exr`. URL support is deferred.
+- Added normalized selection groups with forward-slash ancestor membership.
+  Discovery derives groups from relative parent directories and accepts
+  `group_prefix`; material/background assets directly in the collection root
+  require this prefix. Direct material/background creation requires groups.
+  `ModelAsset` adds optional groups after all existing positional fields and
+  read-only `path`/`name` properties; annotation categories are unchanged.
+- Added `MaterialManager.add()` and `BackgroundManager`, with unique-name
+  descriptor storage and ordered group indexes. `Environment.add()` accepts a
+  model, material, background, light, or an iterable of them, such as the list
+  returned by `discover()`. Registration does not load textures or activate
+  HDRIs; randomizers select registered assets later.
+- Added `AssetManager`, the shared base of `ModelManager`, `MaterialManager`,
+  and `BackgroundManager`. `get_names(groups, names)` selects the union of the
+  requested groups and names, or every asset when neither is given, and
+  raises `ValueError` for unknown groups or names. `ModelManager` now indexes
+  `ModelAsset.groups` through it.
+
 ### Changed
 
+- Moved `MaterialManager` to `telekinesis.illusion.core.material_manager`,
+  alongside `BackgroundManager` in its own module. The existing
+  `telekinesis.illusion.core.environment.MaterialManager` import remains
+  supported; manager behavior is unchanged.
+- **Breaking:** `Environment` and `MaterialManager` no longer discover the
+  `materials/` and `hdris/` collections on construction. Register them
+  explicitly, for example
+  `environment.add(MaterialAsset.discover(assets_dir / "materials"))` and
+  `environment.add(BackgroundAsset.discover(assets_dir / "hdris"))`. Randomizers
+  only select from registered assets. Duplicate names within a type raise
+  `ValueError`, even across folders; give colliding descriptors distinct names.
+  Discovery no longer drops materials with an opacity texture; filter the
+  discovered list if transparent sets should be excluded. The bin-picking
+  worker keeps excluding them. `MaterialManager(asset_dir=...)` now only
+  resolves relative surface-imperfection directories.
+- **Breaking:** `MaterialRandomizer(types=...)` is now `groups=...` and accepts
+  `names=...` for individual materials; `PBRMaterial(types)` takes
+  `groups, names`, `MaterialManager.update_materials()` and
+  `get_random_material()` take `groups, names`, and `MaterialRandomizer.types`
+  is replaced by `groups` and `names`. Selection is the union of groups and
+  names; with only groups, a group is drawn first, then a material within it.
+  YAML configurations keep the `types` key. Procedural `PrincipledMaterial`
+  recipes and their value ranges are unchanged.
+- `MaterialManager.get_random_material()` selects registered assets and loads
+  an uncached selection on demand. With no selection, it considers all
+  registered top-level groups. Callers that previously relied on loading only a
+  subset with `update_materials()` must also pass that subset when sampling.
+- `Background()` now only creates the live world shader setup. Construct it and
+  call `set_background_texture(path)`, or use `BackgroundRandomizer` with
+  registered backgrounds. Asset lookup belongs to the environment;
+  `Background.assets_path` and `Background.DEFAULT_HDRI_CATEGORY` are removed,
+  and no default HDRI is selected.
+- **Breaking:** `BackgroundRandomizer(categories=..., hdris_root=...)` is now
+  `BackgroundRandomizer(groups=..., names=...)`. It selects from the
+  environment's registered backgrounds by exact group (such as
+  `indoor/industrial` or `indoor`) or name, and no longer accepts a root, keeps
+  a private catalog, or discovers files. Replace `hdris_root` with
+  `Environment.add(BackgroundAsset.discover(root))`. `get_random_hdri()`,
+  `catalog`, and `categories` are removed; the requested selection is exposed
+  as `groups` and `names`. YAML configurations keep the `categories` key.
+- Removed the unused `Environment.get_materials()` and `set_materials()`.
+- Updated quickstarts, the tutorial, and asset documentation for local creation
+  and registration. Deterministic material ordering may change previously
+  seeded material choices; category-first sampling remains unchanged.
 - Renamed the live scene-instance API from `Object` to `Model`. Import `Model`
   and `compute_poi` from `telekinesis.illusion.types.model`. `ModelAsset` remains
   the frozen reference and import configuration; one asset can produce multiple
