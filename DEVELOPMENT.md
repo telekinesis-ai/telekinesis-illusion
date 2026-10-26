@@ -135,7 +135,7 @@ python examples/quickstart_flying_things.py --no-preview --device CPU --num-imag
 python examples/quickstart_parts_in_bin.py --no-preview --device CPU --num-images 2 --resolution 128 --samples 4 --seed 17 --output-dir output/dev-bin
 ```
 
-These commands use CPU rendering. The first generates objects without physics; the
+These commands use CPU rendering. The first generates models without physics; the
 second simulates parts in a bin. Each output directory contains
 `coco_annotations.json` and the image files referenced by it. Low resolution
 and sample counts are useful for checking the pipeline, not judging final
@@ -199,7 +199,7 @@ Paths below are relative to `src/telekinesis/illusion/`:
 | Directory | Responsibility |
 | --- | --- |
 | `core/` | Environment ownership, generation lifecycle, rendering and physics configuration. |
-| `types/` | Assets, objects, cameras, lights, materials, and render results. |
+| `types/` | Assets, models, cameras, lights, materials, and render results. |
 | `randomizer/`, `sampler/` | Randomization DAG, instance counts, property and pose sampling. |
 | `blender/` | Local Blender wrappers, loading, rendering, physics, and camera utilities. |
 | `writer/` | Writing images and COCO annotations from render results. |

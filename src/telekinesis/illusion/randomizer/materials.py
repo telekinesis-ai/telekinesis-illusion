@@ -27,7 +27,7 @@ if TYPE_CHECKING:
         Environment,
         MaterialManager,
     )
-    from telekinesis.illusion.types.object import Object
+    from telekinesis.illusion.types.model import Model
 
 
 def _names(values, label: str) -> tuple[str, ...]:
@@ -41,38 +41,38 @@ def _names(values, label: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class MaterialTarget:
-    """Exact registered object names; None selects all registered objects."""
+    """Exact registered model names; None selects all registered models."""
 
-    objects: tuple[str, ...] | None = None
+    models: tuple[str, ...] | None = None
 
     def __post_init__(self):
-        if self.objects is not None:
-            names = _names(self.objects, "objects")
+        if self.models is not None:
+            names = _names(self.models, "models")
             if not names:
-                raise ValueError("objects cannot be empty; use None for all.")
+                raise ValueError("models cannot be empty; use None for all.")
             if len(set(names)) != len(names):
-                raise ValueError("objects contains duplicate names.")
-            object.__setattr__(self, "objects", names)
+                raise ValueError("models contains duplicate names.")
+            object.__setattr__(self, "models", names)
 
-    def resolve(self, environment: "Environment") -> list["Object"]:
-        available = environment.get_objects()
-        names = sorted(available) if self.objects is None else self.objects
+    def resolve(self, environment: "Environment") -> list["Model"]:
+        available = environment.get_models()
+        names = sorted(available) if self.models is None else self.models
         missing = [name for name in names if name not in available]
         if missing:
-            raise ValueError(f"Missing material target objects: {missing}.")
+            raise ValueError(f"Missing material target models: {missing}.")
         return [available[name] for name in names]
 
 
 class SlotSelector(Protocol):
     """Implement resolve() to add further slot-selection strategies."""
 
-    def resolve(self, obj: "Object") -> tuple[int, ...]: ...
+    def resolve(self, model: "Model") -> tuple[int, ...]: ...
 
 
 @dataclass(frozen=True)
 class AllSlots:
-    def resolve(self, obj: "Object") -> tuple[int, ...]:
-        return tuple(range(len(obj.get_material_slot_names())))
+    def resolve(self, model: "Model") -> tuple[int, ...]:
+        return tuple(range(len(model.get_material_slot_names())))
 
 
 @dataclass(frozen=True)
@@ -95,8 +95,8 @@ class NamedSlots:
             raise ValueError("Slots must be non-empty names or indices >= 0.")
         object.__setattr__(self, "slots", slots)
 
-    def resolve(self, obj: "Object") -> tuple[int, ...]:
-        names = obj.get_material_slot_names()
+    def resolve(self, model: "Model") -> tuple[int, ...]:
+        names = model.get_material_slot_names()
         result = []
         for slot in self.slots:
             matches = (
@@ -107,7 +107,7 @@ class NamedSlots:
             if len(matches) != 1:
                 reason = "missing" if not matches else "ambiguous"
                 raise ValueError(
-                    f"Material slot {slot!r} is {reason} on {obj.get_name()!r}; "
+                    f"Material slot {slot!r} is {reason} on {model.get_name()!r}; "
                     f"original slots: {names}. Use an index for duplicates."
                 )
             result.extend(matches)
@@ -197,7 +197,7 @@ MaterialChoice: TypeAlias = str | PrincipledMaterial | Material | MaterialSource
 MaterialSlots: TypeAlias = (
     Mapping[str | int, Sequence[MaterialChoice]] | Literal["all"]
 )
-MaterialMode: TypeAlias = Literal["active", "object", "slots"]
+MaterialMode: TypeAlias = Literal["active", "model", "slots"]
 
 
 def material_choices_from_config(choices):
@@ -280,20 +280,20 @@ def slot_pools(material_slots) -> list[tuple[SlotSelector, MaterialPool]]:
 
 
 def assign_material(
-    obj: "Object", indices: tuple[int, ...], material: Material
+    model: "Model", indices: tuple[int, ...], material: Material
 ):
-    """Override object slots without editing shared mesh data or shaders."""
+    """Override mesh_object slots without editing shared mesh data or shaders."""
     if material.blender_obj.get("illusion_imperfection_map"):
-        obj.ensure_uv_mapping()
-    blender_obj = obj.get_object().blender_obj
+        model.ensure_uv_mapping()
+    blender_obj = model.get_mesh_object().blender_obj
     if not blender_obj.material_slots:
         # Adding a slot changes mesh data, so make only this empty mesh private.
         if blender_obj.data.users > 1:
             blender_obj.data = blender_obj.data.copy()
         # Leave the mesh's data slot empty; keeping a generated material here
-        # would pin the first sample even after its object override changed.
+        # would pin the first sample even after its mesh_object override changed.
         blender_obj.data.materials.append(None)
-        obj.refresh_material_slot_names()
+        model.refresh_material_slot_names()
     for index in indices:
         slot = blender_obj.material_slots[index]
         slot.link = "OBJECT"

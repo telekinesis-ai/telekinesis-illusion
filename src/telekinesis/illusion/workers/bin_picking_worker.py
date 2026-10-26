@@ -29,7 +29,7 @@ from telekinesis.illusion.core.synthetic_data_generator import (
 from telekinesis.illusion.core.environment import Environment
 from telekinesis.illusion.core.engine import BlenderEngine, RenderConfig
 from telekinesis.illusion.types.camera import CameraConfig
-from telekinesis.illusion.types.object import Object
+from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.types.light import Light
 from telekinesis.illusion.types.model_asset import ModelAsset
 from telekinesis.illusion.types.distribution import Uniform, uniform
@@ -42,8 +42,8 @@ from telekinesis.illusion.sampler.upper_region_sampler import (
 from telekinesis.illusion.sampler.grid_region_sampler import GridRegionSampler
 from telekinesis.illusion.randomizer.randomizer import Randomizer
 from telekinesis.illusion.randomizer.randomizer_node import (
-    ObjectPoseRandomizer,
-    ObjectInstanceRandomizer,
+    ModelPoseRandomizer,
+    ModelInstanceRandomizer,
     BackgroundRandomizer,
     MaterialRandomizer,
     CameraPoseRandomizer,
@@ -96,9 +96,9 @@ DEFAULT_PHYSICS_SIMULATOR_PARAMS = {
     "active": False,
     "min_simulation_time_range": [0.5, 1.0],
     "max_simulation_time_range": [2.0, 5.0],
-    "check_object_interval": 0.5,
-    "object_stopped_location_threshold": 0.01,
-    "object_stopped_rotation_threshold": 1.0,
+    "check_model_interval": 0.5,
+    "model_stopped_location_threshold": 0.01,
+    "model_stopped_rotation_threshold": 1.0,
     "substeps_per_frame": 10,
     "solver_iters": 10,
     "verbose": False,
@@ -141,7 +141,7 @@ class BinPickingWorker:
     A wroker class for generating shard for the bin picking use case.
     """
 
-    # Geometry previews move objects, lights and cameras, retaining properties.
+    # Geometry previews move models, lights and cameras, retaining properties.
     GEOMETRY_STAGES = frozenset({STAGE_POSE, STAGE_CAMERA})
 
     def __init__(
@@ -399,14 +399,14 @@ class BinPickingWorker:
 
     def randomize_geometry(self, environment: Environment) -> None:
         """
-        Re-sample object, light and camera poses.
+        Re-sample models, light and camera poses.
 
         Visible instances, materials, background and sampled light properties
         are retained while the caller iterates on layout and framing. Interactive
         tools (the Blender config editor's "Preview Scene") use this; a real
         generation run always calls randomize() unfiltered.
 
-        Visible objects are the ones that get re-posed, so the caller is
+        Visible models are the ones that get re-posed, so the caller is
         responsible for composing a scene before sampling poses.
 
         Args:
@@ -483,7 +483,7 @@ class BinPickingWorker:
             self._environment.add(
                 ModelAsset(
                     model_path,
-                    object_name=model["name"],
+                    model_name=model["name"],
                     category_name=model["category_name"],
                     category_id=model["id"],
                     active_in_simulation=model["simulation"]["active"],
@@ -521,7 +521,7 @@ class BinPickingWorker:
             self._environment.add(
                 ModelAsset(
                     distractor_path,
-                    object_name=distractor["name"],
+                    model_name=distractor["name"],
                     category_name=distractor["category_name"],
                     category_id=distractor["id"],
                     active_in_simulation=distractor["simulation"]["active"],
@@ -601,7 +601,7 @@ class BinPickingWorker:
         for entry in self._config.get("models", []) + self._config.get(
             "distractors", []
         ):
-            group = self._environment.get_object_group(entry["name"])
+            group = self._environment.get_model_group(entry["name"])
             if self._environment._prepared and entry["instances"]["max"] > len(
                 group
             ):
@@ -613,7 +613,7 @@ class BinPickingWorker:
         for role, node_name, legacy in (
             (
                 "part",
-                "instance_randomizer_objects",
+                "instance_randomizer_models",
                 ("min_number_visible_models", "max_number_visible_models"),
             ),
             ("container", "instance_randomizer_containers", None),
@@ -630,14 +630,14 @@ class BinPickingWorker:
             if node is None:
                 continue
             minimum, maximum = self._instance_bounds(role, *(legacy or ()))
-            wanted_counts = self._counts_for(node.target_objects)
+            wanted_counts = self._counts_for(node.target_models)
             if not self._environment._prepared or all(
-                bounds[1] <= len(self._environment.get_object_group(name))
+                bounds[1] <= len(self._environment.get_model_group(name))
                 for name, bounds in wanted_counts.items()
             ):
                 node.counts = wanted_counts
-            node.min_num_total_objects = minimum
-            node.max_num_total_objects = maximum
+            node.min_num_total_models = minimum
+            node.max_num_total_models = maximum
 
         # Pose sampling. The 'random' strategy's parameters are read live by
         # the closure, so only the grid geometry and a strategy switch need
@@ -688,7 +688,7 @@ class BinPickingWorker:
                 self._randomizer.replace_randomizer(
                     name,
                     MaterialRandomizer.from_config(
-                        target_objects=targets,
+                        target_models=targets,
                         config=config,
                         environment=self._environment,
                     ),
@@ -707,7 +707,7 @@ class BinPickingWorker:
                     self._randomizer.replace_randomizer(
                         node_name,
                         MaterialRandomizer.from_config(
-                            target_objects=node.target_objects,
+                            target_models=node.target_models,
                             config=types,
                             environment=self._environment,
                         ),
@@ -782,10 +782,10 @@ class BinPickingWorker:
         """
         Re-scale already-imported models whose config scale changed.
 
-        Object.__init__ bakes the scale into the mesh vertices and resets the
-        object scale to 1, so this applies the *relative* factor to the same
+        Model.__init__ bakes the scale into the mesh vertices and resets the
+        models scale to 1, so this applies the *relative* factor to the same
         mesh data. Instances are linked duplicates sharing one mesh datablock,
-        which must be transformed exactly once - so this iterates the object
+        which must be transformed exactly once - so this iterates the model
         group and transforms each distinct datablock a single time.
 
         Returns:
@@ -798,7 +798,7 @@ class BinPickingWorker:
         ):
             name = entry["name"]
             new_scale = entry.get("scale", 1.0)
-            group = self._environment.get_object_group(name)
+            group = self._environment.get_model_group(name)
             if not group:
                 problems.append(
                     f"'{name}' is not loaded - reload assets to add it"
@@ -824,15 +824,15 @@ class BinPickingWorker:
             factor = float(new_scale) / float(old_scale)
             scale_matrix = Matrix.Diagonal((factor, factor, factor)).to_4x4()
             transformed = set()
-            for obj in group:
-                mesh = obj.get_object().blender_obj.data
+            for model in group:
+                mesh = model.get_mesh_object().blender_obj.data
                 # Linked duplicates share this datablock - transform once, but
-                # update every Object's bookkeeping so the next call computes
+                # update every Model's bookkeeping so the next call computes
                 # its factor from a fresh baseline.
                 if mesh.name not in transformed:
                     mesh.transform(scale_matrix)
                     transformed.add(mesh.name)
-                obj.set_scale(new_scale)
+                model.set_scale(new_scale)
             logger.info(
                 f"Re-scaled '{name}' by {factor} to {new_scale} "
                 f"({len(transformed)} mesh datablock(s))."
@@ -840,7 +840,7 @@ class BinPickingWorker:
 
         return problems
 
-    def _make_sample_pose(self) -> Callable[[Object], None]:
+    def _make_sample_pose(self) -> Callable[[Model], None]:
         """
         Build the 'random' pose-sampling function.
 
@@ -849,43 +849,43 @@ class BinPickingWorker:
         the sampling box without rebuilding the randomizer.
 
         Returns:
-            A callable taking the Object to place.
+            A callable taking the Model to place.
         """
 
-        def sample_pose(obj: Object):
+        def sample_pose(model: Model):
             """
-            Randomly samples and applies a 6-DoF pose to an object.
+            Randomly sample and apply a 6-DoF pose to a model.
 
-            The object's location is sampled uniformly within an axis-aligned box
-            centered around the origin.
+            The model's location is sampled uniformly within an axis-aligned
+            box centered around the origin.
             """
             if self._sample_on_surface:
                 target = [self._sample_on_surface]
             else:
                 # Get visible container in the environment
-                visible = self._environment.get_visible_object_names()
+                visible = self._environment.get_visible_model_names()
                 containers = self._model_supercatgory_map["container"]
                 target = next(
                     (
-                        obj
-                        for obj in visible
-                        if any(name in obj for name in containers)
+                        model_name
+                        for model_name in visible
+                        if any(name in model_name for name in containers)
                     ),
                     None,
                 )
             sample_location = upper_region_sampler(
                 self._environment,
-                object_names_to_sample_on=target,  # type: ignore[arg-type]
+                model_names_to_sample_on=target,  # type: ignore[arg-type]
                 **self._pose_sampling_params,
             )
-            obj.set_location(sample_location)
-            obj.set_rotation(
+            model.set_location(sample_location)
+            model.set_rotation(
                 np.random.uniform((-180, -180, -180), (180, 180, 180))
             )
 
         return sample_pose
 
-    def _make_sample_pose_grid(self) -> Callable[[Object], None]:
+    def _make_sample_pose_grid(self) -> Callable[[Model], None]:
         """
         Build the 'grid' pose-sampling function, creating self._grid_sampler.
 
@@ -895,7 +895,7 @@ class BinPickingWorker:
         GridRegionSampler.update_grid_params().
 
         Returns:
-            A callable taking the Object to place.
+            A callable taking the Model to place.
         """
         self._grid_sampler = GridRegionSampler(
             environment=self._environment,
@@ -914,15 +914,15 @@ class BinPickingWorker:
             xy_jitter=self._grid_cfg["xy_jitter"],
         )
 
-        def sample_pose_grid(obj: Object):
+        def sample_pose_grid(model: Model):
             """
-            Place an object at the next grid cell on the bin's top face
+            Place a model at the next grid cell on the bin's top face
             with optional z-axis rotation randomization.
             """
             location = self._grid_sampler.next_location(
                 self._model_supercatgory_map["container"]
             )
-            obj.set_location(location)
+            model.set_location(location)
             z_rot_min_deg, z_rot_max_deg = self._grid_cfg["z_rotation_range"]
             z_rot_min, z_rot_max = (
                 np.deg2rad(z_rot_min_deg),
@@ -933,7 +933,7 @@ class BinPickingWorker:
                 if z_rot_min != z_rot_max
                 else 0.0
             )
-            obj.set_rotation(np.array([0.0, 0.0, z_rot]))
+            model.set_rotation(np.array([0.0, 0.0, z_rot]))
 
         return sample_pose_grid
 
@@ -944,18 +944,18 @@ class BinPickingWorker:
             raise TypeError(
                 f"material_randomizer.rules[{index}] must be a mapping."
             )
-        target_objects = list(rule.get("target_objects", []))
-        if not target_objects:
+        target_models = list(rule.get("target_models", []))
+        if not target_models:
             raise ValueError(
-                f"material_randomizer.rules[{index}] requires 'target_objects'."
+                f"material_randomizer.rules[{index}] requires 'target_models'."
             )
         name = rule.get("name", f"material_rule_{index}")
         config = {
             key: value
             for key, value in rule.items()
-            if key not in ("name", "target_objects")
+            if key not in ("name", "target_models")
         }
-        return name, target_objects, config
+        return name, target_models, config
 
     @staticmethod
     def _parse_light_randomizers(config: Mapping) -> dict:
@@ -1072,28 +1072,28 @@ class BinPickingWorker:
         """
         Define and add the randomizers.
         """
-        # Add object instance ranodmizer
+        # Add model instance randomizer
         min_parts, max_parts = self._instance_bounds(
             "part", "min_number_visible_models", "max_number_visible_models"
         )
-        object_instance_randomizer = ObjectInstanceRandomizer(
+        model_instance_randomizer = ModelInstanceRandomizer(
             counts=self._counts_for(self._model_supercatgory_map["part"]),
-            min_num_total_objects=min_parts,
-            max_num_total_objects=max_parts,
+            min_num_total_models=min_parts,
+            max_num_total_models=max_parts,
         )
 
         self._randomizer.add_randomizer(
-            randomizer_node=object_instance_randomizer,
-            node_name="instance_randomizer_objects",
+            randomizer_node=model_instance_randomizer,
+            node_name="instance_randomizer_models",
             node_config=NodeConfig(stage=STAGE_COMPOSITION),
         )
 
         # Add container instance ranodmizer
         min_containers, max_containers = self._instance_bounds("container")
-        container_instance_randomizer = ObjectInstanceRandomizer(
+        container_instance_randomizer = ModelInstanceRandomizer(
             counts=self._counts_for(self._model_supercatgory_map["container"]),
-            min_num_total_objects=min_containers,
-            max_num_total_objects=max_containers,
+            min_num_total_models=min_containers,
+            max_num_total_models=max_containers,
         )
 
         self._randomizer.add_randomizer(
@@ -1103,7 +1103,7 @@ class BinPickingWorker:
         )
 
         # Add model pose randomizer
-        # The target objects are all the models activly participating in the
+        # The target models are all the models actively participating in the
         # simulation
         sample_pose = self._make_sample_pose()
 
@@ -1111,7 +1111,7 @@ class BinPickingWorker:
             sample_pose_grid = self._make_sample_pose_grid()
 
             def resolve_container_surface(environment: Environment) -> str:
-                visible = environment.get_visible_object_names()
+                visible = environment.get_visible_model_names()
                 containers = self._model_supercatgory_map["container"]
                 match = next(
                     (
@@ -1128,15 +1128,15 @@ class BinPickingWorker:
                     )
                 return match
 
-            object_pose_randomizer = ObjectPoseRandomizer(
+            model_pose_randomizer = ModelPoseRandomizer(
                 pose_sampling_function=sample_pose_grid,
-                target_objects=self._model_supercatgory_map["part"],
+                target_models=self._model_supercatgory_map["part"],
                 surface_name_resolver=resolve_container_surface,
             )
         elif self._pose_sampling_strategy == "random":
-            object_pose_randomizer = ObjectPoseRandomizer(
+            model_pose_randomizer = ModelPoseRandomizer(
                 pose_sampling_function=sample_pose,
-                target_objects=self._model_supercatgory_map["part"],
+                target_models=self._model_supercatgory_map["part"],
                 sample_on_surface=self._sample_on_surface,
             )
         else:
@@ -1146,7 +1146,7 @@ class BinPickingWorker:
             )
 
         self._randomizer.add_randomizer(
-            randomizer_node=object_pose_randomizer,
+            randomizer_node=model_pose_randomizer,
             node_name="pose_randomizer_models",
             node_config=NodeConfig(stage=STAGE_POSE),
         )
@@ -1157,10 +1157,10 @@ class BinPickingWorker:
                 "min_number_visible_distractors",
                 "max_number_visible_distractors",
             )
-            distractor_instance_randomizer = ObjectInstanceRandomizer(
+            distractor_instance_randomizer = ModelInstanceRandomizer(
                 counts=self._counts_for(self._distractor_names),
-                min_num_total_objects=min_distractors,
-                max_num_total_objects=max_distractors,
+                min_num_total_models=min_distractors,
+                max_num_total_models=max_distractors,
             )
             self._randomizer.add_randomizer(
                 randomizer_node=distractor_instance_randomizer,
@@ -1168,9 +1168,9 @@ class BinPickingWorker:
                 node_config=NodeConfig(stage=STAGE_COMPOSITION),
             )
 
-            distractor_pose_randomizer = ObjectPoseRandomizer(
+            distractor_pose_randomizer = ModelPoseRandomizer(
                 pose_sampling_function=sample_pose,
-                target_objects=self._distractor_names,
+                target_models=self._distractor_names,
             )
             self._randomizer.add_randomizer(
                 randomizer_node=distractor_pose_randomizer,
@@ -1190,7 +1190,7 @@ class BinPickingWorker:
                 name, targets, config = self._parse_material_rule(index, rule)
                 self._randomizer.add_randomizer(
                     randomizer_node=MaterialRandomizer.from_config(
-                        target_objects=targets,
+                        target_models=targets,
                         config=config,
                         environment=self._environment,
                     ),
@@ -1203,7 +1203,7 @@ class BinPickingWorker:
         # role" - MaterialRandomizer would otherwise load no materials and
         # fail later in get_random_material().
         def add_material_randomizer(
-            role: str, target_objects, node_name: str
+            role: str, target_models, node_name: str
         ) -> None:
             types = self._material_cfg.get(role)
             if not types:
@@ -1214,7 +1214,7 @@ class BinPickingWorker:
                 return
             self._randomizer.add_randomizer(
                 randomizer_node=MaterialRandomizer.from_config(
-                    target_objects=target_objects,
+                    target_models=target_models,
                     config=types,
                     environment=self._environment,
                 ),
@@ -1286,7 +1286,7 @@ class BinPickingWorker:
         # blender.types.mesh_object.create_bvh_tree_multi_objects for the
         # visible parts, bin and distractors. Exclude inactive pool instances
         # and invisible physics helpers from all visibility checks.
-        # TODO: Recompute object-relative look-at targets from settled poses
+        # TODO: Recompute model-relative look-at targets from settled poses
         # before evaluating each camera view.
         # TODO: Reuse blender.camera.validation.perform_obstacle_in_view_check
         # for minimum viewing distance and visible_objects to check whether
@@ -1373,14 +1373,14 @@ class BinPickingWorker:
                             "max_simulation_time_range"
                         ]
                     ),
-                    check_object_interval=self._physics_simulator_params[
-                        "check_object_interval"
+                    check_model_interval=self._physics_simulator_params[
+                        "check_model_interval"
                     ],
-                    object_stopped_location_threshold=self._physics_simulator_params[
-                        "object_stopped_location_threshold"
+                    model_stopped_location_threshold=self._physics_simulator_params[
+                        "model_stopped_location_threshold"
                     ],
-                    object_stopped_rotation_threshold=self._physics_simulator_params[
-                        "object_stopped_rotation_threshold"
+                    model_stopped_rotation_threshold=self._physics_simulator_params[
+                        "model_stopped_rotation_threshold"
                     ],
                     substeps_per_frame=self._physics_simulator_params[
                         "substeps_per_frame"
@@ -1396,7 +1396,7 @@ class BinPickingWorker:
                         "container_names": self._model_supercatgory_map[
                             "container"
                         ],
-                        "tracked_object_names": [
+                        "tracked_model_names": [
                             *self._model_supercatgory_map.get("part", []),
                             *self._distractor_names,
                         ],

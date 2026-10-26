@@ -195,20 +195,20 @@ class GridRegionSampler:
         self._cached_bin_name = None
         return True
 
-    def next_location(self, target_object_names: List[str]) -> np.ndarray:
+    def next_location(self, target_model_names: List[str]) -> np.ndarray:
         """
         Return the next grid cell center (world coordinates) on the upper face
         of the visible container.
 
         Args:
-            target_object_names: List[str]
+            target_model_names: List[str]
                 Container name prefixes to match against the currently visible
-                objects. The first match is used as the bin.
+                models. The first match is used as the bin.
 
         Returns:
             np.ndarray: world-space location for the next grid cell.
         """
-        bin_name = self._resolve_visible_bin_name(target_object_names)
+        bin_name = self._resolve_visible_bin_name(target_model_names)
         if bin_name != self._cached_bin_name or self._next_index >= len(
             self._cells
         ):
@@ -218,26 +218,26 @@ class GridRegionSampler:
         self._next_index += 1
         return location
 
-    def _resolve_visible_bin_name(self, target_object_names: List[str]) -> str:
-        visible = self._environment.get_visible_object_names()
+    def _resolve_visible_bin_name(self, target_model_names: List[str]) -> str:
+        visible = self._environment.get_visible_model_names()
         bin_name = next(
             (
                 name
                 for name in visible
-                if any(t in name for t in target_object_names)
+                if any(t in name for t in target_model_names)
             ),
             None,
         )
         if bin_name is None:
             raise RuntimeError(
-                f"No visible container matching {target_object_names} found in "
+                f"No visible container matching {target_model_names} found in "
                 "the environment."
             )
         return bin_name
 
     def _rebuild_grid(self, bin_name: str) -> None:
-        illusion_object = self._environment.get_objects_by_name(bin_name)
-        mesh_object = illusion_object.get_object()
+        model = self._environment.get_models_by_name(bin_name)
+        mesh_object = model.get_mesh_object()
         region: Region2D = select_upper_region(mesh_object, self._upper_dir)
 
         base_point = region.base_point()

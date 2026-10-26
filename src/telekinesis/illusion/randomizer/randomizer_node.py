@@ -30,7 +30,7 @@ from telekinesis.illusion.blender.collision import CollisionUtility
 
 from telekinesis.illusion.types.distribution import Uniform
 from telekinesis.illusion.core.environment import Environment
-from telekinesis.illusion.types.object import Object
+from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.types.light import AREA_SHAPES, Light, _vector
 from telekinesis.illusion.utils.assets import resolve_asset_dir
 from telekinesis.illusion.randomizer.materials import (
@@ -53,7 +53,7 @@ from telekinesis.illusion.randomizer.materials import (
 # argument). Interactive tools use this to re-sample the geometry without
 # rebuilding the whole environment.
 STAGE_COMPOSITION = "composition"  # which and how many instances are visible
-STAGE_POSE = "pose"  # where the visible objects are placed
+STAGE_POSE = "pose"  # where the visible models are placed
 STAGE_APPEARANCE = "appearance"  # materials and background/HDRI
 STAGE_CAMERA = "camera"  # camera pose sampling
 
@@ -101,48 +101,53 @@ class RandomizerNode(ABC):
         pass
 
 
-class ObjectPoseRandomizer(RandomizerNode):
-    """
-    Class for randomizing the pose of objects.
+class ModelPoseRandomizer(RandomizerNode):
+    """Randomize the poses of models.
+
+    Example:
+        def sample_pose(model):
+            model.set_location(np.zeros(3))
+
+        randomizer = ModelPoseRandomizer(sample_pose, ["part"])
     """
 
     def __init__(
         self,
-        pose_sampling_function: Callable[[Object], None],
-        target_objects: List[str] = [],
+        pose_sampling_function: Callable[[Model], None],
+        target_models: List[str] = [],
         max_tries: int = 10,
         sample_on_surface: str | None = None,
         surface_name_resolver: Callable[["Environment"], str] | None = None,
     ) -> None:
         """
         Initialize the internal state. The function 'pose_sampling_function'
-        should take an Object as its argument and implement the sampling logic
-        for the objects, whose names are provided in 'target_objects' as a list.
+        should take a Model as its argument and implement the sampling logic
+        for the models named by 'target_models'.
 
         Example for a valid sampling function:
 
         .. code-block:: python
 
-            def sample_pose(obj: Object):
-                obj.set_location(
+            def sample_pose(model: Model):
+                model.set_location(
                     np.random.uniform((-0.1, -0.1, 0.1), (0.1, 0.1, 0.1))
                 )
-                obj.set_rotation(
+                model.set_rotation(
                     np.random.uniform((-180, -180, -180), (180, 180, 180))
                 )
 
         Args:
-            target_objects: List[str]
-                A list of the target object names.
-            pose_sampling_function: Callable[[Object], None]
-                A sampling function that takes an Object as its argument and
+            target_models: List[str]
+                A list of the target model names.
+            pose_sampling_function: Callable[[Model], None]
+                A sampling function that takes a Model as its argument and
                 sets its location and orientation according to some sampling
-                logic. This function is used to randomly place the objects in
+                logic. This function is used to randomly place the models in
                 the current scene and returns None.
             max_tries: int
-                The maximum number of attempts for trying to place the object
+                The maximum number of attempts for trying to place the model
                 collisionfree with the provided 'pose_sampling_function'.
-                If the object can not be placed wihtout collison after
+                If the model can not be placed wihtout collison after
                 'max_tries' attempts, it is hidden for the current rendering.
             sample_on_surface: str or None
                 If provided, the sampling function samples the poses on this
@@ -153,44 +158,42 @@ class ObjectPoseRandomizer(RandomizerNode):
                 resolve the surface name.
         """
         self.pose_sampling_function = pose_sampling_function
-        self.target_objects = target_objects
+        self.target_models = target_models
         self.max_tries = max_tries
         self._sample_on_surface = sample_on_surface
         self._surface_name_resolver = surface_name_resolver
 
     def randomize(self, environment: Environment) -> None:
         """
-        Randomized the pose of the target objects by sampling their pose with
+        Randomize the pose of the target models by sampling their pose with
         'self.pose_sampling_function' and positioning them wihtout collision
         in the current scene.
 
         Args:
             environment: Environment
-                The environment owning the target objects for this scene.
+                The environment owning the target models for this scene.
         """
-        if self.target_objects:
-            # Get target objects from the environment
-            prefixes = tuple(self.target_objects)
+        if self.target_models:
+            prefixes = tuple(self.target_models)
 
             def is_target(name: str) -> bool:
                 return name.startswith(prefixes)
 
-            objects = environment.get_objects()
-            # Sample on the visible target from self.target_objects
-            visible_target_objects = [
-                objects[name]
-                for name in objects
-                if is_target(name) and not objects[name].is_hidden()
+            models = environment.get_models()
+            visible_target_models = [
+                models[name]
+                for name in models
+                if is_target(name) and not models[name].is_hidden()
             ]
         else:
-            # Randomize all visible objects in the current scene.
-            visible_target_objects = [
-                obj
-                for obj in environment.get_objects().values()
-                if not obj.is_hidden()
+            # Randomize all visible models in the current scene.
+            visible_target_models = [
+                model
+                for model in environment.get_models().values()
+                if not model.is_hidden()
             ]
 
-        if not visible_target_objects:
+        if not visible_target_models:
             return
 
         surface_name = self._sample_on_surface
@@ -198,18 +201,18 @@ class ObjectPoseRandomizer(RandomizerNode):
             surface_name = self._surface_name_resolver(environment)
 
         if surface_name:
-            surface = environment.get_objects_by_name(surface_name)
+            surface_model = environment.get_models_by_name(surface_name)
             self.sample_poses_on_surface(
                 environment=environment,
-                objects_to_sample=visible_target_objects,
+                models_to_sample=visible_target_models,
                 sample_pose_func=self.pose_sampling_function,
-                surface=surface,
+                surface_model=surface_model,
             )
         else:
             self.sample_poses(
                 environment,
-                visible_target_objects,
-                objects_to_check_collisions=visible_target_objects,
+                visible_target_models,
+                models_to_check_collisions=visible_target_models,
                 sample_pose_func=self.pose_sampling_function,
                 max_tries=self.max_tries,
             )
@@ -217,38 +220,38 @@ class ObjectPoseRandomizer(RandomizerNode):
     def sample_poses(
         self,
         environment: Environment,
-        objects_to_sample: List[Object],
-        sample_pose_func: Callable[[Object], None],
-        objects_to_check_collisions: List[Object] = None,
+        models_to_sample: List[Model],
+        sample_pose_func: Callable[[Model], None],
+        models_to_check_collisions: List[Model] = None,
         max_tries: int = 1000,
         mode_on_failure: str = "last_pose",
-    ) -> Dict[Object, Tuple[int, bool]]:
+    ) -> Dict[Model, Tuple[int, bool]]:
         """
-        Samples positions and rotations of selected object inside the sampling
+        Sample positions and rotations of selected models inside the sampling
         volume while performing mesh and bounding box collision checks.
 
         Args:
             environment: Environment
-                The environment from which to retrieve objects for this scene.
-            objects_to_sample: List[Object]
-                A list of mesh objects whose poses are sampled based on the
+                The environment from which to retrieve models for this scene.
+            models_to_sample: List[Model]
+                A list of models whose poses are sampled based on the
                 given function.
-            sample_pose_func: Callable[[Object], None]
-                The function to use for sampling the pose of a given object.
-            objects_to_check_collisions: List[Object]
-                A list of mesh objects who should not be considered when
+            sample_pose_func: Callable[[Model], None]
+                The function to use for sampling the pose of a given model.
+            models_to_check_collisions: List[Model]
+                A list of models that should not be considered when
                 checking for collisions.
             max_tries: int
-                Amount of tries before giving up on an object and moving to the
+                Amount of tries before giving up on a model and moving to the
                 next one.
             mode_on_failure: str
-                Define final state of objects that could not be placed without
+                Define final state of models that could not be placed without
                 collisions within max_tries attempts. Options: 'last_pose',
                 'initial_pose'.
 
         Returns:
-            A dict with the objects to sample as keys and a Tuple with the
-            number of executed attempts to place the object as first element,
+            A dict with the models to sample as keys and a Tuple with the
+            number of executed attempts to place the model as first element,
             and a bool whether it has been successfully placed without
             collisions.
 
@@ -256,7 +259,7 @@ class ObjectPoseRandomizer(RandomizerNode):
             ValueError:
                 - If provided failure mode is not allowed
                 - If the value of max_tries is not greater than zero
-                - If the list of objects_to_sample is empty
+                - If the list of models_to_sample is empty
         """
         # Check if mode on failure is allowed
         allowed_modes_on_failure = ["last_pose", "initial_pose"]
@@ -265,21 +268,22 @@ class ObjectPoseRandomizer(RandomizerNode):
                 f"{mode_on_failure} is not an allowed mode_on_failure."
             )
 
-        # After this many tries we give up on current object and continue with the rest
-        if objects_to_check_collisions is None:
-            objects_to_check_collisions = list(
-                environment.get_objects().values()
+        # After this many tries we give up on the current model.
+        if models_to_check_collisions is None:
+            models_to_check_collisions = list(
+                environment.get_models().values()
             )
 
-        # Among objects_to_sample only check collisions against already placed objects
-        cur_objects_to_check_collisions = list(
-            set(objects_to_check_collisions) - set(objects_to_sample)
+        # Among sampled models, only check against already placed models.
+        current_models_to_check_collisions = list(
+            set(models_to_check_collisions) - set(models_to_sample)
         )
 
         # Collision checks require mesh wrappers.
-        if cur_objects_to_check_collisions:
-            cur_objects_to_check_collisions = [
-                o.get_object() for o in cur_objects_to_check_collisions
+        if current_models_to_check_collisions:
+            current_models_to_check_collisions = [
+                model.get_mesh_object()
+                for model in current_models_to_check_collisions
             ]
 
         if max_tries <= 0:
@@ -287,24 +291,24 @@ class ObjectPoseRandomizer(RandomizerNode):
                 f"The value of max_tries must be greater than zero: {max_tries}"
             )
 
-        if not objects_to_sample:
+        if not models_to_sample:
             raise RuntimeError(
-                "The list of objects_to_sample can not be empty!"
+                "The list of models_to_sample can not be empty!"
             )
 
         # cache to fasten collision detection
         bvh_cache: Dict[str, mathutils.bvhtree.BVHTree] = {}
 
-        sample_results: Dict[Object, Tuple[int, bool]] = {}
-        # Track object names that were hidden because of collision
-        visible_object_names: List[str] = list(
-            environment.get_visible_object_names()
+        sample_results: Dict[Model, Tuple[int, bool]] = {}
+        # Track model names that were hidden because of collision
+        visible_model_names: List[str] = list(
+            environment.get_visible_model_names()
         )
-        for obj in objects_to_sample:
-            # Store the obejct's initial pose in case we need to place it back
+        for model in models_to_sample:
+            # Store the model's initial pose in case we need to place it back
             if mode_on_failure == "initial_pose":
-                initial_location = obj.get_location()
-                initial_rotation = obj.get_rotation()
+                initial_location = model.get_location()
+                initial_rotation = model.get_rotation()
 
             no_collision = True
 
@@ -312,17 +316,17 @@ class ObjectPoseRandomizer(RandomizerNode):
 
             # Try max_iter amount of times
             for i in range(max_tries):
-                # Put the top object in queue at the sampled point in space
-                sample_pose_func(obj)
+                # Put the next model at the sampled point in space.
+                sample_pose_func(model)
 
-                # Remove bvh cache, as object has changed
-                if obj.get_name() in bvh_cache:
-                    del bvh_cache[obj.get_name()]
+                # Remove the BVH cache because the model moved.
+                if model.get_name() in bvh_cache:
+                    del bvh_cache[model.get_name()]
 
-                mesh_obj = obj.get_object()
+                mesh_obj = model.get_mesh_object()
 
                 no_collision = CollisionUtility.check_intersections(
-                    mesh_obj, bvh_cache, cur_objects_to_check_collisions, []
+                    mesh_obj, bvh_cache, current_models_to_check_collisions, []
                 )
 
                 # If no collision then keep the position
@@ -330,92 +334,90 @@ class ObjectPoseRandomizer(RandomizerNode):
                     amount_of_tries_done = i
                     break
 
-            # After placing an object, we will check collisions with it
+            # After placing a model, check collisions with it.
             if no_collision:
-                cur_objects_to_check_collisions.append(mesh_obj)
+                current_models_to_check_collisions.append(mesh_obj)
 
             if no_collision:
                 logger.info(
                     f"It took {amount_of_tries_done + 1} tries to "
-                    f"place {obj.get_name()}"
+                    f"place {model.get_name()}"
                 )
             else:
                 amount_of_tries_done = max_tries
                 logger.warning(
-                    f"Could not place {obj.get_name()} without "
+                    f"Could not place {model.get_name()} without "
                     f"collision after {amount_of_tries_done} tries."
                 )
-                logger.warning("Hiding object for this render.")
-                # Hide object, disable rigid body and remove from the visible
-                # object names
-                environment.deactivate(obj)
+                logger.warning("Hiding model for this render.")
+                environment.deactivate(model)
 
                 if mode_on_failure == "initial_pose":
-                    obj.set_location(initial_location)
-                    obj.set_rotation(initial_rotation)
+                    model.set_location(initial_location)
+                    model.set_rotation(initial_rotation)
 
-            sample_results[obj] = (amount_of_tries_done, no_collision)
+            sample_results[model] = (amount_of_tries_done, no_collision)
 
         return sample_results
 
     def sample_poses_on_surface(
         self,
         environment: Environment,
-        objects_to_sample: List[Object],
-        sample_pose_func: Callable[[Object], None],
-        surface: Object,
+        models_to_sample: List[Model],
+        sample_pose_func: Callable[[Model], None],
+        surface_model: Model,
         max_tries: int = 100,
         min_distance: float = 0.01,
         max_distance: float = 0.6,
         up_direction: np.ndarray | None = None,
         check_all_bb_corners_over_surface: bool = True,
-    ) -> List[Object]:
+    ) -> List[Model]:
         """
         TODO: Check if it makes more sense to use a geo node set up...
-        Samples objects poses on a surface.
+        Sample model poses on a surface.
 
-        The objects are positioned slightly above the surface due to the
+        The models are positioned slightly above the surface due to the
         non-axis aligned nature of used bounding boxes and possible
         non-alignment of the sampling surface (i.e. on the X-Y hyperplane, can
         be somewhat mitigated with precise "up_direction" value), which leads to
-        the objects hovering slightly above the surface. So it is recommended to
+        the models hovering slightly above the surface. So it is recommended to
         use the PhysicsPositioning module afterwards for realistically looking
-        placements of objects on the sampling surface. If placing fails due to
-        collisions, the object will be moved back to the intial pose and hidden
+        placements of models on the sampling surface. If placing fails due to
+        collisions, the model will be moved back to the intial pose and hidden
         from rendering.
 
         Args:
             environment: Environment
-                The environment from which to retrieve objects for this scene.
-            objects_to_sample: List[Object]
-                A list of objects that should be sampled above the surface.
-            surface: Object
-                Object to place objects_to_sample on.
-            sample_pose_func: Callable[[Object], None]
-                The function to use for sampling the pose of a given object.
+                The environment from which to retrieve models for this scene.
+            models_to_sample: List[Model]
+                A list of models that should be sampled above the surface.
+            surface_model: Model
+                Model to place models_to_sample on.
+            sample_pose_func: Callable[[Model], None]
+                The function to use for sampling the pose of a given model.
             max_tries: int
-                Amount of tries before giving up on an object (deleting it) and
+                Amount of tries before giving up on a model (deleting it) and
                 moving to the next one.
             min_distance: float
-                Minimum distance to the closest other object from
-                objects_to_sample. Center to center.
+                Minimum distance to the closest other model from
+                models_to_sample. Center to center.
             max_distance: float
-                Maximum distance to the closest other object from
-                objects_to_sample. Center to center.
+                Maximum distance to the closest other model from
+                models_to_sample. Center to center.
             up_direction: np.ndarray or None
-                Normal vector of the side of surface the objects should be
+                Normal vector of the side of surface the models should be
                 placed on.
             check_all_bb_corners_over_surface: bool
                 If this is True all bounding box corners have to be above the
-                surface, else only the center of the object has to be above the
+                surface, else only the center of the model has to be above the
                 surface
 
         Return:
-            The list of placed objects.
+            The list of placed models' mesh objects.
         """
-        if len(set(objects_to_sample)) != len(objects_to_sample):
+        if len(set(models_to_sample)) != len(models_to_sample):
             raise ValueError(
-                "The given list of objects to sample contains duplicates."
+                "The given list of models to sample contains duplicates."
                 "This leads to complications in the sampling process."
             )
 
@@ -427,39 +429,39 @@ class ObjectPoseRandomizer(RandomizerNode):
         # cache to fasten collision detection
         bvh_cache: Dict[str, mathutils.bvhtree.BVHTree] = {}
 
-        placed_objects: List[MeshObject] = []
+        placed_models: List[MeshObject] = []
 
-        for obj in objects_to_sample:
-            logger.info(f"Trying to put {obj.get_name()}")
-            initial_pose = obj.get_local2world_mat()
+        for model in models_to_sample:
+            logger.info(f"Trying to put {model.get_name()}")
+            initial_pose = model.get_local2world_mat()
             placed_successfully = False
 
             for i in range(max_tries):
-                sample_pose_func(obj)
-                # Remove bvh cache, as object has changed
-                if obj.get_name() in bvh_cache:
-                    del bvh_cache[obj.get_name()]
+                sample_pose_func(model)
+                # Remove bvh cache, as model has changed
+                if model.get_name() in bvh_cache:
+                    del bvh_cache[model.get_name()]
 
-                mesh_obj = obj.get_object()
-                surface_obj = surface.get_object()
+                mesh_obj = model.get_mesh_object()
+                surface_obj = surface_model.get_mesh_object()
 
                 no_collision = CollisionUtility.check_intersections(
-                    mesh_obj, bvh_cache, placed_objects, []
+                    mesh_obj, bvh_cache, placed_models, []
                 )
 
                 if not no_collision:
                     logger.info("Collision detected, retrying!")
                     continue
 
-                # Remove bvh cache, as object has changed
-                if obj.get_name() in bvh_cache:
-                    del bvh_cache[obj.get_name()]
+                # Remove bvh cache, as model has changed
+                if model.get_name() in bvh_cache:
+                    del bvh_cache[model.get_name()]
 
                 # Select the current object
                 bpy.ops.object.select_all(action="DESELECT")
                 mesh_obj.blender_obj.select_set(True)
                 bpy.context.view_layer.objects.active = mesh_obj.blender_obj
-                # Start ray slightly above object origin
+                # Start ray slightly above models origin
                 origin = mesh_obj.blender_obj.location + mathutils.Vector(
                     (0, 0, 0.001)
                 )
@@ -468,7 +470,7 @@ class ObjectPoseRandomizer(RandomizerNode):
                 depsgraph = bpy.context.evaluated_depsgraph_get()
 
                 # Cast against the target surface only — by construction this
-                # cannot self-hit, regardless of the object's geometry or
+                # cannot self-hit, regardless of the model's geometry or
                 # origin placement.
                 surface_blender_obj = surface_obj.blender_obj
                 mw = surface_blender_obj.matrix_world
@@ -483,9 +485,10 @@ class ObjectPoseRandomizer(RandomizerNode):
 
                 if not hit:
                     logger.warning(
-                        f'Ray casting of the object "{mesh_obj.get_name()}" '
+                        f'Ray casting of the model "{mesh_obj.get_name()}" '
                         f"into the direction {direction} didn't hit the target "
-                        f"surface object {surface.get_name()} in the environment. "
+                        f"surface model {surface_model.get_name()} in the "
+                        "environment. "
                         f"Skipping this part."
                     )
                     continue
@@ -513,12 +516,12 @@ class ObjectPoseRandomizer(RandomizerNode):
                 mesh_obj.blender_obj.location = location - min_proj * n
 
                 logger.info(
-                    f'Placed object "{mesh_obj.get_name()}" successfully at'
+                    f'Placed model "{mesh_obj.get_name()}" successfully at'
                     f"{mesh_obj.get_location()} after {i + 1} iterations!"
                 )
 
                 spacing_is_ok = _OnSurfaceSampler.check_spacing(
-                    mesh_obj, placed_objects, min_distance, max_distance
+                    mesh_obj, placed_models, min_distance, max_distance
                 )
 
                 if not spacing_is_ok:
@@ -526,29 +529,29 @@ class ObjectPoseRandomizer(RandomizerNode):
                     continue
 
                 no_collision = CollisionUtility.check_intersections(
-                    mesh_obj, bvh_cache, placed_objects, []
+                    mesh_obj, bvh_cache, placed_models, []
                 )
 
                 if not no_collision:
                     logger.info("Collision detected after drop, retrying!")
                     continue
 
-                placed_objects.append(mesh_obj)
+                placed_models.append(mesh_obj)
                 placed_successfully = True
                 break
 
             if not placed_successfully:
-                logger.info(f"Giving up on {obj.get_name()}, hiding...")
-                environment.deactivate(obj)
-                obj.set_local2world_mat(initial_pose)
+                logger.info(f"Giving up on {model.get_name()}, hiding...")
+                environment.deactivate(model)
+                model.set_local2world_mat(initial_pose)
 
-        return placed_objects
+        return placed_models
 
 
 class _OnSurfaceSampler:
     @staticmethod
     def check_above_surface(
-        obj: MeshObject,
+        mesh_object: MeshObject,
         surface: MeshObject,
         up_direction: np.ndarray,
         check_all_bb_corners_over_surface: bool = True,
@@ -557,22 +560,22 @@ class _OnSurfaceSampler:
         Check if all corners of the bounding box are "above" the surface
 
         Args:
-        obj:
-            Object for which the check is carried out. Type: blender object.
+        mesh_object:
+            Mesh object for which the check is carried out. Type: blender object.
         surface:
-            The surface object.
+            The surface mesh object.
         up_direction:
             The direction that indicates "above" direction.
         check_all_bb_corners_over_surface:
             If this is True all bounding box corners have to be above the
-            surface, else only the center of the object has to be above the
+            surface, else only the center of the mesh object has to be above the
             surface
 
         Return:
             True if the bounding box is above the surface, False - if not.
         """
         if check_all_bb_corners_over_surface:
-            for point in obj.get_bound_box():
+            for point in mesh_object.get_bound_box():
                 position_is_above_object = surface.position_is_above_object(
                     point + up_direction,
                     -up_direction,
@@ -581,7 +584,7 @@ class _OnSurfaceSampler:
                 if not position_is_above_object:
                     return False
             return True
-        center = np.mean(obj.get_bound_box(), axis=0)
+        center = np.mean(mesh_object.get_bound_box(), axis=0)
         position_is_above_object = surface.position_is_above_object(
             center + up_direction,
             -up_direction,
@@ -591,35 +594,35 @@ class _OnSurfaceSampler:
 
     @staticmethod
     def check_spacing(
-        obj: MeshObject,
-        placed_objects: List[MeshObject],
+        mesh_object: MeshObject,
+        placed_models: List[MeshObject],
         min_distance: float,
         max_distance: float,
     ) -> bool:
         """
-        Check if object is not too close or too far from previous objects.
+        Check if mesh object is not too close or too far from previous objects.
 
         Args:
-            obj: MeshObject
-                Object for which the check is carried out.
-            placed_objects: List[MeshObject]
+            mesh_object: MeshObject
+                Mesh object for which the check is carried out.
+            placed_models: List[MeshObject]
                 A list of already placed objects that should be used for
                 checking spacing.
             min_distance: float
                 Minimum distance to the closest other object from
-                placed_objects. Center to center.
+                placed_models. Center to center.
             max_distance: float
                 Maximum distance to the closest other object from
-                placed_objects. Center to center.
+                placed_models. Center to center.
 
             Return:
                 True, if the spacing is correct
         """
         closest_distance = None
 
-        for already_placed in placed_objects:
+        for already_placed in placed_models:
             distance = np.linalg.norm(
-                already_placed.get_location() - obj.get_location()
+                already_placed.get_location() - mesh_object.get_location()
             )
             if closest_distance is None or distance < closest_distance:
                 closest_distance = distance
@@ -630,52 +633,55 @@ class _OnSurfaceSampler:
 
     @staticmethod
     def drop(
-        obj: MeshObject, up_direction: np.ndarray, surface_height: float
+        mesh_object: MeshObject, up_direction: np.ndarray, surface_height: float
     ) -> None:
         """
-        Moves object "down" until its bounding box touches the bounding box of
+        Moves mesh object "down" until its bounding box touches the bounding box of
         the surface. This uses bounding boxes which are not aligned optimally,
         this will cause objects to be placed slightly to high.
 
         Args:
-            obj: MeshObject
+            mesh_object: MeshObject
                 Object to move. Type: blender object.
             up_direction: np.ndarray
                 Vector which points into the opposite drop direction.
             surface_height: float
                 Height of the surface above its origin.
         """
-        obj_bounds = obj.get_bound_box()
-        obj_height = min(up_direction.dot(corner) for corner in obj_bounds)
+        mesh_object_bounds = mesh_object.get_bound_box()
+        mesh_object_height = min(up_direction.dot(corner) for corner in mesh_object_bounds)
 
-        obj.set_location(
-            obj.get_location() - up_direction * (obj_height - surface_height)
+        mesh_object.set_location(
+            mesh_object.get_location() - up_direction * (mesh_object_height - surface_height)
         )
 
 
-class ObjectInstanceRandomizer(RandomizerNode):
-    """Sample bounded counts and activate unused instances from environment pools.
+class ModelInstanceRandomizer(RandomizerNode):
+    """Sample bounded counts and activate instances from environment pools.
 
     Multiple nodes requesting the same model have additive capacity and select
-    disjoint instances. Pose/material nodes don't reserve additional objects.
+    disjoint instances. Pose/material nodes don't reserve additional models.
+
+    Example:
+        randomizer = ModelInstanceRandomizer({"gear": (1, 3)})
     """
 
     def __init__(
         self,
         counts: Mapping[str, tuple[int, int]],
-        min_num_total_objects: int | None = None,
-        max_num_total_objects: int | None = None,
+        min_num_total_models: int | None = None,
+        max_num_total_models: int | None = None,
     ):
         from telekinesis.illusion.randomizer.instance_counts import (
             validate_counts,
         )
 
         self.counts = {name: tuple(bounds) for name, bounds in counts.items()}
-        self.target_objects = list(self.counts)
-        self.min_num_total_objects = min_num_total_objects
-        self.max_num_total_objects = max_num_total_objects
+        self.target_models = list(self.counts)
+        self.min_num_total_models = min_num_total_models
+        self.max_num_total_models = max_num_total_models
         validate_counts(
-            self.counts, min_num_total_objects, max_num_total_objects
+            self.counts, min_num_total_models, max_num_total_models
         )
 
     def required_instances(self) -> dict[str, int]:
@@ -684,7 +690,7 @@ class ObjectInstanceRandomizer(RandomizerNode):
         )
 
         _, total_max = validate_counts(
-            self.counts, self.min_num_total_objects, self.max_num_total_objects
+            self.counts, self.min_num_total_models, self.max_num_total_models
         )
         minimum_sum = sum(bounds[0] for bounds in self.counts.values())
         return {
@@ -698,22 +704,22 @@ class ObjectInstanceRandomizer(RandomizerNode):
         )
 
         selected = sample_counts(
-            self.counts, self.min_num_total_objects, self.max_num_total_objects
+            self.counts, self.min_num_total_models, self.max_num_total_models
         )
-        active = set(environment.get_visible_object_names())
+        active = set(environment.get_visible_model_names())
         for name, count in selected.items():
             available = [
-                obj
-                for obj in environment.get_object_group(name)
-                if obj.get_name() not in active
+                model
+                for model in environment.get_model_group(name)
+                if model.get_name() not in active
             ]
             if count > len(available):
                 raise RuntimeError(
                     f"Insufficient prepared instances for {name!r}."
                 )
             random.shuffle(available)
-            for obj in available[:count]:
-                environment.activate(obj)
+            for model in available[:count]:
+                environment.activate(model)
 
 
 class BackgroundRandomizer(RandomizerNode):
@@ -843,7 +849,7 @@ class MaterialRandomizer(RandomizerNode):
     """Randomize materials with independent target/source/assignment policies.
 
     Existing calls keep prefix matching and active-slot PBR assignment. Use
-    mode='object' for one sample across every slot of each selected mesh.
+    mode='model' for one sample across every slot of each selected mesh.
     material_slots='all' samples every slot independently; a mapping assigns
     separate pools to selected original slot names or zero-based indices.
     Named slots must exist on every selected mesh. Use separate nodes when
@@ -852,7 +858,7 @@ class MaterialRandomizer(RandomizerNode):
 
     def __init__(
         self,
-        target_objects: list[str] | MaterialTarget,
+        target_models: list[str] | MaterialTarget,
         environment: Environment | None = None,
         types: list[str] | None = None,
         *,
@@ -861,12 +867,12 @@ class MaterialRandomizer(RandomizerNode):
         material_slots: MaterialSlots | None = None,
         seed: int | None = None,
     ) -> None:
-        if isinstance(target_objects, MaterialTarget):
-            self.target_objects = target_objects
+        if isinstance(target_models, MaterialTarget):
+            self.target_models = target_models
         else:
-            self.target_objects = list(_names(target_objects, "target_objects"))
-        if mode not in (None, "active", "object", "slots"):
-            raise ValueError("mode must be 'active', 'object' or 'slots'.")
+            self.target_models = list(_names(target_models, "target_models"))
+        if mode not in (None, "active", "model", "slots"):
+            raise ValueError("mode must be 'active', 'model' or 'slots'.")
         if types is not None and materials is not None:
             raise ValueError("Use either types or materials, not both.")
         if material_slots is not None and mode not in (None, "slots"):
@@ -878,7 +884,7 @@ class MaterialRandomizer(RandomizerNode):
         self._mode = mode or (
             "slots"
             if material_slots is not None
-            else "object"
+            else "model"
             if materials is not None
             else "active"
         )
@@ -912,10 +918,10 @@ class MaterialRandomizer(RandomizerNode):
         self._prepared_manager = environment.material_manager
 
     @classmethod
-    def from_config(cls, target_objects, environment, config):
+    def from_config(cls, target_models, environment, config):
         """Build from a legacy PBR list or an explicit YAML/JSON mapping."""
         if isinstance(config, list):
-            result = cls(target_objects, environment, types=config)
+            result = cls(target_models, environment, types=config)
         elif isinstance(config, Mapping):
             unknown = set(config) - {
                 "types",
@@ -938,7 +944,7 @@ class MaterialRandomizer(RandomizerNode):
                     slot: material_choices_from_config(choices)
                     for slot, choices in kwargs["material_slots"].items()
                 }
-            result = cls(target_objects, environment, **kwargs)
+            result = cls(target_models, environment, **kwargs)
         else:
             raise TypeError("Material configuration must be a list or mapping.")
         result.configuration = deepcopy(config)
@@ -956,34 +962,34 @@ class MaterialRandomizer(RandomizerNode):
         targets = self._targets(environment)
         # Resolve every target before sampling or mutation, so bad selectors
         # cannot leave a partially randomized asset behind.
-        plan = [(obj, self._assignments(obj)) for obj in targets]
+        plan = [(model, self._assignments(model)) for model in targets]
         try:
-            for obj, assignments in plan:
+            for model, assignments in plan:
                 for indices, pool in assignments:
                     material = pool.generate(
                         environment.material_manager, self._rng
                     )
-                    assign_material(obj, indices, material)
+                    assign_material(model, indices, material)
         finally:
             clean_generated_materials()
 
     def _targets(self, environment):
-        if isinstance(self.target_objects, MaterialTarget):
-            return self.target_objects.resolve(environment)
-        prefixes = tuple(self.target_objects)
+        if isinstance(self.target_models, MaterialTarget):
+            return self.target_models.resolve(environment)
+        prefixes = tuple(self.target_models)
         return [
-            obj
-            for name, obj in environment.get_objects().items()
+            model
+            for name, model in environment.get_models().items()
             if name.startswith(prefixes)
         ]
 
-    def _assignments(self, obj):
+    def _assignments(self, model):
         if self._mode == "slots":
-            obj.require_preserved_material_slots()
+            model.require_preserved_material_slots()
             assignments = []
             seen = set()
             for selector, pool in self._slot_pools:
-                for index in selector.resolve(obj):
+                for index in selector.resolve(model):
                     if index in seen:
                         raise ValueError(
                             "Multiple selectors target the same slot."
@@ -991,9 +997,9 @@ class MaterialRandomizer(RandomizerNode):
                     seen.add(index)
                     assignments.append(((index,), pool))
             if not assignments:
-                raise ValueError(f"No material slots on {obj.get_name()!r}.")
+                raise ValueError(f"No material slots on {model.get_name()!r}.")
             return assignments
-        mesh = obj.get_object().blender_obj
+        mesh = model.get_mesh_object().blender_obj
         indices = (
             (mesh.active_material_index,)
             if self._mode == "active"
@@ -1084,7 +1090,7 @@ class LightPoseRandomizer(RandomizerNode):
     ``sampler(environment=..., **kwargs)`` returns (location in meters,
     XYZ Euler radians). Existing shell_sampler
     aims the light at its center; use positive elevations for overhead lights.
-    Run after object placement and LightRandomizer so the bounds and emitter
+    Run after model placement and LightRandomizer so the bounds and emitter
     sizes are current. Clearance is checked at the time this node runs.
 
     ``min_distance`` is measured from the emitter's enclosing sphere to each
@@ -1126,9 +1132,9 @@ class LightPoseRandomizer(RandomizerNode):
         bpy.context.view_layer.update()
         # shortcut: AABBs over-reject; use mesh distances for tight placements.
         bounds = [
-            obj.get_bound_box()
-            for obj in get_all_mesh_objects()
-            if not obj.is_hidden()
+            mesh_object.get_bound_box()
+            for mesh_object in get_all_mesh_objects()
+            if not mesh_object.is_hidden()
         ]
         boxes = [
             (corners.min(axis=0), corners.max(axis=0)) for corners in bounds

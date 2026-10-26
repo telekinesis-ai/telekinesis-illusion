@@ -28,7 +28,7 @@ flowchart TB
     Randomizer[Randomizer: Randomization Tree]
     Engine[Engine: Rendering and Physics]
     Writer[Writer: Images, Annotations and Metadata]
-    Assets[Objects / URDFs / Cameras / Lights / Materials / HDRIs]
+    Assets[Models / URDFs / Cameras / Lights / Materials / HDRIs]
     RenderResult[RenderResult: Images, Ground-Truth Passes, Categories and Capture Metadata]
     Dataset[Dataset: Images and Annotations]
 
@@ -80,7 +80,7 @@ after generation. The dataset node represents files on disk.
 1. **Prepare.** Ask the randomizer for finite instance capacities, prepare the
    environment's pools, prepare randomizer resources, and configure the engine
    using the writer's segmentation requirements.
-2. **Begin a sample.** Deactivate the previously active pooled objects. This
+2. **Begin a sample.** Deactivate the previously active pooled models. This
    resets activity; it does not restore every pose or material to a default.
 3. **Randomize.** Execute the enabled nodes to select instances and change
    poses, materials, backgrounds, lights, and camera views for this scene.
@@ -107,17 +107,20 @@ when a later operation fails.
 
 ### Registration and instance pools
 
-A [ModelAsset](src/telekinesis/illusion/types/model_asset.py) describes a model;
-constructing it does not import geometry. `Environment.add()` validates its path,
-scale, name, and annotation category, then returns a normalized copy without
-changing the input specification. The environment exposes registered definitions
-through a read-only mapping. It also accepts constructed `Light` objects,
+A [ModelAsset](src/telekinesis/illusion/types/model_asset.py) is a frozen model
+reference and import configuration; constructing it does not import geometry.
+`Environment.add()` validates its path, scale, name, and annotation category,
+then returns a normalized copy without changing the input specification.
+The environment exposes registered definitions
+through a read-only mapping. It also accepts constructed `Light` instances,
 registered separately from model definitions and mesh instances.
 
-Preparation imports each requested model once and creates linked duplicates
-up to the capacity declared by the randomizer. Linked instances share mesh
-data; object-level material slots allow different material assignments.
-The flat object dictionary and per-model groups reference the same wrappers.
+Preparation imports each requested asset once and creates live
+[Model](src/telekinesis/illusion/types/model.py) instances through linked
+duplication up to the capacity declared by the randomizer. Each instance exposes
+its transform, materials, visibility, and physics. Linked instances share mesh
+data; Blender object-level material slots allow different material assignments.
+The flat model dictionary and per-model groups reference the same instances.
 Instance counts belong to randomization nodes, independently of model metadata.
 
 Model registration closes after preparation. Counts can change within the
@@ -129,7 +132,7 @@ environment. No model imports or implicit pool growth occur in the sample loop.
 Blender is the source of truth for transforms, geometry, and shader state;
 Illusion accesses them through its wrappers. `Environment.activate()` and
 `deactivate()` coordinate visibility, rigid-body participation, and the active
-object index. Calling a low-level hide operation alone does not perform that
+model index. Calling a low-level hide operation alone does not perform that
 whole transition.
 
 The environment creates its camera, background, and material manager during
@@ -158,7 +161,7 @@ not reserve additional capacity. Enabled nodes contribute once to the capacity
 calculation, and multiple nodes requesting the same model reserve additive
 capacity and select distinct available instances.
 
-Nodes cover instance counts, object poses, materials, HDRI backgrounds, light
+Nodes cover instance counts, model poses, materials, HDRI backgrounds, light
 properties, light poses, and camera poses. Optional stage filtering supports
 partial scene updates; enabled nodes assigned to the default stage are never
 filtered out. Normal generation executes all enabled nodes.
@@ -183,7 +186,7 @@ passes. The normal segmentation path uses Blender's object-index pass to
 produce instance maps and associated attributes.
 
 Physics is optional. When a catch plane is configured, the engine reuses an
-invisible plane below the active container and can deactivate escaped objects.
+invisible plane below the active container and can deactivate escaped models.
 The plane participates only during simulation, is disabled even if simulation
 fails, and is released during engine cleanup.
 
@@ -252,7 +255,7 @@ configuration. Wrappers created inside a reverted block must not escape it.
 
 | Package | Supporting role |
 | --- | --- |
-| [types/](src/telekinesis/illusion/types/) | Model specifications, scene object wrappers, cameras, lights, material recipes, and captured results. |
+| [types/](src/telekinesis/illusion/types/) | Model specifications and instances, cameras, lights, material recipes, and captured results. |
 | [sampler/](src/telekinesis/illusion/sampler/) | Camera, grid, and region sampling used by randomizers and workers. |
 | [utils/](src/telekinesis/illusion/utils/) | Asset-path resolution and isolation from Blender user-extension packages. |
 | [viewer/](src/telekinesis/illusion/viewer/) | Optional inspection of generated datasets. |

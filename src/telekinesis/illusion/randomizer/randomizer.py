@@ -38,7 +38,7 @@ class Randomizer:
 
         randomizer = Randomizer()
         randomizer.add_randomizer(
-            randomizer_node.ObjectInstanceRandomizer({"gear": (1, 3)}),
+            randomizer_node.ModelInstanceRandomizer({"gear": (1, 3)}),
             "counts",
         )
     """
@@ -76,7 +76,7 @@ class Randomizer:
             name: str
                 Unique node identifier.
             randomizer_node: RandomizerNode or None
-                The randomizer callable/object executed for this node.
+                The randomizer callable executed for this node.
             node_config:  NodeConfig or None
                 Optional execution/config metadata for the node.
 

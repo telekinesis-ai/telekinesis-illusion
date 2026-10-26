@@ -72,7 +72,7 @@ class SyntheticDataGenerator:
         Keep clean_up_environment=False between shards to reuse the environment;
         explicitly clean up at the end.
         Asset registration is closed after preparation. Bounds may change only
-        within prepared capacity. No objects are imported in the sample loop.
+        within prepared capacity. No models are imported in the sample loop.
         With save_blender_scene=True, save the final scene as scene_<uuid>.blend
         in the writer's output directory, using a fresh UUID for each save.
         """

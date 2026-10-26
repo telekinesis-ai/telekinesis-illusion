@@ -29,7 +29,7 @@ from telekinesis.illusion.blender.setup import is_using_external_bpy_module
 from telekinesis.illusion.blender.loaders.material_loader import (
     load_ccmaterials,
 )
-from telekinesis.illusion.types.object import Object
+from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.types.background import Background
 from telekinesis.illusion.types.camera import Camera, CameraConfig
 from telekinesis.illusion.types.light import Light
@@ -82,12 +82,12 @@ class Environment:
         self._assets: dict[str, ModelAsset] = {}
         self._prepared = False
         self._closed = False
-        self._objects: Dict[str, Object] = {}
+        self._models: Dict[str, Model] = {}
         self._lights: dict[str, Light] = {}
-        self._object_groups: Dict[str, List[Object]] = {}
+        self._model_groups: Dict[str, List[Model]] = {}
         self._categories = LabelIdMapping()
         self._next_category_id = 1
-        self._visible_object_names = []
+        self._visible_model_names = []
 
         # Initialize background
         self._background = Background(assets_root=self._asset_dir)
@@ -114,9 +114,9 @@ class Environment:
         if self._closed:
             return
         initialization.clean_up()
-        self._objects.clear()
-        self._object_groups.clear()
-        self._visible_object_names.clear()
+        self._models.clear()
+        self._model_groups.clear()
+        self._visible_model_names.clear()
         self._closed = True
         if is_using_external_bpy_module():
             clean_temp_dir()
@@ -143,47 +143,46 @@ class Environment:
         """
         return self._categories
 
-    def get_objects(self) -> Dict:
+    def get_models(self) -> Dict:
         """
-        Get all pooled objects, including those inactive in the current scene.
+        Get all pooled models, including those inactive in the current scene.
         """
-        return self._objects
+        return self._models
 
-    def get_objects_by_name(
+    def get_models_by_name(
         self,
         name: str,
-    ) -> List[Object] | Object:
+    ) -> List[Model] | Model:
         """
-        Get pooled objects from the environment by matching their names.
-        If multiple instances of this object are present, a list of all the
-        objects is returned.
+        Get pooled models from the environment by matching their names.
+        If multiple instances of this model are present, return all of them.
         """
-        matches = [value for key, value in self._objects.items() if name in key]
+        matches = [value for key, value in self._models.items() if name in key]
 
         if not matches:
-            raise ValueError(f"No object with the name {name}")
+            raise ValueError(f"No model with the name {name}")
         if len(matches) == 1:
             return matches[0]  # return single value
         return matches
 
-    def get_object_group(
+    def get_model_group(
         self,
-        object_name: str,
-    ) -> List[Object]:
+        model_name: str,
+    ) -> List[Model]:
         """
-        Get every instance of a model, keyed by the 'object_name' it was added
+        Get every instance of a model, keyed by the 'model_name' it was added
         under (i.e. the config's model name, not the '<name>_INSTANCE_<n>' keys
-        used by get_objects()).
+        used by get_models()).
 
         Args:
-            object_name: str
-                The object_name of the ModelAsset registered with add().
+            model_name: str
+                The model_name of the ModelAsset registered with add().
 
         Returns:
-            The list of Object instances, or an empty list if the name is
+            The list of Model instances, or an empty list if the name is
             not registered.
         """
-        return self._object_groups.get(object_name, [])
+        return self._model_groups.get(model_name, [])
 
     def get_background(self) -> Background:
         """
@@ -203,23 +202,23 @@ class Environment:
         """
         self._materials = material_list
 
-    def get_visible_object_names(self) -> List[str]:
+    def get_visible_model_names(self) -> List[str]:
         """
-        Return the names of pooled objects active in the current scene.
+        Return the names of pooled models active in the current scene.
         """
-        return list(self._visible_object_names)
+        return list(self._visible_model_names)
 
-    def set_visible_object_names(self, visible_object_names: List[str]) -> None:
+    def set_visible_model_names(self, visible_model_names: List[str]) -> None:
         """Compatibility setter; keep visibility and physics consistent."""
-        names = set(visible_object_names)
-        unknown = names - self._objects.keys()
+        names = set(visible_model_names)
+        unknown = names - self._models.keys()
         if unknown:
-            raise ValueError(f"Unknown environment objects: {unknown}")
-        for name in tuple(self._visible_object_names):
+            raise ValueError(f"Unknown environment models: {unknown}")
+        for name in tuple(self._visible_model_names):
             if name not in names:
-                self.deactivate(self._objects[name])
-        for name in dict.fromkeys(visible_object_names):
-            self.activate(self._objects[name])
+                self.deactivate(self._models[name])
+        for name in dict.fromkeys(visible_model_names):
+            self.activate(self._models[name])
 
     def auto_config(
         self,
@@ -250,7 +249,7 @@ class Environment:
 
     def _resolve_category_id_and_name(
         self,
-        object_name: str,
+        model_name: str,
         category_name: str | None,
         category_id: int | None = None,
     ) -> tuple[str, int]:
@@ -258,7 +257,7 @@ class Environment:
         Return (final_category_name, final_category_id) following the 4 rules described below:
 
         1. If no ID and category_name is provided:
-            - Use the mandatory object_name as the category_name
+            - Use the mandatory model_name as the category_name
             - Check if that category_name already has an ID assigned
             - If no ID is assigned, get the next_id
             - If ID exists, use the existing ID
@@ -281,12 +280,12 @@ class Environment:
                 create a new mapping and assign it
 
         Args:
-            object_name: str
-                The name of the object to set category id and name.
+            model_name: str
+                The name of the model to set category id and name.
             category_name: str or None
-                The category name for the object.
+                The category name for the model.
             category_id: int or None
-                The category id for the object.
+                The category id for the model.
 
         Returns:
             A tuple consisting of the category_name and category_id
@@ -318,9 +317,9 @@ class Environment:
 
         # Normalize fallback name (rule 1 + part of rule 3)
         if category_name is None and category_id is None:
-            category_name = object_name
+            category_name = model_name
             logger.info(
-                f"No category name provided. Using object name '{object_name}' as category name."
+                f"No category name provided. Using model name '{model_name}' as category name."
             )
 
         # Case A: name provided (id optional)
@@ -377,10 +376,10 @@ class Environment:
             )
             return name, category_id
 
-        # ID doesn't exist: create mapping using object_name
-        name = object_name
+        # ID doesn't exist: create mapping using model_name
+        name = model_name
         logger.info(
-            f"Category ID {category_id} does not exist. Using object name '{object_name}' as category name "
+            f"Category ID {category_id} does not exist. Using model name '{model_name}' as category name "
             f"and creating new mapping."
         )
 
@@ -391,7 +390,7 @@ class Environment:
 
         Models are validated and assigned an annotation category without
         importing meshes. Register them before preparation; instance counts
-        belong to ObjectInstanceRandomizer.counts. Lights are constructed after
+        belong to ModelInstanceRandomizer.counts. Lights are constructed after
         the Environment and are registered separately from models and mesh
         instances.
 
@@ -401,7 +400,7 @@ class Environment:
         Returns:
             For a model, the registered copy with an absolute Path, a float or
             three-float tuple scale, and resolved category metadata. The input
-            specification is unchanged. For a light, the supplied object.
+            specification is unchanged. For a light, the supplied light.
 
         Raises:
             TypeError: The asset is neither a ModelAsset nor a Light.
@@ -422,12 +421,12 @@ class Environment:
         if self._prepared or self._closed:
             raise RuntimeError("Register models before preparing the environment.")
         if (
-            not asset.object_name
-            or asset.object_name in self._assets
-            or asset.object_name in self._object_groups
+            not asset.model_name
+            or asset.model_name in self._assets
+            or asset.model_name in self._model_groups
         ):
             raise ValueError(
-                f"Model name {asset.object_name!r} is empty or already registered."
+                f"Model name {asset.model_name!r} is empty or already registered."
             )
         path = Path(asset.model_path).resolve()
         if not path.is_file():
@@ -443,7 +442,7 @@ class Environment:
             )
         scale = float(values) if values.ndim == 0 else tuple(map(float, values))
         category_name, category_id = self._resolve_category_id_and_name(
-            asset.object_name, asset.category_name, asset.category_id
+            asset.model_name, asset.category_name, asset.category_id
         )
         asset = replace(
             asset,
@@ -452,7 +451,7 @@ class Environment:
             category_id=category_id,
             scale=scale,
         )
-        self._assets[asset.object_name] = asset
+        self._assets[asset.model_name] = asset
         return asset
 
     def get_assets(self):
@@ -483,7 +482,7 @@ class Environment:
                 )
         if self._prepared:
             for name, count in required_instances.items():
-                if count > len(self._object_groups.get(name, ())):
+                if count > len(self._model_groups.get(name, ())):
                     raise ValueError(
                         f"{name!r} now needs {count} instances; "
                         "build a new Environment."
@@ -497,14 +496,14 @@ class Environment:
                 kwargs["model_path"] = str(kwargs["model_path"])
                 if isinstance(kwargs["scale"], tuple):
                     kwargs["scale"] = np.asarray(kwargs["scale"])
-                obj = Object(**kwargs)
-                self._object_groups[name] = [obj]
-                self._objects[obj.get_name()] = obj
-                self.deactivate(obj)
+                model = Model(**kwargs)
+                self._model_groups[name] = [model]
+                self._models[model.get_name()] = model
+                self.deactivate(model)
                 for _ in range(count - 1):
-                    duplicate = obj.create_linked_duplicate()
-                    self._object_groups[name].append(duplicate)
-                    self._objects[duplicate.get_name()] = duplicate
+                    duplicate = model.create_linked_duplicate()
+                    self._model_groups[name].append(duplicate)
+                    self._models[duplicate.get_name()] = duplicate
                     self.deactivate(duplicate)
         except Exception:
             # A failed import can leave partial Blender data; don't reuse it.
@@ -512,32 +511,32 @@ class Environment:
             raise
         self._prepared = True
 
-    def activate(self, obj: Object) -> None:
-        """Activate a pooled object for the current scene's render and physics."""
-        name = obj.get_name()
-        if self._objects.get(name) is not obj:
-            raise ValueError("Object does not belong to this environment.")
-        if name not in self._visible_object_names:
-            obj.hide(False)
-            obj.enable_rigid_body()
-            self._visible_object_names.append(name)
+    def activate(self, model: Model) -> None:
+        """Activate a pooled model for the current scene's render and physics."""
+        name = model.get_name()
+        if self._models.get(name) is not model:
+            raise ValueError("Model does not belong to this environment.")
+        if name not in self._visible_model_names:
+            model.hide(False)
+            model.enable_rigid_body()
+            self._visible_model_names.append(name)
 
-    def deactivate(self, obj: Object) -> None:
-        """Hide an object and remove its rigid body and annotation eligibility."""
-        obj.hide(True)
-        obj.disable_rigid_body()
-        name = obj.get_name()
-        if name in self._visible_object_names:
-            self._visible_object_names.remove(name)
+    def deactivate(self, model: Model) -> None:
+        """Hide a model and remove its rigid body and annotation eligibility."""
+        model.hide(True)
+        model.disable_rigid_body()
+        name = model.get_name()
+        if name in self._visible_model_names:
+            self._visible_model_names.remove(name)
 
     def begin_sample(self) -> None:
-        """Deactivate pooled objects before randomizing the next scene.
+        """Deactivate pooled models before randomizing the next scene.
 
         Registered assets and instance pools remain available. Poses and
         materials are not restored to defaults.
         """
-        for name in tuple(self._visible_object_names):
-            self.deactivate(self._objects[name])
+        for name in tuple(self._visible_model_names):
+            self.deactivate(self._models[name])
 
 
 class MaterialManager:

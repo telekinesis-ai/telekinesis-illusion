@@ -21,14 +21,14 @@ from telekinesis.illusion.randomizer.randomizer_node import (
     LightPoseRandomizer,
     LightRandomizer,
     MaterialRandomizer,
-    ObjectInstanceRandomizer,
-    ObjectPoseRandomizer,
+    ModelInstanceRandomizer,
+    ModelPoseRandomizer,
 )
 from telekinesis.illusion.sampler.camera_pose_sampler import shell_sampler
 from telekinesis.illusion.types.distribution import uniform
 from telekinesis.illusion.types.light import Light
 from telekinesis.illusion.types.model_asset import ModelAsset
-from telekinesis.illusion.types.object import Object
+from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.utils.assets import resolve_asset_dir
 from telekinesis.illusion.writer.writer import CocoWriter
 
@@ -73,7 +73,7 @@ def main():
     environment.add(
         ModelAsset(
             model_1_path,
-            object_name="part_1",
+            model_name="part_1",
             uv_mapping="cube",
         )
     )
@@ -84,7 +84,7 @@ def main():
     environment.add(
         ModelAsset(
             model_2_path,
-            object_name="part_2",
+            model_name="part_2",
             uv_mapping="cube",
         )
     )
@@ -92,40 +92,44 @@ def main():
     # Create the randomizer
     randomizer = Randomizer()
 
-    # Add obect instance randomizer
-    object_instance_randomizer = ObjectInstanceRandomizer(
+    # Add model instance randomizer
+    model_instance_randomizer = ModelInstanceRandomizer(
         counts={"part_1": (1, 3), "part_2": (1, 1)},
-        min_num_total_objects=2,
-        max_num_total_objects=4,
+        min_num_total_models=2,
+        max_num_total_models=4,
     )
 
     randomizer.add_randomizer(
-        randomizer_node=object_instance_randomizer,
-        node_name="instance_randomizer_objects",
+        randomizer_node=model_instance_randomizer,
+        node_name="instance_randomizer_models",
     )
 
-    # Add object pose randomizer
-    def sample_pose(obj: Object):
+    # Add model pose randomizer
+    def sample_pose(model: Model):
         """
-        Randomly samples and applies a 6-DoF pose to an object.
+        Randomly sample and apply a 6-DoF pose to a model.
 
-        The object's location is sampled uniformly within an axis-aligned box
+        The model's location is sampled uniformly within an axis-aligned box
         centered around the origin.
         """
-        obj.set_location(np.random.uniform((-0.1, -0.1, 0.1), (0.1, 0.1, 0.1)))
-        obj.set_rotation(np.random.uniform((-180, -180, -180), (180, 180, 180)))
+        model.set_location(
+            np.random.uniform((-0.1, -0.1, 0.1), (0.1, 0.1, 0.1))
+        )
+        model.set_rotation(
+            np.random.uniform((-180, -180, -180), (180, 180, 180))
+        )
 
-    object_pose_randomizer = ObjectPoseRandomizer(
-        pose_sampling_function=sample_pose, target_objects=["part_1", "part_2"]
+    model_pose_randomizer = ModelPoseRandomizer(
+        pose_sampling_function=sample_pose, target_models=["part_1", "part_2"]
     )
 
     randomizer.add_randomizer(
-        randomizer_node=object_pose_randomizer, node_name="pose_randomizer"
+        randomizer_node=model_pose_randomizer, node_name="pose_randomizer"
     )
 
     # Add matrial randomizer
     material_randomizer = MaterialRandomizer(
-        target_objects=["part_1", "part_2"], types=["metal"]
+        target_models=["part_1", "part_2"], types=["metal"]
     )
 
     randomizer.add_randomizer(

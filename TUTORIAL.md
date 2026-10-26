@@ -40,7 +40,7 @@ dataset_environment = environment.Environment(
 dataset_environment.add(
     model_asset.ModelAsset(
         "assets/models/mechanical_parts/gearwheel_1.glb",
-        object_name="gear",
+        model_name="gear",
         category_name="gear",
         category_id=1,
     )
@@ -51,7 +51,7 @@ dataset_environment.add(
 
 randomization = randomizer.Randomizer()
 randomization.add_randomizer(
-    randomizer_node.ObjectInstanceRandomizer({"gear": (1, 1)}),
+    randomizer_node.ModelInstanceRandomizer({"gear": (1, 1)}),
     "counts",
 )
 randomization.add_randomizer(
@@ -77,13 +77,13 @@ generator.generate(num_images=6)
 
 The script builds the run in this order:
 
-1. **Register a model and light.** `object_name="gear"` identifies the model to
+1. **Register a model and light.** `model_name="gear"` identifies the model to
    the randomizer. The category name and ID identify it in the annotations.
    Create the environment before constructing its lights.
 2. **Choose the active instances.** The `(1, 1)` bounds activate exactly one
    gear per sample. Counts belong to the randomizer rather than model metadata.
 3. **Choose camera views.** The camera node runs after the count node, sampling
-   two positions 0.5 to 0.7 meters from the active object's point of interest.
+   two positions 0.5 to 0.7 meters from the active model's point of interest.
    The gear stays fixed while the camera changes position.
 4. **Render and write.** The engine renders RGB and segmentation data; the
    writer saves images and COCO annotations. Physics is disabled by default.
@@ -124,7 +124,7 @@ including the known Windows `bpy` shutdown issue.
 
 ## Continue with the examples
 
-- [Flying things](examples/quickstart_flying_things.py) adds randomized object
+- [Flying things](examples/quickstart_flying_things.py) adds randomized model
   counts, poses, materials, backgrounds, and lights.
 - [Parts in a bin](examples/quickstart_parts_in_bin.py) adds physics and shows
   explicit preparation before setting a fixed container transform.

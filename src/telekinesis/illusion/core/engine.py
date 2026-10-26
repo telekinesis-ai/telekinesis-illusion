@@ -27,9 +27,9 @@ class PhysicsConfig:
     active: bool = False
     min_simulation_time_range: tuple[float, float] = (0.5, 1.0)
     max_simulation_time_range: tuple[float, float] = (2.0, 5.0)
-    check_object_interval: float = 2.0
-    object_stopped_location_threshold: float = 0.01
-    object_stopped_rotation_threshold: float = 0.1
+    check_model_interval: float = 2.0
+    model_stopped_location_threshold: float = 0.01
+    model_stopped_rotation_threshold: float = 0.1
     substeps_per_frame: int = 10
     solver_iters: int = 10
     verbose: bool = False
@@ -59,9 +59,9 @@ class BlenderEngine:
         unchanged because it manages the renderer lifecycle itself.
         """
         if self._physics_catch_plane is not None:
-            plane_object = self._physics_catch_plane.blender_obj
-            plane_mesh = plane_object.data
-            bpy.data.objects.remove(plane_object, do_unlink=True)
+            plane_model = self._physics_catch_plane.blender_obj
+            plane_mesh = plane_model.data
+            bpy.data.objects.remove(plane_model, do_unlink=True)
             bpy.data.meshes.remove(plane_mesh)
             self._physics_catch_plane = None
 
@@ -108,16 +108,16 @@ class BlenderEngine:
             physics.simulate_physics_and_fix_final_poses(
                 random.uniform(*config.min_simulation_time_range),
                 random.uniform(*config.max_simulation_time_range),
-                config.check_object_interval,
-                config.object_stopped_location_threshold,
-                config.object_stopped_rotation_threshold,
+                config.check_model_interval,
+                config.model_stopped_location_threshold,
+                config.model_stopped_rotation_threshold,
                 config.substeps_per_frame,
                 config.solver_iters,
                 config.verbose,
                 config.use_volume_com,
             )
             if plane_z is not None:
-                self._cull_objects_on_catch_plane(scene, plane_z, catch)
+                self._cull_models_on_catch_plane(scene, plane_z, catch)
         finally:
             if self._physics_catch_plane is not None:
                 if self._physics_catch_plane.has_rigidbody_enabled():
@@ -216,7 +216,7 @@ class BlenderEngine:
     ) -> tuple[mesh_object.MeshObject, float]:
         """Create or reposition the reusable plane beneath the visible bin."""
         container_prefixes = tuple(config.get("container_names", ()))
-        visible_names = scene.get_visible_object_names()
+        visible_names = scene.get_visible_model_names()
         container_name = next(
             (
                 name
@@ -231,7 +231,7 @@ class BlenderEngine:
                 "container."
             )
 
-        container = scene.get_objects()[container_name]
+        container = scene.get_models()[container_name]
         location, scale = self._catch_plane_geometry(
             container.get_bound_box(),
             distance_fraction=float(config.get("distance_fraction", 0.25)),
@@ -255,33 +255,33 @@ class BlenderEngine:
         )
         return plane, float(location[2])
 
-    def _cull_objects_on_catch_plane(
+    def _cull_models_on_catch_plane(
         self, scene, plane_z: float, config: dict
     ) -> list[str]:
-        """Hide tracked objects whose bounding boxes touch the catch plane."""
+        """Hide tracked models whose bounding boxes touch the catch plane."""
         tolerance = float(config.get("contact_tolerance", 0.05))
         if tolerance < 0:
             raise ValueError("contact_tolerance must be non-negative.")
 
-        tracked_prefixes = tuple(config.get("tracked_object_names", ()))
-        visible_names = list(scene.get_visible_object_names())
-        objects = scene.get_objects()
+        tracked_prefixes = tuple(config.get("tracked_model_names", ()))
+        visible_names = list(scene.get_visible_model_names())
+        models = scene.get_models()
         escaped = []
         for name in visible_names:
             if not name.startswith(tracked_prefixes):
                 continue
-            bounds = objects[name].get_bound_box()
+            bounds = models[name].get_bound_box()
             if float(np.min(bounds[:, 2])) <= plane_z + tolerance:
-                scene.deactivate(objects[name])
+                scene.deactivate(models[name])
                 escaped.append(name)
 
         if escaped:
             escaped_set = set(escaped)
-            scene.set_visible_object_names(
+            scene.set_visible_model_names(
                 [name for name in visible_names if name not in escaped_set]
             )
             logger.info(
-                f"Culled {len(escaped)} object(s) that escaped the bin: "
+                f"Culled {len(escaped)} model(s) that escaped the bin: "
                 f"{escaped}"
             )
         return escaped
