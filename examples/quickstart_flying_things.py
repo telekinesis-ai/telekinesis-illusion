@@ -27,7 +27,7 @@ from telekinesis.illusion.randomizer.randomizer_node import (
 from telekinesis.illusion.sampler.camera_pose_sampler import shell_sampler
 from telekinesis.illusion.types.distribution import uniform
 from telekinesis.illusion.types.background_asset import BackgroundAsset
-from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.light import LightConfig
 from telekinesis.illusion.types.material_asset import MaterialAsset
 from telekinesis.illusion.types.model_asset import ModelAsset
 from telekinesis.illusion.types.model import Model
@@ -57,16 +57,17 @@ def main():
         np.random.seed(args.seed)
 
     # Create the environment
-    environment = Environment(
-        camera_config=CameraConfig(
-            image_width=args.resolution, image_height=args.resolution
-        )
+    environment = Environment()
+    environment.add(
+        CameraConfig(image_width=args.resolution, image_height=args.resolution)
     )
 
     assets_dir = resolve_asset_dir()
 
-    environment.add(Light("key", "POINT", power=40.0, radius=0.05))
-    environment.add(Light("sun", "SUN", power=0.2))
+    environment.add(
+        LightConfig("key", "POINT", properties={"power": 40.0, "radius": 0.05})
+    )
+    environment.add(LightConfig("sun", "SUN", properties={"power": 0.2}))
 
     # Add models to the environment
     model_1_path = str(

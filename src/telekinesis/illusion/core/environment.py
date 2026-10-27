@@ -20,12 +20,14 @@ from telekinesis.illusion.blender.labels import LabelIdMapping
 from telekinesis.illusion.blender.initialization import clean_temp_dir
 from telekinesis.illusion.blender.setup import is_using_external_bpy_module
 
+from telekinesis.illusion.core.camera_manager import CameraManager
+from telekinesis.illusion.core.light_manager import LightManager
 from telekinesis.illusion.core.material_manager import MaterialManager
 from telekinesis.illusion.core.model_manager import ModelManager
 from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.types.background import Background
 from telekinesis.illusion.types.camera import Camera, CameraConfig
-from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.light import Light, LightConfig
 from telekinesis.illusion.utils.assets import (
     resolve_asset_dir,
 )
@@ -36,10 +38,12 @@ class Environment:
     """
     Represent the active Blender scene and its reusable generation resources.
 
-    The environment coordinates model, material, and background managers and
-    owns a camera, lights, and the live background. ModelManager owns model
-    registration, categories, instance pools, and activity. Existing model
-    accessors and lifecycle methods remain available on Environment.
+    The environment coordinates model, material, background, light, and camera
+    managers and owns the live background. ModelManager owns model
+    registration, categories, instance pools, and activity. LightManager
+    creates registered lights from their configs, and CameraManager creates
+    the camera from its config. Existing model, light, and camera accessors and
+    lifecycle methods remain available on Environment.
 
     A scene is one realization of these resources produced by the randomizer
     tree: active instances, poses, appearance, and camera views. Successive
@@ -51,12 +55,12 @@ class Environment:
 
     Example:
         environment = Environment()
-        environment.add(Light("key", power=40.0))
+        environment.add(CameraConfig(image_width=128, image_height=128))
+        environment.add(LightConfig("key", properties={"power": 40.0}))
     """
 
     def __init__(
         self,
-        camera_config: CameraConfig = None,
         asset_dir: str | Path | None = None,
     ) -> None:
         """
@@ -77,8 +81,8 @@ class Environment:
         self._asset_dir = resolve_asset_dir(asset_dir)
 
         self._closed = False
-        # TODO: Add LightManager
-        self._lights: dict[str, Light] = {}
+
+        self.light_manager = LightManager()
 
         self.model_manager = ModelManager()
 
@@ -87,8 +91,7 @@ class Environment:
 
         self.material_manager = MaterialManager(asset_dir=self._asset_dir)
 
-        # TODO: Add CameraManager
-        self._camera = Camera(camera_config)
+        self.camera_manager = CameraManager()
 
     def get_asset_dir(self) -> Path:
         """
@@ -114,17 +117,15 @@ class Environment:
         """
         Get the camera used for rendering.
         """
-        return self._camera
+        return self.camera_manager.get_camera()
 
     def get_lights(self) -> dict[str, Light]:
         """Return lights by their exact registered names, separate from meshes."""
-        return self._lights
+        return self.light_manager.get_lights()
 
     def get_light(self, light_name: str) -> Light:
         """Return a registered light; raise ValueError for an unknown name."""
-        if light_name not in self._lights:
-            raise ValueError(f"No light with the name {light_name!r}.")
-        return self._lights[light_name]
+        return self.light_manager.get_light(light_name)
 
     def get_categories(self) -> LabelIdMapping:
         """
@@ -189,10 +190,24 @@ class Environment:
         asset: ModelAsset
         | MaterialAsset
         | BackgroundAsset
-        | Light
-        | Iterable[ModelAsset | MaterialAsset | BackgroundAsset | Light],
-    ) -> ModelAsset | MaterialAsset | BackgroundAsset | Light | list:
-        """Register a descriptor, an existing light, or an iterable of them.
+        | LightConfig
+        | CameraConfig
+        | Iterable[
+            ModelAsset
+            | MaterialAsset
+            | BackgroundAsset
+            | LightConfig
+            | CameraConfig
+        ],
+    ) -> (
+        ModelAsset
+        | MaterialAsset
+        | BackgroundAsset
+        | LightConfig
+        | CameraConfig
+        | list
+    ):
+        """Register a descriptor or an iterable of descriptors.
 
         Models, materials, and backgrounds are all registered here and are
         selected afterwards by the randomizers, by group or name. Nothing is
@@ -201,30 +216,33 @@ class Environment:
 
         Models are validated and assigned an annotation category without
         importing meshes. Register them before preparation; instance counts
-        belong to ModelInstanceRandomizer.counts. Lights are constructed after
-        the Environment and are registered separately from models and mesh
-        instances.
+        belong to ModelInstanceRandomizer.counts. A light config creates its
+        light immediately; lights are registered separately from models and
+        mesh instances. A camera config creates the scene camera and applies
+        its image size, lens, and pose; add it before calling get_camera().
 
         Args:
-            asset: A model, material, or background descriptor, a live Light,
+            asset: A model, material, background, light, or camera descriptor,
                 or an iterable of these, such as the list returned by
-                discover(). Items are registered in order; an error leaves
-                the earlier items registered.
+                discover(). Items are registered in order; an error leaves the
+                earlier items registered.
 
         Returns:
             For a model, the registered copy with an absolute Path, a float or
             three-float tuple scale, and resolved category metadata. The input
             specification is unchanged. Materials and backgrounds return a
-            normalized descriptor without loading or activating it. For a
-            light, return the supplied light. For an iterable, return the list
-            of these results.
+            normalized descriptor without loading or activating it. A light
+            returns a copy of its config; get_light() returns the created
+            light. A camera returns a copy of its config. For an iterable,
+            return the list of these results.
 
         Raises:
-            TypeError: The asset is not a supported descriptor, Light, or
-                iterable of them.
+            TypeError: The asset is not a supported descriptor or iterable of
+                them.
             RuntimeError: A model is added after preparation or cleanup.
             ValueError: A model name is empty or already registered, a light
-                name is already registered, scale is not a positive finite
+                name is already registered, a camera was already added, scale
+                is not a positive finite
                 scalar or three-vector, category metadata conflicts, or a
                 material/background descriptor is invalid or duplicates a name.
             FileNotFoundError: An asset path is missing.
@@ -237,23 +255,14 @@ class Environment:
             return self.material_manager.add(asset)
         if isinstance(asset, BackgroundAsset):
             return self.background_manager.add(asset)
-        if isinstance(asset, Light):
-            return self._add_light(
-                asset
-            )  # TODO: Needs to be replaced with LightManager
+        if isinstance(asset, LightConfig):
+            return self.light_manager.add(asset)
+        if isinstance(asset, CameraConfig):
+            return self.camera_manager.add(asset)
         raise TypeError(
-            "asset must be a ModelAsset, MaterialAsset, BackgroundAsset, or Light."
+            "asset must be a ModelAsset, MaterialAsset, BackgroundAsset, "
+            "LightConfig, or CameraConfig."
         )
-
-    def _add_light(
-        self, asset: Light
-    ) -> Light:  # TODO: Needs to be deprecated by a LightManager
-        """Register an existing light once under its exact Blender name."""
-        light_name = asset.get_name()
-        if light_name in self._lights:
-            raise ValueError(f"Light {light_name!r} already exists.")
-        self._lights[light_name] = asset
-        return asset
 
     def get_assets(self) -> Mapping[str, ModelAsset]:
         """Return a read-only view of definitions keyed by exact model name."""

@@ -1,5 +1,6 @@
 """Named scene lights with validated, type-specific Blender properties."""
 
+import dataclasses
 import math
 from numbers import Real
 
@@ -39,6 +40,41 @@ def _vector(value, name, minimum=-_FLOAT_MAX, maximum=_FLOAT_MAX):
             f"{name} needs three finite values in [{minimum}, {maximum}]."
         )
     return result
+
+
+@dataclasses.dataclass(frozen=True)
+class LightConfig:
+    """Description of a scene light, using meters and XYZ Euler radians.
+
+    Constructing a config does not create anything in Blender. Register it with
+    ``Environment.add()`` to create the light. All fields are validated on
+    construction; see :class:`Light` for the supported properties and units.
+
+    Attributes:
+        light_name: Unique, non-empty name of the light.
+        light_type: One of POINT, SUN, SPOT or AREA.
+        location: XYZ position in meters.
+        rotation: XYZ Euler angles in radians.
+        properties: Type-specific light properties by their public names, such
+            as ``{"power": 40.0, "radius": 0.05}``. Omitted properties retain
+            the light defaults.
+
+    Example:
+        config = LightConfig("key", "POINT", properties={"power": 40.0})
+    """
+
+    light_name: str
+    light_type: str = "POINT"
+    location: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    properties: dict = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.light_name, str) or not self.light_name.strip():
+            raise ValueError("light_name must be a non-empty string.")
+        Light._validate_properties(self.light_type, self.properties)
+        _vector(self.location, "location")
+        _vector(self.rotation, "rotation")
 
 
 class Light:

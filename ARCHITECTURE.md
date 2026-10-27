@@ -116,8 +116,11 @@ reference and import configuration; constructing it does not import geometry.
 which validates its path, scale, name, and annotation category, then returns a
 normalized copy without changing the input specification. Existing environment
 model methods delegate to the manager, including the read-only definition view
-returned by `get_assets()`. The environment also accepts constructed `Light`
-instances, registered separately from model definitions and mesh instances.
+returned by `get_assets()`. The environment also accepts `LightConfig`
+descriptors. `environment.light_manager` creates each light from its config,
+registered separately from model definitions and mesh instances, and
+`environment.camera_manager` creates the camera from a `CameraConfig` added the
+same way.
 
 `MaterialAsset` and `BackgroundAsset` are immutable, Blender-independent
 descriptors of one PBR texture directory or HDRI file. All three descriptors

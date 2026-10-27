@@ -39,8 +39,31 @@ This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) f
   raises `ValueError` for unknown groups or names. `ModelManager` now indexes
   `ModelAsset.groups` through it.
 
+- Added `LightManager` and `CameraManager` in
+  `telekinesis.illusion.core`, exposed as `environment.light_manager` and
+  `environment.camera_manager`. They own the lifecycle of the lights and the
+  camera. `Environment.get_light()`, `get_lights()` and `get_camera()` delegate
+  to them.
+- Added `LightConfig` in `telekinesis.illusion.types.light`, a validated
+  description of a light that creates nothing in Blender until it is registered.
+
 ### Changed
 
+- **Breaking:** `Environment.add()` no longer accepts a constructed `Light`; it
+  accepts a `LightConfig`, and the light manager creates the `Light`. Replace
+  `environment.add(Light("key", "POINT", power=40.0))` with
+  `environment.add(LightConfig("key", "POINT", properties={"power": 40.0}))`.
+  Light properties move into the `properties` mapping; `location` and `rotation`
+  stay keyword fields. `add()` now returns a copy of the config; use
+  `get_light()` to obtain the created `Light`.
+- **Breaking:** `Environment` no longer takes `camera_config`. Add the camera
+  like any other resource: replace `Environment(camera_config=cfg)` with
+  `environment = Environment()` followed by `environment.add(cfg)`. The
+  environment has no camera until a `CameraConfig` is added; `get_camera()`
+  raises `RuntimeError` before that, and adding a second camera raises
+  `ValueError`. An environment that previously relied on the default camera
+  must add `CameraConfig()`. `asset_dir` is now the first positional
+  parameter.
 - Moved `MaterialManager` to `telekinesis.illusion.core.material_manager`,
   alongside `BackgroundManager` in its own module. The existing
   `telekinesis.illusion.core.environment.MaterialManager` import remains

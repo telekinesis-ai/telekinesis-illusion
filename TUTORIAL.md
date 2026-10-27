@@ -34,9 +34,8 @@ from telekinesis.illusion.types import camera, light, model_asset
 from telekinesis.illusion.writer import writer
 
 
-dataset_environment = environment.Environment(
-    camera_config=camera.CameraConfig(image_width=128, image_height=128),
-)
+dataset_environment = environment.Environment()
+dataset_environment.add(camera.CameraConfig(image_width=128, image_height=128))
 dataset_environment.add(
     model_asset.ModelAsset.from_path(
         "assets/models/mechanical_parts/gearwheel_1.glb",
@@ -46,7 +45,12 @@ dataset_environment.add(
     )
 )
 dataset_environment.add(
-    light.Light("key", "POINT", power=40.0, location=(0.0, 0.0, 1.0))
+    light.LightConfig(
+        "key",
+        "POINT",
+        location=(0.0, 0.0, 1.0),
+        properties={"power": 40.0},
+    )
 )
 
 randomization = randomizer.Randomizer()

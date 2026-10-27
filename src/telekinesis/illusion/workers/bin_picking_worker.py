@@ -30,7 +30,7 @@ from telekinesis.illusion.core.environment import Environment
 from telekinesis.illusion.core.engine import BlenderEngine, RenderConfig
 from telekinesis.illusion.types.camera import CameraConfig
 from telekinesis.illusion.types.model import Model
-from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.types.light import Light, LightConfig
 from telekinesis.illusion.types import material_asset
 from telekinesis.illusion.types.background_asset import BackgroundAsset
 from telekinesis.illusion.types.material_asset import MaterialAsset
@@ -183,13 +183,9 @@ class BinPickingWorker:
         # TODO: Reuse blender.camera.settings.set_intrinsics_from_K_matrix
         # for measured camera calibration and add_depth_of_field for the
         # target lens's aperture and focus distance.
-        self._camera_config = CameraConfig(**self._config.get("camera", {}))
-
         # Create the environment
-        self._environment = Environment(
-            camera_config=self._camera_config,
-            asset_dir=self._asset_dir,
-        )
+        self._environment = Environment(asset_dir=self._asset_dir)
+        self._environment.add(CameraConfig(**self._config.get("camera", {})))
 
         materials_directory = self._asset_dir / "materials"
         if materials_directory.is_dir():
@@ -1283,7 +1279,7 @@ class BinPickingWorker:
 
         self._loaded_light_types = {}
         for name, (light_type, properties, pose) in self._light_nodes.items():
-            self._environment.add(Light(name, light_type))
+            self._environment.add(LightConfig(name, light_type))
             self._loaded_light_types[name] = light_type
             self._randomizer.add_randomizer(
                 properties,
