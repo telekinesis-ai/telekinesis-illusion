@@ -78,6 +78,8 @@ This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) f
 
 ### Changed
 
+- The package installs on any Python 3.11 release. The minimum was previously
+  3.11.14.
 - **Breaking:** All configs live in `telekinesis.illusion.config` and derive
   from `BaseConfig`. Import the module and use `config.<Name>`:
 
