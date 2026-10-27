@@ -4,7 +4,7 @@ Notable changes to `telekinesis-illusion` are recorded here, newest first.
 
 This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
 
-## Unreleased
+## 0.3.0 - 27.10.2026
 
 ### Added
 
