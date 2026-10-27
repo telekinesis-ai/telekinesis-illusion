@@ -25,7 +25,7 @@ _REPO_ASSETS = Path(__file__).resolve().parents[4] / "assets"
 # holds a top-level 'assets/' folder. Its cache directory is named after the
 # archive, so publishing a new archive version never reuses an older cache.
 _PUBLIC_ASSETS_URL = (
-    "https://assets.telekinesis.ai/telekinesis-illusion/assets-<VERSION>.zip"
+    "https://assets.telekinesis.ai/telekinesis-illusion/assets-v1.zip"
 )
 _CACHED_ASSETS = (
     Path("~/.cache/telekinesis/telekinesis-illusion").expanduser()

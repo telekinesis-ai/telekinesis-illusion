@@ -23,7 +23,7 @@ configuration. The current requirements are:
 
 | Component | Requirement |
 | --- | --- |
-| Python | `>=3.11.14,<3.12`, expressed as `~=3.11.14` in package metadata. |
+| Python | Any 3.11 release (`>=3.11,<3.12`), expressed as `~=3.11.0` in package metadata. |
 | Blender runtime | `bpy==4.2.17`, installed by pip with the package. |
 | Platform | An OS and architecture with a compatible [bpy wheel](https://pypi.org/project/bpy/4.2.17/#files). |
 | Rendering | The default is CUDA. CPU rendering can be selected explicitly. |
@@ -43,7 +43,7 @@ cd telekinesis-illusion
 Use a dedicated environment. Conda is one option, consistent with the README:
 
 ```bash
-conda create -n telekinesis-illusion python=3.11.14
+conda create -n telekinesis-illusion python=3.11
 conda activate telekinesis-illusion
 ```
 
@@ -62,7 +62,7 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 ```
 
-Check that the selected interpreter is at least Python 3.11.14 and below 3.12.
+Check that the selected interpreter is Python 3.11.
 Run the remaining commands from the repository root with this environment
 active:
 
