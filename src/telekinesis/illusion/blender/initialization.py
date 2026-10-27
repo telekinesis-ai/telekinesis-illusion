@@ -37,19 +37,21 @@ def handle_sigterm(_signum, _frame):
     clean_temp_dir()
 
 
-def init(clean_up_scene: bool = True, temp_dir: Optional[str] = None):
+def init(clean_up_environment: bool = True, temp_dir: Optional[str] = None):
     """Initialize the Blender scene and rendering defaults for Illusion.
 
-    By default, reset scene data and create a world and camera before applying
-    rendering and camera defaults. A new scene replaces the process-wide scene;
-    multiple live scenes are unsupported. Use clean_up() to reset scene data
+    By default, reset Blender scene data and create a world and camera before
+    applying rendering and camera defaults. An Environment uses this shared
+    Blender scene for successive randomized realizations; multiple active
+    environments are unsupported. Use clean_up() to reset Blender scene data
     without reapplying these defaults.
 
     A nonempty ILLUSION_RANDOM_SEED seeds Python and NumPy random generators.
     Data blocks with a truthy illusion_preserve custom property survive cleanup.
 
     Args:
-        clean_up_scene: Whether to reset scene data before initialization.
+        clean_up_environment: Whether to reset Blender scene data before
+            initialization.
         temp_dir: Parent directory for a new owned temporary directory. None
             uses the system temporary directory. An existing temporary
             directory is reused until it is removed.
@@ -64,9 +66,9 @@ def init(clean_up_scene: bool = True, temp_dir: Optional[str] = None):
             SetupUtility.determine_temp_dir(temp_dir)
         )
         atexit.register(clean_temp_dir)
-    # A new Scene replaces the process-wide bpy scene. Multiple live scenes
-    # are deliberately unsupported; wrappers retain Blender's normal lifetime.
-    if clean_up_scene:
+    # A new Environment resets the process-wide Blender scene. Multiple active
+    # environments are unsupported; wrappers retain Blender's normal lifetime.
+    if clean_up_environment:
         GlobalStorage._storage_dict.clear()
         clean_up(clean_up_camera=True)
 
@@ -98,7 +100,7 @@ def init(clean_up_scene: bool = True, temp_dir: Optional[str] = None):
 
 
 def clean_up(clean_up_camera: bool = False):
-    """Resets the scene to its clean state.
+    """Reset the Blender scene used by the environment to its clean state.
 
     This method removes all objects, camera poses and cleans up the world background.
     All (renderer) settings and the UI are kept as they are.
@@ -139,7 +141,7 @@ def clean_up(clean_up_camera: bool = False):
 
 class _Initializer:
     """
-    Configure Blender defaults and remove scene data.
+    Configure Blender defaults and remove Blender scene data.
     """
 
     @staticmethod

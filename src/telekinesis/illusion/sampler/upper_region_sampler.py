@@ -1,5 +1,5 @@
 """
-Defines helper function for sampling pose over the upper region of an object.
+Define helpers for sampling poses over the upper region of a model.
 """
 
 from typing import List, Tuple
@@ -16,12 +16,12 @@ isolate_user_extensions()
 
 
 
-from telekinesis.illusion.core.context import Context
+from telekinesis.illusion.core.environment import Environment
 
 
 def upper_region_sampler(
-    context: Context,
-    object_names_to_sample_on: str | List[str],
+    environment: Environment,
+    model_names_to_sample_on: str | List[str],
     face_sample_range: np.ndarray | List[float] | None = None,
     min_height: float = 0.0,
     max_height: float = 1.0,
@@ -31,7 +31,7 @@ def upper_region_sampler(
 ) -> np.ndarray:
     """
     Uniformly samples 3-dimensional value over the bounding box of the specified
-    objects (can be just a plane) in the defined upper direction.
+    models (which may be planes) in the defined upper direction.
     If "use_upper_dir" is False, samples along the face normal closest to
     "upper_dir". The sampling volume results in a parallelepiped.
     "min_height" and "max_height" define the sampling distance from
@@ -39,17 +39,20 @@ def upper_region_sampler(
 
     .. code-block:: python
 
-    UpperRegionSampler.sample(
-        objects_to_sample_on=objs,
+    upper_region_sampler(
+        environment=environment,
+        model_names_to_sample_on="bin",
         min_height=1.5,
         max_height=1.8
     )
 
     Args:
-        object_names_to_sample_on: str or List[str]
-            Object names, on which to sample on.
+        environment: Environment
+            The environment containing the target models.
+        model_names_to_sample_on: str or List[str]
+            Model names on which to sample.
         face_sample_range: np.ndarray or List[float] or None
-            Restricts the area on the face where objects are sampled.
+            Restricts the area on the face where models are sampled.
             Specifically describes relative lengths of both face vectors between
             which points are sampled. Default: [0.0, 1.0].
 
@@ -67,14 +70,14 @@ def upper_region_sampler(
         max_height: float
             Maximum distance to the bounding box that a point is sampled on.
         use_ray_trace_check: bool
-            Toggles using a ray casting towards the sampled object (if the
-            object is directly below the sampled position is the position
+            Toggles ray casting towards the sampled model (if the model is
+            directly below the sampled position, the position
             accepted).
         upper_dir: np.ndarray or List[float] or None
             The 'up' direction of the sampling box. Default: [0.0, 0.0, 1.0].
         use_upper_dir: bool
-            Toggles using a ray casting towards the sampled object (if the
-            object is directly below the sampled position is the position
+            Toggles ray casting towards the sampled model (if the model is
+            directly below the sampled position, the position
             accepted).
 
     Return:
@@ -90,16 +93,15 @@ def upper_region_sampler(
     upper_dir = np.array(upper_dir)
     upper_dir /= np.linalg.norm(upper_dir)
 
-    if not isinstance(object_names_to_sample_on, list):
-        object_names_to_sample_on = [object_names_to_sample_on]
+    if not isinstance(model_names_to_sample_on, list):
+        model_names_to_sample_on = [model_names_to_sample_on]
 
-    # Retrieve the MeshObjects from provided illusion objects
-    # Get object from context
-    objects_to_sample_on = []
-    for object_name in object_names_to_sample_on:
-        illusion_object = context.get_objects_by_name(object_name)
-        mesh_object = illusion_object.get_object()
-        objects_to_sample_on.append(mesh_object)
+    # Retrieve MeshObjects from the provided models.
+    models_to_sample_on = []
+    for model_name in model_names_to_sample_on:
+        model = environment.get_models_by_name(model_name)
+        mesh_object = model.get_mesh_object()
+        models_to_sample_on.append(mesh_object)
 
     if max_height < min_height:
         raise RuntimeError(
@@ -107,41 +109,41 @@ def upper_region_sampler(
             f"maximum height ({max_height})!"
         )
 
-    # Determine for each object in objects the region, where to sample on
+    # Determine for each model in models the region, where to sample on
     regions = [
-        select_upper_region(obj, upper_dir) for obj in objects_to_sample_on
+        select_upper_region(model, upper_dir) for model in models_to_sample_on
     ]
 
-    if regions and len(regions) == len(objects_to_sample_on):
+    if regions and len(regions) == len(models_to_sample_on):
         selected_region_id = random.randint(0, len(regions) - 1)
         selected_region = regions[selected_region_id]
-        obj = objects_to_sample_on[selected_region_id]
+        model = models_to_sample_on[selected_region_id]
 
         if use_ray_trace_check:
-            inv_world_matrix = np.linalg.inv(obj.get_local2world_mat())
+            inv_world_matrix = np.linalg.inv(model.get_local2world_mat())
         while True:
             ret = selected_region.sample_point(face_sample_range)
             dir_val = upper_dir if use_upper_dir else selected_region.normal()
             ret += dir_val * random.uniform(min_height, max_height)
             if use_ray_trace_check:
-                # Transform the coords into the reference frame of the object
+                # Transform the coords into the reference frame of the model
                 c_ret = inv_world_matrix @ np.concatenate((ret, [1]), 0)
                 neg_dir_val = -1.0 * dir_val
                 c_dir = inv_world_matrix @ np.concatenate((neg_dir_val, [0]), 0)
-                # Check if the object was hit
-                hit, _, _, _ = obj.ray_cast(c_ret[:3], c_dir[:3])
-                if hit:  # If the object was hit return
+                # Check if the model was hit
+                hit, _, _, _ = model.ray_cast(c_ret[:3], c_dir[:3])
+                if hit:  # If the model was hit return
                     break
             else:
                 break
         logger.info(
-            f"Sampled location {ret} over the upper region of object of "
-            f"{object_names_to_sample_on}."
+            f"Sampled location {ret} over the upper region of models "
+            f"{model_names_to_sample_on}."
         )
         return np.array(ret)
     raise RuntimeError(
         "The amount of regions is either zero or does not match the amount of"
-        "objects!"
+        "models!"
     )
 
 
@@ -168,7 +170,7 @@ def calc_vec_and_normals(
 
 def select_upper_region(mesh_object, upper_dir: np.ndarray) -> "Region2D":
     """
-    Pick the face of the object's bounding box whose normal is most aligned with
+    Pick the face of the model's bounding box whose normal is most aligned with
     'upper_dir' and return it as a Region2D (base point + in-plane vectors +
     normal).
 
@@ -206,7 +208,7 @@ def select_upper_region(mesh_object, upper_dir: np.ndarray) -> "Region2D":
     # Save the selected face values
     if selected_face is None:
         raise RuntimeError(
-            f"Couldn't find a face, for this obj: {mesh_object.get_name()}"
+            f"Couldn't find a face, for this model: {mesh_object.get_name()}"
         )
     vectors, normal = calc_vec_and_normals(selected_face)
     base_point = selected_face[0]

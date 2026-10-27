@@ -15,12 +15,13 @@ def main(argv: Sequence[str] = ()) -> None:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--spec_file",
+        "--config-file",
+        "--config_file",
         type=Path,
         default=(
             Path(__file__).resolve().parents[1]
             / "configs"
-            / "example_bin_picking_gearwheel_2.yaml"
+            / "bin_picking_example.yaml"
         ),
         help="Path to the bin-picking YAML configuration (default: %(default)s).",
     )
@@ -36,7 +37,7 @@ def main(argv: Sequence[str] = ()) -> None:
 
     from telekinesis.illusion.workers.bin_picking_worker import BinPickingWorker
 
-    worker = BinPickingWorker(args.spec_file)
+    worker = BinPickingWorker(args.config_file)
     worker.generate()
     worker.merge_shards(preview=args.preview)
 

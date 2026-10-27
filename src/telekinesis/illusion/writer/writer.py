@@ -154,7 +154,7 @@ class CocoWriter(Writer):
         color_file_format: str = "JPEG",
         jpg_quality: int = 90,
     ) -> None:
-        """Add info, licenses and supercategory info from the specs if present"""
+        """Add info, licenses and supercategory info from the config if present"""
         super().__init__(create_output_dir_on_init, output_dir)
         if not isinstance(color_file_format, str):
             raise TypeError(

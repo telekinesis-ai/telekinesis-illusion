@@ -221,9 +221,9 @@ physics_simulator:
   active: True
   min_simulation_time_range: [0.1, 0.2]
   max_simulation_time_range: [0.3, 1.0]
-  check_object_interval: 0.5
-  object_stopped_location_threshold: 0.01
-  object_stopped_rotation_threshold: 1.0
+  check_model_interval: 0.5
+  model_stopped_location_threshold: 0.01
+  model_stopped_rotation_threshold: 1.0
   substeps_per_frame: 10
   solver_iters: 10
   verbose: False

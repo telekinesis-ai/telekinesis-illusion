@@ -123,6 +123,9 @@ iss_999_validate_camera_dimensions
   [coding conventions](DEVELOPMENT.md#coding-conventions).
 - [ ] Affected callers, configuration files, examples, and public documentation
   agree with the new behavior.
+- [ ] Every user-visible change is recorded under `Unreleased` in
+  [CHANGELOG.md](CHANGELOG.md). Breaking API and configuration changes include
+  old/new names and migration instructions.
 - [ ] Relevant tests and lint checks are reported, including any failures or
   checks that could not run. Documentation-only changes have been checked for
   accurate commands, working links, and Markdown rendering.

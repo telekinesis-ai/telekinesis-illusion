@@ -1,10 +1,10 @@
 """Named scene lights with validated, type-specific Blender properties."""
 
 import math
-from numbers import Real
 
 import numpy as np
 
+from telekinesis.illusion import config
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 isolate_user_extensions()
@@ -12,113 +12,44 @@ isolate_user_extensions()
 import bpy
 from telekinesis.illusion.blender.types.light import Light as BlenderLight
 
-LIGHT_TYPES = ("POINT", "SUN", "SPOT", "AREA")
-AREA_SHAPES = ("SQUARE", "RECTANGLE", "DISK", "ELLIPSE")
-_FLOAT_MAX = np.finfo(np.float32).max
-# Public name -> Blender attribute, supported types, valid bounds.
-_PROPERTIES = {
-    "power": ("energy", LIGHT_TYPES, 0.0, _FLOAT_MAX),
-    "radius": ("shadow_soft_size", ("POINT", "SPOT"), 0.0, _FLOAT_MAX),
-    "size": ("size", ("AREA",), 0.0, _FLOAT_MAX),
-    "size_y": ("size_y", ("AREA",), 0.0, _FLOAT_MAX),
-    "angle": ("angle", ("SUN",), 0.0, math.pi),
-    "spot_size": ("spot_size", ("SPOT",), math.pi / 180, math.pi),
-    "spot_blend": ("spot_blend", ("SPOT",), 0.0, 1.0),
-}
-
-
-def _vector(value, name, minimum=-_FLOAT_MAX, maximum=_FLOAT_MAX):
-    result = np.asarray(value, dtype=float)
-    if (
-        result.shape != (3,)
-        or not np.isfinite(result).all()
-        or np.any(result < minimum)
-        or np.any(result > maximum)
-    ):
-        raise ValueError(
-            f"{name} needs three finite values in [{minimum}, {maximum}]."
-        )
-    return result
-
 
 class Light:
     """A named scene light, using meters and XYZ Euler radians.
 
-    ``light_type`` is POINT, SUN, SPOT or AREA. Properties accepted by
-    construction and :meth:`set_properties` are:
+    The properties accepted by :meth:`set_properties` and their units are
+    those of ``config.LightConfig``. Omitted properties retain the light
+    defaults. Lights have no annotation category or rigid body. Their local
+    -Z axis is the emission direction.
 
-    - color: linear RGB in [0, 1]; power: watts (SUN: watts/meter squared).
-    - POINT/SPOT: radius in meters.
-    - AREA: shape (SQUARE, RECTANGLE, DISK, ELLIPSE), size and size_y in meters.
-      size_y only affects RECTANGLE and ELLIPSE.
-    - SUN: angular diameter ``angle`` in radians.
-    - SPOT: cone angle ``spot_size`` in radians and ``spot_blend`` in [0, 1].
-
-    Omitted properties retain the light defaults. Lights have no annotation
-    category or rigid body. Their local -Z axis is the emission direction.
+    Example:
+        light = Light(config.LightConfig("key", "POINT", properties={"power": 40.0}))
     """
 
-    def __init__(
-        self,
-        light_name: str,
-        light_type: str = "POINT",
-        *,
-        location=(0.0, 0.0, 0.0),
-        rotation=(0.0, 0.0, 0.0),
-        **properties,
-    ):
-        if not isinstance(light_name, str) or not light_name.strip():
-            raise ValueError("light_name must be a non-empty string.")
-        if light_name in bpy.data.objects:
-            raise ValueError(
-                f"A scene object named {light_name!r} already exists."
-            )
-        values = self._validate_properties(light_type, properties)
-        location = _vector(location, "location")
-        rotation = _vector(rotation, "rotation")
-        self._light = BlenderLight(light_type=light_type, name=light_name)
-        for attribute, value in values.items():
-            setattr(self._light.blender_obj.data, attribute, value)
-        self.set_location(location)
-        self.set_rotation(rotation)
+    def __init__(self, light_config: config.LightConfig) -> None:
+        """Create the light in the Blender scene.
 
-    @staticmethod
-    def _validate_properties(light_type, properties):
-        if light_type not in LIGHT_TYPES:
-            raise ValueError(f"light_type must be one of {LIGHT_TYPES}.")
-        values = {}
-        for name, value in properties.items():
-            if name == "color":
-                values[name] = _vector(value, name, 0.0, 1.0)
-            elif name == "shape":
-                if light_type != "AREA" or value not in AREA_SHAPES:
-                    raise ValueError(
-                        f"shape requires AREA and one of {AREA_SHAPES}."
-                    )
-                values[name] = value
-            else:
-                if name not in _PROPERTIES:
-                    raise ValueError(f"Unknown light property {name!r}.")
-                attribute, types, minimum, maximum = _PROPERTIES[name]
-                if light_type not in types:
-                    raise ValueError(
-                        f"{name} is not supported by {light_type} lights."
-                    )
-                if (
-                    isinstance(value, bool)
-                    or not isinstance(value, Real)
-                    or not math.isfinite(value)
-                    or not minimum <= value <= maximum
-                ):
-                    raise ValueError(
-                        f"{name} must be finite and in [{minimum}, {maximum}]."
-                    )
-                values[attribute] = value
-        return values
+        Args:
+            light_config: config.LightConfig
+                Name, type, pose and properties of the light.
+
+        Raises:
+            ValueError: A scene object with the light's name already exists.
+        """
+        if light_config.light_name in bpy.data.objects:
+            raise ValueError(
+                f"A scene object named {light_config.light_name!r} already "
+                "exists."
+            )
+        self._light = BlenderLight(
+            light_type=light_config.light_type, name=light_config.light_name
+        )
+        self.set_properties(**light_config.properties)
+        self.set_location(light_config.location)
+        self.set_rotation(light_config.rotation)
 
     def set_properties(self, **properties) -> None:
         """Validate all supplied properties before changing the light."""
-        values = self._validate_properties(self.get_type(), properties)
+        values = config.validate_light_properties(self.get_type(), properties)
         for attribute, value in values.items():
             setattr(self._light.blender_obj.data, attribute, value)
 
@@ -132,7 +63,7 @@ class Light:
         properties = {"color": tuple(data.color)}
         properties.update(
             (name, getattr(data, attribute))
-            for name, (attribute, types, _, _) in _PROPERTIES.items()
+            for name, (attribute, types, _, _) in config.LIGHT_PROPERTIES.items()
             if data.type in types
         )
         if data.type == "AREA":
@@ -149,14 +80,14 @@ class Light:
         return self._light.get_location()
 
     def set_location(self, location) -> None:
-        self._light.set_location(_vector(location, "location"))
+        self._light.set_location(config.as_vector3(location, "location"))
 
     def get_rotation(self) -> np.ndarray:
         return self._light.get_rotation_euler()
 
     def set_rotation(self, rotation) -> None:
         """Set XYZ Euler angles in radians."""
-        self._light.set_rotation_euler(_vector(rotation, "rotation"))
+        self._light.set_rotation_euler(config.as_vector3(rotation, "rotation"))
 
     def get_emitter_radius(self) -> float:
         """Radius of a sphere enclosing the emitter, for placement clearance."""

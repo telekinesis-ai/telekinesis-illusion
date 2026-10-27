@@ -16,30 +16,32 @@ from telekinesis.illusion.blender.camera import settings as camera_settings
 from telekinesis.illusion.blender.sampling.shell import shell as sample_shell
 from mathutils import Matrix  # Only importable once bpy is loaded
 
-from telekinesis.illusion.core.context import Context
-from telekinesis.illusion.types.object import compute_poi
+from telekinesis.illusion.core.environment import Environment
+from telekinesis.illusion.types.model import compute_poi
 
 
-def _resolve_target_objects(
-    context: Context,
+def _resolve_target_models(
+    environment: Environment,
     target_names: List[str] | None = None,
     visible_only: bool = True,
 ) -> List:
     """
-    Resolve objects from context by optional name prefixes and visibility.
+    Resolve models from environment by optional name prefixes and visibility.
     """
-    objects = context.get_objects()
+    models = environment.get_models()
 
     if target_names is None:
-        resolved = list(objects.values())
+        resolved = list(models.values())
     else:
         prefixes = tuple(target_names)
         resolved = [
-            obj for name, obj in objects.items() if name.startswith(prefixes)
+            model
+            for name, model in models.items()
+            if name.startswith(prefixes)
         ]
 
     if visible_only:
-        visible = [obj for obj in resolved if not obj.is_hidden()]
+        visible = [model for model in resolved if not model.is_hidden()]
         if visible:
             return visible
 
@@ -47,7 +49,7 @@ def _resolve_target_objects(
 
 
 def shell_sampler(
-    context: Context = None,
+    environment: Environment = None,
     center: np.ndarray | None | List[str] = None,
     radius_min: float = 0.4,
     radius_max: float = 0.6,
@@ -63,24 +65,30 @@ def shell_sampler(
 
     This method determines a point of interest (POI) to look at based on
     `center`:
-    - If `center` is None, the POI is computed from visible scene objects.
-    - If `center` is a list, the POI is computed from these object prefixes.
-    - If `center` is an np.ndarray, it is used directly as the POI.
+    - If `center` is None, the POI is computed from visible scene models.
+    - If `center` is a list of strings, the POI is computed from these model
+      prefixes.
+    - If `center` is a list of three numbers or an np.ndarray, it is used
+      directly as the POI.
     """
+    if isinstance(center, list) and all(
+        isinstance(value, (int, float)) for value in center
+    ):
+        center = np.asarray(center, dtype=float)
     if center is None:
-        target_objects = _resolve_target_objects(context, visible_only=True)
-        if not target_objects:
-            raise ValueError("No objects available for shell_sampler center.")
-        center = compute_poi(target_objects)
+        target_models = _resolve_target_models(environment, visible_only=True)
+        if not target_models:
+            raise ValueError("No models available for shell_sampler center.")
+        center = compute_poi(target_models)
     elif isinstance(center, list):
-        target_objects = _resolve_target_objects(
-            context=context, target_names=center, visible_only=True
+        target_models = _resolve_target_models(
+            environment=environment, target_names=center, visible_only=True
         )
-        if not target_objects:
+        if not target_models:
             raise ValueError(
-                "No objects resolved for provided `center` name prefixes."
+                "No models resolved for provided `center` name prefixes."
             )
-        center = compute_poi(target_objects)
+        center = compute_poi(target_models)
     elif isinstance(center, np.ndarray):
         pass
     else:
@@ -110,7 +118,7 @@ def shell_sampler(
 
 
 def volume_sampler(
-    context: Context = None,
+    environment: Environment = None,
     point_of_interst: np.ndarray | None | List[str] = None,
     volume_size: tuple[float, float, float] | None = None,
     distance_range: tuple[float, float] | None = None,
@@ -128,26 +136,27 @@ def volume_sampler(
     bbox_target_names = None
 
     if point_of_interst is None:
-        target_objects = _resolve_target_objects(context, visible_only=True)
-        if not target_objects:
-            raise ValueError("No objects available to compute camera POI.")
-        poi = compute_poi(target_objects)
+        target_models = _resolve_target_models(environment, visible_only=True)
+        if not target_models:
+            raise ValueError("No models available to compute camera POI.")
+        poi = compute_poi(target_models)
         logger.info(
-            "point_of_interst is None. Using POI {} from visible objects.", poi
+            "point_of_interst is None. Using POI {} from visible models.", poi
         )
     elif isinstance(point_of_interst, list):
         if all(isinstance(x, str) for x in point_of_interst):
             bbox_target_names = point_of_interst
-            target_objects = _resolve_target_objects(
-                context=context,
+            target_models = _resolve_target_models(
+                environment=environment,
                 target_names=point_of_interst,
                 visible_only=True,
             )
-            if not target_objects:
+            if not target_models:
                 raise ValueError(
-                    "No objects resolved for provided `point_of_interst` prefixes."
+                    "No models resolved for provided `point_of_interst` "
+                    "prefixes."
                 )
-            poi = compute_poi(target_objects)
+            poi = compute_poi(target_models)
         elif all(isinstance(x, (float, int)) for x in point_of_interst):
             # list of numeric coordinates
             poi = np.array(point_of_interst, dtype=float)
@@ -161,7 +170,9 @@ def volume_sampler(
     bbox = None
     if volume_size is None or volume_center is None:
         bbox = compute_axis_aligned_bbox(
-            context=context, target_objects=bbox_target_names, visible_only=True
+            environment=environment,
+            target_models=bbox_target_names,
+            visible_only=True,
         )
 
     if volume_size is None:
@@ -178,8 +189,8 @@ def volume_sampler(
     if volume_center is None:
         if bbox is None:
             _, _, _, center = compute_axis_aligned_bbox(
-                context=context,
-                target_objects=bbox_target_names,
+                environment=environment,
+                target_models=bbox_target_names,
                 visible_only=True,
             )
         else:
@@ -196,9 +207,9 @@ def volume_sampler(
     location = local_location + volume_center
 
     if distance_range is None:
-        focal_length_mm = context.get_camera().focal_length
-        sensor_width = context.get_camera().sensor_width
-        sensor_height = context.get_camera().sensor_height
+        focal_length_mm = environment.get_camera().focal_length
+        sensor_width = environment.get_camera().sensor_width
+        sensor_height = environment.get_camera().sensor_height
 
         max_distance = min_distance = autocompute_distance(
             focal_length_mm, sensor_width, sensor_height, length, width, height
@@ -226,25 +237,27 @@ def volume_sampler(
 
 
 def compute_axis_aligned_bbox(
-    context: Context = None,
-    target_objects: None | List[str] = None,
+    environment: Environment = None,
+    target_models: None | List[str] = None,
     visible_only: bool = True,
 ) -> tuple[float, float, float, np.ndarray]:
     """
-    Compute the world-space axis-aligned bounding box of selected objects.
+    Compute the world-space axis-aligned bounding box of selected models.
     """
-    resolved = _resolve_target_objects(
-        context=context, target_names=target_objects, visible_only=visible_only
+    resolved = _resolve_target_models(
+        environment=environment,
+        target_names=target_models,
+        visible_only=visible_only,
     )
     if not resolved:
         raise ValueError(
-            "No objects available to compute an axis-aligned bbox."
+            "No models available to compute an axis-aligned bbox."
         )
 
     mins = np.array([np.inf, np.inf, np.inf], dtype=float)
     maxs = -mins
-    for obj in resolved:
-        bb = obj.get_object().get_bound_box()  # (8, 3)
+    for model in resolved:
+        bb = model.get_mesh_object().get_bound_box()  # (8, 3)
         mins = np.minimum(mins, bb.min(axis=0))
         maxs = np.maximum(maxs, bb.max(axis=0))
     length, width, height = maxs - mins
@@ -267,7 +280,7 @@ def autocompute_distance(
     bbox_height: float,
 ) -> float:
     """
-    Estimate a camera distance that frames the scene bounding box.
+    Estimate a camera distance that frames the environment bounding box.
     """
     x_c_max = max(bbox_length, bbox_width)
     x_i_max = max(sensor_width, sensor_height)
@@ -275,6 +288,8 @@ def autocompute_distance(
     return distance
 
 
+# Keep the keys equal to config.POSE_SAMPLER_CONFIGS, which validates the
+# sampler names and parameters without importing Blender.
 CAMERA_POSE_SAMPLERS = {
     "volume_sampler": volume_sampler,
     "shell_sampler": shell_sampler,

@@ -14,8 +14,6 @@ jobs:
   # Pylint before re-enabling them.
   test-and-build:
     name: Test and Build (Python 3.11)
-    # shortcut: tests and builds are skipped, TODO: re-enable after CPU runner validation.
-    if: ${{ false }}
     runs-on: windows-latest
     defaults:
       run:

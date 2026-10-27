@@ -5,16 +5,33 @@ This is the single place in the library that knows where assets live. Nothing
 else should derive asset locations from __file__ or from environment variables.
 """
 
-from pathlib import Path
+import os
+import tempfile
+import zipfile
+from pathlib import Path, PurePosixPath
 from typing import Optional, Union
 
+import httpx
 from loguru import logger
+from tqdm import tqdm
 
 # <repo>/assets when the package is used from a src-layout checkout. A wheel
 # ships no assets (see pyproject.toml, which defines no package_data), so this
 # path does not exist for an installed package - hence the is_dir() guard
 # wherever it is used.
 _REPO_ASSETS = Path(__file__).resolve().parents[4] / "assets"
+
+# Public copy of <repo>/assets for installs without a checkout. The archive
+# holds a top-level 'assets/' folder. Its cache directory is named after the
+# archive, so publishing a new archive version never reuses an older cache.
+_PUBLIC_ASSETS_URL = (
+    "https://assets.telekinesis.ai/telekinesis-illusion/assets-<VERSION>.zip"
+)
+_CACHED_ASSETS = (
+    Path("~/.cache/telekinesis/telekinesis-illusion").expanduser()
+    / PurePosixPath(_PUBLIC_ASSETS_URL).stem
+    / "assets"
+)
 
 
 def resolve_asset_dir(
@@ -32,14 +49,19 @@ def resolve_asset_dir(
     2. './assets' relative to the current working directory, if it exists.
     3. '<repo>/assets' next to the source tree, if it exists. Only available
        for a src-layout checkout.
+    4. The public assets cached in
+       '~/.cache/telekinesis/illusion/assets-<VERSION>/assets' by an earlier call.
+    5. Otherwise the public assets are downloaded once, extracted into that
+       cache directory, and reused by later calls. Delete the cache
+       directory to download them again.
 
     Args:
         explicit: str, Path or None
-            An explicitly configured asset directory, e.g. the spec's
-            'metadata.asset_directory'.
+            An explicitly configured asset directory, e.g. the config's
+            'dataset.asset_directory'.
         base_dir: str, Path or None
             Directory a relative 'explicit' is anchored on. Typically the
-            directory containing the spec file.
+            directory containing the config file.
 
     Returns:
         The asset directory as a pathlib.Path() object.
@@ -47,9 +69,13 @@ def resolve_asset_dir(
     Raises:
         FileNotFoundError:
             - If 'explicit' does not exist.
-            - If no explicit directory was given and no default could be found.
         NotADirectoryError:
             - If the resolved path is not a directory.
+        httpx.HTTPError:
+            - If downloading the public assets fails.
+        ValueError:
+            - If the downloaded archive contains a path outside its extraction
+              directory.
     """
     if explicit is not None:
         path = Path(explicit)
@@ -67,11 +93,60 @@ def resolve_asset_dir(
         logger.info(f"Using the asset directory '{_REPO_ASSETS}'.")
         return _REPO_ASSETS
 
-    raise FileNotFoundError(
-        "No asset directory found. Set 'metadata.asset_directory' in your "
-        f"spec, or run from a directory containing an 'assets' folder "
-        f"(looked for '{cwd_assets}' and '{_REPO_ASSETS}')."
+    if not _CACHED_ASSETS.is_dir():
+        _download_public_assets()
+    logger.info(f"Using the asset directory '{_CACHED_ASSETS}'.")
+    return _CACHED_ASSETS
+
+
+def _download_public_assets() -> None:
+    """
+    Download the public assets archive and extract it into the cache.
+
+    The archive is downloaded and extracted inside a temporary directory next
+    to the cache, and only the complete 'assets' folder is moved into place.
+    An interrupted download therefore never leaves a partial cache behind.
+
+    Raises:
+        httpx.HTTPError:
+            - If the download fails.
+        ValueError:
+            - If an archive member would be extracted outside the extraction
+              directory, e.g. through '..' or an absolute path.
+    """
+    _CACHED_ASSETS.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        f"Downloading the public assets from '{_PUBLIC_ASSETS_URL}' to "
+        f"'{_CACHED_ASSETS}'."
     )
+    with tempfile.TemporaryDirectory(dir=_CACHED_ASSETS.parent) as temp_dir:
+        archive_path = Path(temp_dir) / "assets.zip"
+        with httpx.stream(
+            "GET", _PUBLIC_ASSETS_URL, follow_redirects=True
+        ) as response:
+            response.raise_for_status()
+            size = int(response.headers.get("Content-Length", 0)) or None
+            with (
+                archive_path.open("wb") as archive_file,
+                tqdm(
+                    total=size, unit="B", unit_scale=True, desc="Assets"
+                ) as progress,
+            ):
+                for chunk in response.iter_bytes():
+                    archive_file.write(chunk)
+                    progress.update(len(chunk))
+
+        extract_dir = (Path(temp_dir) / "extracted").resolve()
+        with zipfile.ZipFile(archive_path) as archive:
+            for name in archive.namelist():
+                member_path = (extract_dir / name).resolve()
+                if not member_path.is_relative_to(extract_dir):
+                    raise ValueError(
+                        f"The asset archive member '{name}' points outside "
+                        "the extraction directory."
+                    )
+            archive.extractall(extract_dir)
+        os.replace(extract_dir / "assets", _CACHED_ASSETS)
 
 
 def _validate_asset_dir(
@@ -136,7 +211,7 @@ def resolve_asset_path(
     asset_dir: Union[str, Path],
 ) -> Path:
     """
-    Resolve a single asset path, e.g. a spec's 'models[].path'.
+    Resolve a single asset path, e.g. a config's 'models[].model_path'.
 
     Absolute paths are returned unchanged, relative ones are resolved against
     'asset_dir'.

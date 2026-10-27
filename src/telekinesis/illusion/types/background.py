@@ -6,10 +6,6 @@ scenes.
 from pathlib import Path
 import weakref
 
-from telekinesis.illusion.utils.assets import (
-    pick_default_hdri,
-    resolve_asset_dir,
-)
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 # Must run before bpy is imported. See blender_env.py for why.
@@ -19,8 +15,14 @@ import bpy
 
 
 class Background:
-    """
-    Class for managing the background in the synthetic scenes.
+    """Apply HDRI textures to the active Blender world's shader nodes.
+
+    Construction creates the world node setup without choosing or loading an
+    image. Environment owns asset registration and default HDRI selection.
+
+    Example:
+        background = Background()
+        background.set_background_texture("studio.exr")
     """
 
     # Contains weak refs to all background instances
@@ -29,51 +31,15 @@ class Background:
     # also automatically removed from the set.
     __refs__: weakref.WeakSet = weakref.WeakSet()
 
-    # Which HDRI pack the initial background is taken from. Discovered rather
-    # than hardcoded to a file name, since asset trees ship different HDRIs.
-    DEFAULT_HDRI_CATEGORY = "indoor/industrial"
-
-    def __init__(self, assets_root: str | Path = None) -> None:
-        """
-        Initialize internal states and creates the shader node setup for HDRI
-        usage.
-
-        Args:
-            assets_root: str, Path or None
-                Directory holding the assets. If 'None', it is resolved by
-                telekinesis.illusion.utils.assets.resolve_asset_dir().
-        """
-        self.assets_path = self._validate_assets_root(assets_root)
+    def __init__(self) -> None:
+        """Create the shader node setup for applying HDRI textures."""
         self._create_shader_node_setup()
-        # Set default background
-        self.set_background_texture(
-            str(
-                pick_default_hdri(
-                    self.assets_path / "hdris",
-                    preferred_category=self.DEFAULT_HDRI_CATEGORY,
-                )
-            )
-        )
-        # Remember that this instance exists
         Background.__refs__.add(self)
-
-    @staticmethod
-    def _validate_assets_root(
-        assets_root: str | Path = None,
-    ) -> Path:
-        """
-        Validates the assets root directory.
-
-        Args:
-            assets_root: str, Path or None
-                Path to the root directory of the assets. If 'None', the
-                default asset directory is resolved by resolve_asset_dir().
-        """
-        return resolve_asset_dir(assets_root)
 
     def _create_shader_node_setup(
         self,
     ) -> None:
+        """Build the environment texture, mapping, and world output nodes."""
 
         # Variabel for organizing the nodes in Blender GUI
         self.node_gui_location_x = 0
@@ -126,31 +92,13 @@ class Background:
             self.world_output_node.inputs["Surface"],
         )
 
-    def _preload_hdris(self):
-        """
-        TODO: Preloading a large amount of HDRIs might speed up the SDG at
-        cost of memory: The ranodmization might be faster because the hdris are
-        not loaded every time, but it might be very costly to keep all the hdris
-        in the memory during the generation.
-
-        A potential optimization could be the usage of an Least Recently Used -
-        style pattern: A smart storage system that holds a fixed amount of data,
-        automatically removing the least recently accessed item when it's full.
-        This is based on the principle that recently used data is more likely to
-        be needed again soon.
-        """
-        pass
-
-    def _build_default_catalog(self) -> None:
-        pass
-
     def set_background_texture(self, hdri: str) -> None:
         """
         Sets the background of the environment from a the path of the HDRI-file.
 
         Args:
             hdri: str
-                Path to the .exr-file of the HDRI.
+                Path to the .hdr or .exr file of the HDRI.
 
         Raises:
             FileNotFoundError:
@@ -189,6 +137,7 @@ class Background:
         self.world_output_node = self._find_node("ShaderNodeOutputWorld")
 
     def _find_node(self, bl_idname: str) -> bpy.types.Node:
+        """Find one required world shader node after Blender reference updates."""
         for node in self.nodes:
             if node.bl_idname == bl_idname:
                 return node
