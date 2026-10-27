@@ -23,21 +23,20 @@ background assets. No interactive viewer is needed.
 Save this as `generate_gears.py` in the repository root:
 
 ```python
+from telekinesis.illusion import config
 from telekinesis.illusion.core import (
     engine,
     environment,
     synthetic_data_generator,
 )
 from telekinesis.illusion.randomizer import randomizer, randomizer_node
-from telekinesis.illusion.sampler import camera_pose_sampler
-from telekinesis.illusion.types import camera, light, model_asset
 from telekinesis.illusion.writer import writer
 
 
 dataset_environment = environment.Environment()
-dataset_environment.add(camera.CameraConfig(image_width=128, image_height=128))
+dataset_environment.add(config.CameraConfig(image_width=128, image_height=128))
 dataset_environment.add(
-    model_asset.ModelAsset.from_path(
+    config.ModelConfig.from_path(
         "assets/models/mechanical_parts/gearwheel_1.glb",
         model_name="gear",
         category_name="gear",
@@ -45,7 +44,7 @@ dataset_environment.add(
     )
 )
 dataset_environment.add(
-    light.LightConfig(
+    config.LightConfig(
         "key",
         "POINT",
         location=(0.0, 0.0, 1.0),
@@ -55,15 +54,18 @@ dataset_environment.add(
 
 randomization = randomizer.Randomizer()
 randomization.add_randomizer(
-    randomizer_node.ModelInstanceRandomizer({"gear": (1, 1)}),
+    randomizer_node.ModelInstanceRandomizer(
+        config.InstanceRandomizerConfig(counts={"gear": (1, 1)})
+    ),
     "counts",
 )
 randomization.add_randomizer(
     randomizer_node.CameraPoseRandomizer(
-        camera_pose_sampler.shell_sampler,
-        number_of_views=2,
-        radius_min=0.5,
-        radius_max=0.7,
+        config.CameraPoseRandomizerConfig(
+            sampler="shell_sampler",
+            number_of_views=2,
+            params={"radius_min": 0.5, "radius_max": 0.7},
+        )
     ),
     "camera",
 )
@@ -72,7 +74,7 @@ generator = synthetic_data_generator.SyntheticDataGenerator(
     environment=dataset_environment,
     randomizer=randomization,
     engine=engine.BlenderEngine(
-        engine.RenderConfig(device="CPU", samples=8),
+        config.RenderConfig(device="CPU", samples=8),
     ),
     writer=writer.CocoWriter(output_dir="output/tutorial-gears"),
 )

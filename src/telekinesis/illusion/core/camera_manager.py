@@ -2,6 +2,7 @@
 
 import dataclasses
 
+from telekinesis.illusion import config
 from telekinesis.illusion.types import camera
 
 
@@ -14,7 +15,7 @@ class CameraManager:
 
     Example:
         manager = CameraManager()
-        manager.add(camera.CameraConfig(image_width=128, image_height=128))
+        manager.add(config.CameraConfig(image_width=128, image_height=128))
         scene_camera = manager.get_camera()
     """
 
@@ -22,18 +23,18 @@ class CameraManager:
         """Create the manager without a camera."""
         self._camera: camera.Camera | None = None
 
-    def add(self, config: camera.CameraConfig) -> camera.CameraConfig:
+    def add(self, camera_config: config.CameraConfig) -> config.CameraConfig:
         """Create the camera from its config and apply it to the Blender scene.
 
         Returns a copy of the config. Raises TypeError for the wrong config
         type and ValueError if a camera was already added.
         """
-        if not isinstance(config, camera.CameraConfig):
-            raise TypeError("config must be a CameraConfig.")
+        if not isinstance(camera_config, config.CameraConfig):
+            raise TypeError("camera_config must be a CameraConfig.")
         if self._camera is not None:
             raise ValueError("A camera was already added.")
-        self._camera = camera.Camera(config)
-        return dataclasses.replace(config)
+        self._camera = camera.Camera(camera_config)
+        return dataclasses.replace(camera_config)
 
     def get_camera(self) -> camera.Camera:
         """Return the camera used for rendering.

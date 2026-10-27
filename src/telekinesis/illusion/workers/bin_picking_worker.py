@@ -5,14 +5,13 @@ Worker class for generating shards for the bin picking use case.
 import math
 import shutil
 from collections.abc import Mapping
-from copy import deepcopy
 from pathlib import Path
-from collections import defaultdict
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable
 from uuid import uuid4
 import yaml
 
+from telekinesis.illusion import config
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 # Must run before bpy is imported. See blender_env.py for why.
@@ -27,18 +26,8 @@ from telekinesis.illusion.core.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
 from telekinesis.illusion.core.environment import Environment
-from telekinesis.illusion.core.engine import BlenderEngine, RenderConfig
-from telekinesis.illusion.types.camera import CameraConfig
+from telekinesis.illusion.core.engine import BlenderEngine
 from telekinesis.illusion.types.model import Model
-from telekinesis.illusion.types.light import Light, LightConfig
-from telekinesis.illusion.types import material_asset
-from telekinesis.illusion.types.background_asset import BackgroundAsset
-from telekinesis.illusion.types.material_asset import MaterialAsset
-from telekinesis.illusion.types.model_asset import ModelAsset
-from telekinesis.illusion.types.distribution import Uniform, uniform
-from telekinesis.illusion.sampler.camera_pose_sampler import (
-    CAMERA_POSE_SAMPLERS,
-)
 from telekinesis.illusion.sampler.upper_region_sampler import (
     upper_region_sampler,
 )
@@ -53,6 +42,7 @@ from telekinesis.illusion.randomizer.randomizer_node import (
     LightRandomizer,
     LightPoseRandomizer,
     NodeConfig,
+    RandomizerNode,
     STAGE_COMPOSITION,
     STAGE_POSE,
     STAGE_APPEARANCE,
@@ -65,83 +55,24 @@ from telekinesis.illusion.utils.assets import (
 )
 
 
-DEFAULT_CAMERA_POSE_RANDOMIZER_CFG = {
-    "sampler": "volume_sampler",
-    "number_of_views": 2,
-    "params": {
-        "distance_range": (1.3, 0.5),
-        "inplane_rot_min": -30.0,
-        "inplane_rot_max": 30.0,
-    },
-}
-
-DEFAULT_POSE_SAMPLING_CFG = {
-    "strategy": "random",
-    "sample_on_surface": None,
-    "params": {
-        "min_height": 0.0,
-        "max_height": 0.0,
-        "face_sample_range": [0.25, 0.75],
-    },
-}
-
-DEFAULT_GRID_CFG = {
-    "rows": 5,
-    "cols": 5,
-    "layers": 1,
-    "layer_spacing": 0.03,
-    "shuffle": True,
-    "xy_jitter": 0.0,
-    "z_rotation_range": [0.0, 0.0],
-}
-
-DEFAULT_PHYSICS_SIMULATOR_PARAMS = {
-    "active": False,
-    "min_simulation_time_range": [0.5, 1.0],
-    "max_simulation_time_range": [2.0, 5.0],
-    "check_model_interval": 0.5,
-    "model_stopped_location_threshold": 0.01,
-    "model_stopped_rotation_threshold": 1.0,
-    "substeps_per_frame": 10,
-    "solver_iters": 10,
-    "verbose": False,
-    "use_volume_com": False,
-    "clean_up_environment": False,
-    "catch_plane": {
-        "active": True,
-        "distance_fraction": 0.25,
-        "minimum_distance": 0.05,
-        "size_factor": 6.0,
-        "contact_tolerance": 0.05,
-    },
-}
-
-# Material type tags per supercategory, matched against the sub-directories of
-# <asset_dir>/materials. Overridable via the config's `material_randomizer`
-# section; an empty list for a role skips that MaterialRandomizer entirely.
-DEFAULT_MATERIAL_RANDOMIZER_CFG = {
-    "part": ["metal"],
-    "container": ["plastic"],
-    "distractor": ["metal"],
-}
-
-# HDRI categories, matched against the sub-directories of <asset_dir>/hdris.
-# Overridable via the config's `background_randomizer` section.
-DEFAULT_BACKGROUND_RANDOMIZER_CFG = {
-    "categories": ["indoor/industrial", "indoor/misc"],
-}
-
-# Only 'container' has a default here; 'part' and 'distractor' fall back to the
-# top-level min/max_number_visible_models / _distractors keys, which every
-# existing config already sets. Overridable via `instance_randomizer`.
-DEFAULT_INSTANCE_RANDOMIZER_CFG = {
-    "container": {"min": 1, "max": 1},
-}
-
-
 class BinPickingWorker:
-    """
-    A wroker class for generating shard for the bin picking use case.
+    """Generate bin-picking dataset shards from a YAML configuration file.
+
+    The configuration file is the single description of the dataset. Each
+    top-level section is validated as the config of the same purpose in
+    telekinesis.illusion.config: dataset (DatasetConfig, with its shard and
+    writer sections), renderer (RenderConfig), camera (CameraConfig),
+    physics (PhysicsConfig), models (ModelConfig per entry), lights
+    (LightConfig per entry), pose_sampling (PoseSamplingConfig) and
+    randomizers. The randomizers section holds instance (per model role),
+    model_pose, material (per rule name), background, light and light_pose
+    (per light name), and camera_pose. Every model has exactly one role
+    group: part, container or distractor.
+
+    Example:
+        worker = BinPickingWorker("configs/bin_picking_example.yaml")
+        worker.generate()
+        worker.merge_shards(preview=False)
     """
 
     # Geometry previews move models, lights and cameras, retaining properties.
@@ -149,95 +80,125 @@ class BinPickingWorker:
 
     def __init__(
         self,
-        config_file_path: Path,
+        config_file_path: str | Path,
     ) -> None:
         """
-        Initial internal states.
+        Validate the configuration and build the environment and randomizers.
 
         Args:
-            config_file_path: Path
-                The path to the YAML config file.
+            config_file_path: str or Path
+                The path to the YAML configuration file.
 
+        Raises:
+            TypeError: A configuration value has the wrong type.
+            ValueError: A configuration value is invalid. The message names
+                the file and the key path of the value.
+            FileNotFoundError: The configuration file, the asset directory or
+                a model file does not exist.
         """
         self._config_file_path = Path(config_file_path)
-        self._config = self._load_config(self._config_file_path)
+        with open(self._config_file_path, encoding="utf-8") as file:
+            raw_config = yaml.safe_load(file)
+        try:
+            self._load_configs(raw_config)
+        except (TypeError, ValueError) as error:
+            raise type(error)(
+                f"Invalid configuration file '{self._config_file_path}': "
+                f"{error}"
+            ) from error
+        logger.info(
+            f"Dataset '{self._dataset_config.name}': "
+            f"{self._dataset_config.num_images} images in shards of "
+            f"{self._dataset_config.shard.size}."
+        )
 
-        # A relative metadata.asset_directory is anchored on the config file, so
+        # A relative dataset.asset_directory is anchored on the config file, so
         # a config stays valid no matter which directory it is run from.
         self._asset_dir = resolve_asset_dir(
-            self._config["metadata"].get("asset_directory"),
+            self._dataset_config.asset_directory,
             base_dir=self._config_file_path.parent,
         )
-
-        self._num_image = self._config["metadata"]["num_images"]
-        self._num_shards = math.ceil(
-            self._num_image / self._config["shard"]["size"]
-        )
-
-        max_size_gb = self._config.get("output", {}).get("max_size_gb", 10)
-        self._max_output_size_bytes = max_size_gb * (1024**3)
-
-        self._grid_sampler = None
-        self._parse_tunable_cfg()
 
         # TODO: Reuse blender.camera.settings.set_intrinsics_from_K_matrix
         # for measured camera calibration and add_depth_of_field for the
         # target lens's aperture and focus distance.
-        # Create the environment
         self._environment = Environment(asset_dir=self._asset_dir)
-        self._environment.add(CameraConfig(**self._config.get("camera", {})))
+        self._environment.add(self._camera_config)
 
         materials_directory = self._asset_dir / "materials"
         if materials_directory.is_dir():
             # Transparent sets (those with an opacity map) are not used for
             # opaque parts, so they are not registered.
             self._environment.add(
-                asset
-                for asset in MaterialAsset.discover(materials_directory)
+                material_config
+                for material_config in config.MaterialConfig.discover(
+                    materials_directory
+                )
                 if not Path(
-                    str(material_asset.find_color_texture(asset.path)).replace(
-                        "Color", "Opacity"
-                    )
+                    str(
+                        config.find_color_texture(material_config.path)
+                    ).replace("Color", "Opacity")
                 ).exists()
             )
         hdris_directory = self._asset_dir / "hdris"
         if hdris_directory.is_dir():
-            self._environment.add(BackgroundAsset.discover(hdris_directory))
+            self._environment.add(
+                config.BackgroundConfig.discover(hdris_directory)
+            )
 
-        self._info = self._config["metadata"]["info"]
-        self._licenses = self._config["metadata"]["licenses"]
+        for model_config in self._model_configs:
+            self._environment.add(
+                model_config.replace(
+                    model_path=resolve_asset_path(
+                        model_config.model_path, self._asset_dir
+                    )
+                )
+            )
+        self._environment.add(self._light_configs)
 
-        # Add models to environment
-        self._model_supercatgory_map = {}
-        self._id_supercategory_map = {}
-        self._add_models_to_environment()
+        # Roles of the registered models; they stay fixed for this worker.
+        self._model_names_by_role = {
+            role: [
+                model_config.model_name
+                for model_config in self._model_configs
+                if role in model_config.groups
+            ]
+            for role in config.MODEL_ROLES
+        }
+        # category_id may be allocated by the environment when the config
+        # omits it. Record the resolved ID that rendering will actually emit.
+        assets = self._environment.get_assets()
+        supercategory_map = {
+            assets[name].category_id: role
+            for role, names in self._model_names_by_role.items()
+            for name in names
+        }
 
-        # Add dsitractors to environment
-        self._distractor_names = []
-        self._add_distractors_to_environment()
-
-        # Create the randomizer
         self._randomizer = Randomizer()
-        self._add_randomizers()
+        for node_name, node, stage in self._create_randomizer_nodes():
+            self._randomizer.add_randomizer(
+                randomizer_node=node,
+                node_name=node_name,
+                node_config=NodeConfig(stage=stage),
+            )
 
-        # Create the writer
         # TODO: Reuse blender.camera.lens_distortion.set_lens_distortion
         # before rendering and apply_lens_distortion on captured RGB and
         # instance maps before COCO writing. Use the same mapping for both,
         # nearest-neighbor interpolation for IDs, and derive masks/boxes
         # from the remapped instance maps.
         self._output_base = None
-        renderer = self._config.get("renderer", {})
+        coco_info = self._dataset_config.writer.coco.to_dict()
+        coco_licenses = coco_info.pop("licenses")
         self._writer = CocoWriter(
             create_output_dir_on_init=False,
-            info=self._info,
-            licenses=self._licenses,
-            supercategory_map=self._id_supercategory_map,
-            color_file_format=renderer.get("image_format", "JPEG"),
-            jpg_quality=renderer.get("jpg_quality", 90),
+            info=coco_info,
+            licenses=coco_licenses,
+            supercategory_map=supercategory_map,
+            color_file_format=self._dataset_config.writer.image_format,
+            jpg_quality=self._dataset_config.writer.jpg_quality,
         )
 
-        # Create the data generator with environment, randomizer and writer
         # TODO: For RGB-D datasets, enable RenderConfig.depth and reuse
         # blender.postprocessing.add_kinect_azure_noise/add_gaussian_shifts
         # only when they match the target sensor. Preserve clean depth and
@@ -246,145 +207,287 @@ class BinPickingWorker:
             environment=self._environment,
             randomizer=self._randomizer,
             writer=self._writer,
-            engine=BlenderEngine(
-                RenderConfig(
-                    samples=renderer.get("samples"),
-                    noise_threshold=renderer.get("noise_threshold"),
-                    device=renderer.get("device", "CUDA"),
-                )
-            ),
+            engine=BlenderEngine(self._render_config, self._physics_config),
         )
-
-        # Create shard merger and arguments for splitter
         self._merger = None
-        self._dataset_format = self._config.get("output", {}).get(
-            "dataset_format", None
-        )
-        self._train_val_tes_ratio = self._config.get("output", {}).get(
-            "train_val_tes_ratio", (0.7, 0.2, 0.1)
-        )
-        self._splitter_seed = self._config.get("output", {}).get("seed", 42)
-        self._splitter_stratify = self._config.get("output", {}).get(
-            "stratify", True
-        )
 
-    def _parse_tunable_cfg(self) -> None:
+    def _load_configs(self, raw_config: Any) -> None:
         """
-        Derive the tunable randomizer configs from self._config.
+        Validate every configuration section and store it as its config.
 
-        Split out of __init__ so apply_config_updates() can re-derive them from
-        an edited config without rebuilding the worker.
+        Sections are validated individually by their config classes, and
+        relations between sections are checked afterwards. All configs are
+        stored only after everything is valid, so an invalid configuration
+        leaves the previous configs in place.
+
+        Args:
+            raw_config: Any
+                The configuration as loaded from YAML.
+
+        Raises:
+            TypeError: A section or value has the wrong type.
+            ValueError: A section is unknown or missing, a value is invalid,
+                or sections contradict each other. The message starts with
+                the key path of the value.
         """
-        pose_sampling_cfg = self._config.get(
-            "pose_sampling", DEFAULT_POSE_SAMPLING_CFG
-        )
-        self._sample_on_surface = pose_sampling_cfg.get(
-            "sample_on_surface", DEFAULT_POSE_SAMPLING_CFG["sample_on_surface"]
-        )
-        self._pose_sampling_strategy = pose_sampling_cfg.get(
-            "strategy", DEFAULT_POSE_SAMPLING_CFG["strategy"]
-        )
-        ps_params = pose_sampling_cfg.get("params", {})
-        self._pose_sampling_params = {
-            **DEFAULT_POSE_SAMPLING_CFG["params"],
-            **{k: v for k, v in ps_params.items() if k != "grid"},
+        sections = {
+            "dataset",
+            "renderer",
+            "camera",
+            "physics",
+            "models",
+            "lights",
+            "pose_sampling",
+            "randomizers",
         }
-        self._grid_cfg = {
-            **DEFAULT_GRID_CFG,
-            **ps_params.get("grid", {}),
-        }
-        # Physics simulation params
-        physics_cfg = self._config.get("physics_simulator", {})
-        catch_plane_cfg = {
-            **DEFAULT_PHYSICS_SIMULATOR_PARAMS["catch_plane"],
-            **physics_cfg.get("catch_plane", {}),
-        }
-        self._physics_simulator_params = {
-            **DEFAULT_PHYSICS_SIMULATOR_PARAMS,
-            **physics_cfg,
-            "catch_plane": catch_plane_cfg,
-        }
+        if not isinstance(raw_config, Mapping):
+            raise TypeError("The configuration must be a mapping of sections.")
+        unknown = sorted(str(key) for key in raw_config if key not in sections)
+        if unknown:
+            raise ValueError(
+                f"{', '.join(unknown)}: unknown section(s). Valid sections "
+                f"are {sorted(sections)}."
+            )
+        missing = [
+            section
+            for section in ("dataset", "models", "randomizers")
+            if section not in raw_config
+        ]
+        if missing:
+            raise ValueError(
+                f"{', '.join(missing)}: required section(s) missing."
+            )
 
-        # Randomizer params that used to be hard-coded in _add_randomizers().
-        # Merged per key so a config that overrides only one role still picks up
-        # the defaults for the others.
-        material_cfg = self._config.get("material_randomizer", {})
-        self._material_rules = None
-        if isinstance(material_cfg, Mapping) and "rules" in material_cfg:
-            unknown = set(material_cfg) - {"active", "rules"}
+        dataset_config = config.build_config(
+            "dataset", config.DatasetConfig, raw_config["dataset"]
+        )
+        render_config = config.build_config(
+            "renderer", config.RenderConfig, raw_config.get("renderer", {})
+        )
+        camera_config = config.build_config(
+            "camera", config.CameraConfig, raw_config.get("camera", {})
+        )
+        physics_config = config.build_config(
+            "physics", config.PhysicsConfig, raw_config.get("physics", {})
+        )
+        pose_sampling_config = config.build_config(
+            "pose_sampling",
+            config.PoseSamplingConfig,
+            raw_config.get("pose_sampling", {}),
+        )
+        if (
+            not isinstance(raw_config["models"], list)
+            or not raw_config["models"]
+        ):
+            raise ValueError("models: must be a non-empty list of models.")
+        model_configs = tuple(
+            config.build_config(f"models[{index}]", config.ModelConfig, entry)
+            for index, entry in enumerate(raw_config["models"])
+        )
+        if not isinstance(raw_config.get("lights", []), list):
+            raise ValueError("lights: must be a list of lights.")
+        light_configs = tuple(
+            config.build_config(f"lights[{index}]", config.LightConfig, entry)
+            for index, entry in enumerate(raw_config.get("lights", []))
+        )
+
+        randomizers = raw_config["randomizers"]
+        randomizer_sections = {
+            "instance",
+            "model_pose",
+            "material",
+            "background",
+            "light",
+            "light_pose",
+            "camera_pose",
+        }
+        if not isinstance(randomizers, Mapping):
+            raise TypeError(
+                "randomizers: must be a mapping of randomizer sections."
+            )
+        unknown = sorted(
+            str(key) for key in randomizers if key not in randomizer_sections
+        )
+        if unknown:
+            raise ValueError(
+                f"randomizers.{', '.join(unknown)}: unknown section(s). Valid "
+                f"sections are {sorted(randomizer_sections)}."
+            )
+        if "instance" not in randomizers:
+            raise ValueError("randomizers.instance: required section missing.")
+
+        def build_named_configs(section, config_type):
+            entries = randomizers.get(section, {})
+            if not isinstance(entries, Mapping):
+                raise TypeError(
+                    f"randomizers.{section}: must be a mapping of names to "
+                    "settings."
+                )
+            return {
+                name: config.build_config(
+                    f"randomizers.{section}.{name}", config_type, entry
+                )
+                for name, entry in entries.items()
+            }
+
+        instance_configs = build_named_configs(
+            "instance", config.InstanceRandomizerConfig
+        )
+        material_configs = build_named_configs(
+            "material", config.MaterialRandomizerConfig
+        )
+        light_randomizer_configs = build_named_configs(
+            "light", config.LightRandomizerConfig
+        )
+        light_pose_configs = build_named_configs(
+            "light_pose", config.LightPoseRandomizerConfig
+        )
+        model_pose_config = config.build_config(
+            "randomizers.model_pose",
+            config.ModelPoseRandomizerConfig,
+            randomizers.get("model_pose", {}),
+        )
+        background_config = (
+            config.build_config(
+                "randomizers.background",
+                config.BackgroundRandomizerConfig,
+                randomizers["background"],
+            )
+            if "background" in randomizers
+            else None
+        )
+        camera_pose_config = config.build_config(
+            "randomizers.camera_pose",
+            config.CameraPoseRandomizerConfig,
+            randomizers.get("camera_pose", {}),
+        )
+
+        names_by_role = {role: [] for role in config.MODEL_ROLES}
+        model_names = set()
+        for index, model_config in enumerate(model_configs):
+            if model_config.model_name in model_names:
+                raise ValueError(
+                    f"models[{index}].model_name: duplicate model name "
+                    f"{model_config.model_name!r}."
+                )
+            model_names.add(model_config.model_name)
+            roles = [
+                group
+                for group in model_config.groups
+                if group in config.MODEL_ROLES
+            ]
+            if len(roles) != 1:
+                raise ValueError(
+                    f"models[{index}].groups: must contain exactly one role "
+                    f"of {sorted(config.MODEL_ROLES)}, got "
+                    f"{list(model_config.groups)}."
+                )
+            names_by_role[roles[0]].append(model_config.model_name)
+        for role in ("part", "container"):
+            if not names_by_role[role]:
+                raise ValueError(
+                    f"models: at least one model needs the role '{role}'."
+                )
+
+        roles = {role for role, names in names_by_role.items() if names}
+        if set(instance_configs) != roles:
+            raise ValueError(
+                f"randomizers.instance: must configure exactly the model "
+                f"roles {sorted(roles)}, got {sorted(instance_configs)}."
+            )
+        for role, instance_config in instance_configs.items():
+            for name in instance_config.counts:
+                if name not in names_by_role[role]:
+                    raise ValueError(
+                        f"randomizers.instance.{role}.counts.{name}: not a "
+                        f"model with the role '{role}'."
+                    )
+
+        model_groups = {
+            group
+            for model_config in model_configs
+            for group in model_config.groups
+        }
+        for name, material_config in material_configs.items():
+            unknown = sorted(
+                set(material_config.target_models or ()) - model_names
+            )
             if unknown:
                 raise ValueError(
-                    "Rule-based material_randomizer only accepts 'active' "
-                    f"and 'rules'; unknown keys: {sorted(unknown)}."
+                    f"randomizers.material.{name}.target_models: unknown "
+                    f"models {unknown}."
                 )
-            if material_cfg.get("active", True):
-                rules = material_cfg["rules"]
-                if not isinstance(rules, list) or not rules:
-                    raise ValueError(
-                        "An active rule-based material_randomizer requires "
-                        "a non-empty 'rules' list."
-                    )
-                self._material_rules = rules
-            # Rules replace role-level defaults, preventing a second material
-            # assignment from overwriting a carefully randomized slot.
-            self._material_cfg = {
-                "part": [],
-                "container": [],
-                "distractor": [],
-            }
-        else:
-            if not isinstance(material_cfg, Mapping):
-                raise TypeError("material_randomizer must be a mapping.")
-            self._material_cfg = {
-                **DEFAULT_MATERIAL_RANDOMIZER_CFG,
-                **material_cfg,
-            }
-        self._background_cfg = {
-            **DEFAULT_BACKGROUND_RANDOMIZER_CFG,
-            **self._config.get("background_randomizer", {}),
-        }
-        self._instance_cfg = {
-            **DEFAULT_INSTANCE_RANDOMIZER_CFG,
-            **self._config.get("instance_randomizer", {}),
-        }
-        self._light_nodes = self._parse_light_randomizers(
-            self._config.get("light_randomizer", {})
-        )
+            unknown = sorted(
+                set(material_config.target_groups or ()) - model_groups
+            )
+            if unknown:
+                raise ValueError(
+                    f"randomizers.material.{name}.target_groups: no model has "
+                    f"the groups {unknown}."
+                )
 
-        # The grid hands out cell centers in order and starts over once it runs
-        # out, so more parts than cells means parts share a center and only the
-        # jitter keeps them apart. Nothing downstream checks this, so say so
-        # here - derived from the config alone, which keeps this valid both at
-        # construction and on every apply_config_updates().
-        if self._pose_sampling_strategy == "grid":
-            capacity = (
-                self._grid_cfg["rows"]
-                * self._grid_cfg["cols"]
-                * self._grid_cfg["layers"]
-            )
-            loadable_parts = sum(
-                model["instances"]["max"]
-                for model in self._config.get("models", [])
-                if model["supercategory"] == "part"
-            )
-            part_cfg = self._instance_cfg.get("part")
-            configured_max = (
-                part_cfg["max"]
-                if part_cfg
-                else self._config.get(
-                    "max_number_visible_models", loadable_parts
+        light_types = {
+            light_config.light_name: light_config.light_type
+            for light_config in light_configs
+        }
+        for section, configs in (
+            ("light", light_randomizer_configs),
+            ("light_pose", light_pose_configs),
+        ):
+            unknown = sorted(set(configs) - set(light_types))
+            if unknown:
+                raise ValueError(
+                    f"randomizers.{section}: unknown lights {unknown}; declare "
+                    "them under 'lights'."
                 )
+        for name, light_randomizer_config in light_randomizer_configs.items():
+            try:
+                light_randomizer_config.check_light_type(light_types[name])
+            except ValueError as error:
+                raise ValueError(f"randomizers.light.{name}.{error}") from error
+
+        if pose_sampling_config.strategy == "grid":
+            if model_pose_config.sample_on_surface is not None:
+                raise ValueError(
+                    "randomizers.model_pose.sample_on_surface: must be null "
+                    "for the 'grid' pose_sampling strategy, which samples on "
+                    "the visible container."
+                )
+            # The grid hands out cell centers in order and starts over once it
+            # runs out, so more parts than cells means parts share a center and
+            # only the jitter keeps them apart.
+            part_config = instance_configs["part"]
+            visible_parts = sum(
+                maximum for _, maximum in part_config.counts.values()
             )
-            visible_parts = min(configured_max, loadable_parts)
-            if visible_parts > capacity:
+            if part_config.max_num_total_models is not None:
+                visible_parts = min(
+                    visible_parts, part_config.max_num_total_models
+                )
+            grid = pose_sampling_config.grid
+            if visible_parts > grid.capacity:
                 logger.warning(
-                    f"Grid capacity is {capacity} cells "
-                    f"({self._grid_cfg['rows']}x{self._grid_cfg['cols']}x"
-                    f"{self._grid_cfg['layers']}) but up to {visible_parts} "
-                    "parts can be visible - cells get reused, so parts will "
-                    "share positions. Add rows/cols/layers or lower the part "
-                    "instance count."
+                    f"Grid capacity is {grid.capacity} cells "
+                    f"({grid.rows}x{grid.cols}x{grid.layers}) but up to "
+                    f"{visible_parts} parts can be visible - cells get reused, "
+                    "so parts will share positions. Add rows/cols/layers or "
+                    "lower the part instance count."
                 )
+
+        self._dataset_config = dataset_config
+        self._render_config = render_config
+        self._camera_config = camera_config
+        self._physics_config = physics_config
+        self._pose_sampling_config = pose_sampling_config
+        self._model_configs = model_configs
+        self._light_configs = light_configs
+        self._instance_configs = instance_configs
+        self._model_pose_config = model_pose_config
+        self._material_configs = material_configs
+        self._background_config = background_config
+        self._light_randomizer_configs = light_randomizer_configs
+        self._light_pose_configs = light_pose_configs
+        self._camera_pose_config = camera_pose_config
 
     def get_output_base_directory(self) -> Path:
         """
@@ -419,8 +522,8 @@ class BinPickingWorker:
 
         Visible instances, materials, background and sampled light properties
         are retained while the caller iterates on layout and framing. Interactive
-        tools (the Blender config editor's "Preview Scene") use this; a real
-        generation run always calls randomize() unfiltered.
+        tools use this; a real generation run always calls randomize()
+        unfiltered.
 
         Visible models are the ones that get re-posed, so the caller is
         responsible for composing a scene before sampling poses.
@@ -430,22 +533,6 @@ class BinPickingWorker:
                 The environment whose current scene receives the new poses.
         """
         self._randomizer.randomize(environment, stages=self.GEOMETRY_STAGES)
-
-    def _load_config(self, config_file_path: Path) -> Dict:
-        """
-        Helper function to load and print the provided config.
-
-        Args:
-            config_file_path: Path
-                The path to the YAML config file.
-
-        Returns:
-            The configuration as a dict.
-        """
-        with open(config_file_path, "r", encoding="utf-8") as f:
-            config = yaml.load(f, Loader=yaml.SafeLoader)
-        self._print_config(config)
-        return config
 
     def _get_output_size_bytes(self) -> int:
         """Return the total size in bytes of all files under the output directory."""
@@ -457,344 +544,115 @@ class BinPickingWorker:
             if f.is_file()
         )
 
-    def _print_config(self, config: Dict) -> None:
-        """
-        Helper function to print the provided config.
-
-        Args:
-            config: Dict
-                A dictionary containing the configuration.
-        """
-        md = config["metadata"]
-        width = max(len(k) for k in md.keys())
-        for k, v in md.items():
-            logger.info(f"{k:<{width}} : {v}")
-
-    def _counts_for(self, names: list[str]) -> dict[str, tuple[int, int]]:
-        entries = {
-            entry["name"]: entry
-            for entry in self._config.get("models", [])
-            + self._config.get("distractors", [])
-        }
-        return {
-            name: (
-                entries[name]["instances"]["min"],
-                entries[name]["instances"]["max"],
-            )
-            for name in names
-        }
-
     def prepare(self) -> None:
         """Prepare linked pools before an interactive preview or generation."""
         self._data_generator.prepare()
 
-    def _add_models_to_environment(self) -> None:
+    def apply_config_updates(self, raw_config: Mapping[str, Any]) -> list[str]:
         """
-        Add the listed models from the config to the environment.
-        """
-        model_supercategory_map = defaultdict(list)
-        id_supercategory_map = defaultdict(list)
-        for model in self._config["models"]:
-            model_path = str(resolve_asset_path(model["path"], self._asset_dir))
-            self._environment.add(
-                ModelAsset(
-                    model_path,
-                    model_name=model["name"],
-                    category_name=model["category_name"],
-                    category_id=model["id"],
-                    active_in_simulation=model["simulation"]["active"],
-                    collision_shape=model["simulation"]["collision_shape"],
-                    scale=model["scale"],
-                    preprocess_model=model["preprocess_model"],
-                    material_preprocessing=model.get(
-                        "material_preprocessing", "replace"
-                    ),
-                    uv_mapping=model.get("uv_mapping", "smart"),
-                    shading=model.get("shading", "FLAT"),
-                )
-            )
-            model_supercategory_map[model["supercategory"]].append(
-                model["name"]
-            )
-            # category_id may be auto-assigned when the config uses null.
-            # Record the resolved ID that rendering will actually emit.
-            resolved_id = self._environment.get_assets()[
-                model["name"]
-            ].category_id
-            id_supercategory_map[resolved_id] = model["supercategory"]
-        # Convert from defaultdict back to normal dict
-        self._model_supercatgory_map = dict(model_supercategory_map)
-        self._id_supercategory_map = dict(id_supercategory_map)
-
-    def _add_distractors_to_environment(self) -> None:
-        """
-        Add the listed distractors from the config to the environment.
-        """
-        for distractor in self._config.get("distractors", []):
-            distractor_path = str(
-                resolve_asset_path(distractor["path"], self._asset_dir)
-            )
-            self._environment.add(
-                ModelAsset(
-                    distractor_path,
-                    model_name=distractor["name"],
-                    category_name=distractor["category_name"],
-                    category_id=distractor["id"],
-                    active_in_simulation=distractor["simulation"]["active"],
-                    collision_shape=distractor["simulation"]["collision_shape"],
-                    scale=distractor["scale"],
-                    preprocess_model=distractor["preprocess_model"],
-                    material_preprocessing=distractor.get(
-                        "material_preprocessing", "replace"
-                    ),
-                    uv_mapping=distractor.get("uv_mapping", "smart"),
-                    shading=distractor.get("shading", "FLAT"),
-                )
-            )
-            self._distractor_names.append(distractor["name"])
-            resolved_id = self._environment.get_assets()[
-                distractor["name"]
-            ].category_id
-            self._id_supercategory_map[resolved_id] = distractor[
-                "supercategory"
-            ]
-
-    def _instance_bounds(
-        self,
-        role: str,
-        legacy_min_key: Optional[str] = None,
-        legacy_max_key: Optional[str] = None,
-    ) -> tuple:
-        """
-        Resolve the instance-count bounds for a supercategory.
-
-        Prefers the config's `instance_randomizer.<role>` section and falls back
-        to the top-level min/max_number_visible_* keys, which every config
-        predating that section already sets.
-
-        Args:
-            role: str
-                The supercategory to look up ('part', 'container', ...).
-            legacy_min_key: Optional[str]
-                Top-level config key holding the lower bound, if any.
-            legacy_max_key: Optional[str]
-                Top-level config key holding the upper bound, if any.
-
-        Returns:
-            The (min, max) instance counts as a tuple.
-        """
-        cfg = self._instance_cfg.get(role)
-        if cfg:
-            return cfg["min"], cfg["max"]
-        return self._config[legacy_min_key], self._config[legacy_max_key]
-
-    def apply_config_updates(self, config: Dict) -> List[str]:
-        """
-        Re-apply the tunable parts of a config to the already-built Environment
+        Re-apply an edited configuration to the already-built Environment
         and Randomizer, without re-importing any models.
 
-        Built for interactive tools (the Blender config editor) where rebuilding
-        the whole worker on every slider drag is far too slow. Everything the
-        randomizers read per scene is updated in place; anything that is baked
-        into the imported geometry is reported back instead of being silently
-        ignored.
+        Built for interactive tools where rebuilding the whole worker on every
+        edit is far too slow. Model scales, physics and every randomizer are
+        updated in place. Changes that are baked into the imported scene are
+        reported back instead of being silently ignored: models or lights that
+        changed beyond model scales, and instance counts that exceed the
+        prepared capacity, leave the randomizers unchanged. Camera, renderer
+        and image format changes are reported and do not block the other
+        updates.
 
         Args:
-            config: Dict
-                The edited config, same schema as the file passed to __init__.
+            raw_config: Mapping
+                The edited configuration, in the same format as the file
+                passed to __init__.
 
         Returns:
             Human-readable descriptions of changes that could NOT be applied
             and need a full reload. Empty when everything took effect.
+
+        Raises:
+            TypeError: A configuration value has the wrong type.
+            ValueError: A configuration value is invalid. The previous
+                configuration then stays in effect.
         """
-        self._config = config
-        self._parse_tunable_cfg()
+        previous_models = self._model_configs
+        previous_lights = self._light_configs
+        previous_camera = self._camera_config
+        previous_render = self._render_config
+        previous_writer = self._dataset_config.writer
+        self._load_configs(raw_config)
 
         needs_reload = self._apply_model_scales()
-
-        # Capacity cannot grow in a prepared environment. Existing pools remain
-        # usable for appearance/pose edits and smaller instance ranges.
-        for entry in self._config.get("models", []) + self._config.get(
-            "distractors", []
-        ):
-            group = self._environment.get_model_group(entry["name"])
-            if (
-                self._environment.model_manager.is_prepared
-                and entry["instances"]["max"] > len(group)
-            ):
-                needs_reload.append(
-                    f"'{entry['name']}' capacity increased; reload assets to apply it"
-                )
-
-        # Instance counts - plain attributes, re-read on every randomize().
-        for role, node_name, legacy in (
-            (
-                "part",
-                "instance_randomizer_models",
-                ("min_number_visible_models", "max_number_visible_models"),
-            ),
-            ("container", "instance_randomizer_containers", None),
-            (
-                "distractor",
-                "instance_randomizer_distractors",
-                (
-                    "min_number_visible_distractors",
-                    "max_number_visible_distractors",
-                ),
-            ),
-        ):
-            node = self._randomizer.get_randomizer_node(node_name)
-            if node is None:
-                continue
-            minimum, maximum = self._instance_bounds(role, *(legacy or ()))
-            wanted_counts = self._counts_for(node.target_models)
-            if not self._environment.model_manager.is_prepared or all(
-                bounds[1] <= len(self._environment.get_model_group(name))
-                for name, bounds in wanted_counts.items()
-            ):
-                node.counts = wanted_counts
-            node.min_num_total_models = minimum
-            node.max_num_total_models = maximum
-
-        # Pose sampling. The 'random' strategy's parameters are read live by
-        # the closure, so only the grid geometry and a strategy switch need
-        # explicit work here.
-        pose_node = self._randomizer.get_randomizer_node(
-            "pose_randomizer_models"
-        )
-        if pose_node is not None:
-            is_grid = self._pose_sampling_strategy == "grid"
-            if is_grid and self._grid_sampler is not None:
-                self._grid_sampler.update_grid_params(
-                    rows=self._grid_cfg["rows"],
-                    cols=self._grid_cfg["cols"],
-                    layers=self._grid_cfg["layers"],
-                    layer_spacing=self._grid_cfg["layer_spacing"],
-                    face_sample_range=self._pose_sampling_params.get(
-                        "face_sample_range", (0.05, 0.95)
-                    ),
-                    min_height=self._pose_sampling_params.get(
-                        "min_height", 0.0
-                    ),
-                    max_height=self._pose_sampling_params.get(
-                        "max_height", 0.0
-                    ),
-                    shuffle=self._grid_cfg["shuffle"],
-                    xy_jitter=self._grid_cfg["xy_jitter"],
-                )
-            elif is_grid:
-                # Switched random -> grid: no sampler exists yet.
-                pose_node.pose_sampling_function = self._make_sample_pose_grid()
-            else:
-                # Switched grid -> random (or still random): the random
-                # closure reads its params live, so just make sure it's the
-                # one installed.
-                pose_node.pose_sampling_function = self._make_sample_pose()
-
-        # Materials: source catalogs and procedural recipes are baked into the
-        # nodes, so edited configurations need fresh randomizers.
-        if self._material_rules is not None:
-            for index, rule in enumerate(self._material_rules):
-                name, targets, config = self._parse_material_rule(index, rule)
-                if self._randomizer.get_randomizer_node(name) is None:
-                    needs_reload.append(
-                        f"material rule '{name}' was added or renamed - "
-                        "reload assets to apply it"
-                    )
-                    continue
-                self._randomizer.replace_randomizer(
-                    name,
-                    MaterialRandomizer.from_config(
-                        target_models=targets,
-                        config=config,
-                        environment=self._environment,
-                    ),
-                )
-        else:
-            for role, node_name in (
-                ("part", "material_randomizer_parts"),
-                ("container", "material_randomizer_crate"),
-                ("distractor", "material_randomizer_distractors"),
-            ):
-                node = self._randomizer.get_randomizer_node(node_name)
-                types = self._material_cfg.get(role)
-                if node is None or not types:
-                    continue
-                if types != node.configuration:
-                    self._randomizer.replace_randomizer(
-                        node_name,
-                        MaterialRandomizer.from_config(
-                            target_models=node.target_models,
-                            config=types,
-                            environment=self._environment,
-                        ),
-                    )
-
-        # Rebuild the background selection when its requested groups change.
-        background_node = self._randomizer.get_randomizer_node(
-            "background_randomizer"
-        )
-        categories = self._background_cfg.get("categories")
-        if background_node is not None and categories:
-            if list(categories) != list(background_node.groups or []):
-                self._randomizer.replace_randomizer(
-                    "background_randomizer",
-                    BackgroundRandomizer(
-                        groups=list(categories),
-                    ),
-                )
-
-        light_config = self._config.get("light_randomizer", {})
-        if light_config != self._loaded_light_config:
-            light_types = {
-                name: nodes[0] for name, nodes in self._light_nodes.items()
-            }
-            if light_types != self._loaded_light_types:
-                needs_reload.append(
-                    "Lights were added, removed, renamed, enabled/disabled, "
-                    "or changed type - reload assets to apply it"
-                )
-            else:
-                for name, (_, properties, pose) in self._light_nodes.items():
-                    self._randomizer.replace_randomizer(
-                        f"light_properties_{name}", properties
-                    )
-                    self._randomizer.replace_randomizer(
-                        f"light_pose_{name}", pose
-                    )
-                self._loaded_light_config = deepcopy(light_config)
-
-        # Camera: sampler kwargs are captured at construction.
-        camera_node = self._randomizer.get_randomizer_node(
-            "camera_pose_randomizer"
-        )
-        if camera_node is not None:
-            cpr_cfg = self._config.get(
-                "camera_pose_randomizer", DEFAULT_CAMERA_POSE_RANDOMIZER_CFG
+        # Scales are applied in place, every other model setting needs a
+        # fresh import.
+        blocking = [
+            model_config.replace(scale=1.0)
+            for model_config in self._model_configs
+        ] != [
+            model_config.replace(scale=1.0) for model_config in previous_models
+        ]
+        if blocking:
+            needs_reload.append(
+                "Models were added, removed, reordered or changed beyond "
+                "their scale - reload assets to apply it"
             )
-            sampler_name = cpr_cfg.get(
-                "sampler", DEFAULT_CAMERA_POSE_RANDOMIZER_CFG["sampler"]
+        if self._light_configs != previous_lights:
+            blocking = True
+            needs_reload.append(
+                "Lights were added, removed or changed - reload assets to "
+                "apply it"
             )
-            if sampler_name not in CAMERA_POSE_SAMPLERS:
-                raise ValueError(
-                    f"Unknown camera pose sampler '{sampler_name}'. "
-                    f"Available: {sorted(CAMERA_POSE_SAMPLERS)}"
-                )
-            self._randomizer.replace_randomizer(
-                "camera_pose_randomizer",
-                CameraPoseRandomizer(
-                    pose_sampling_function=CAMERA_POSE_SAMPLERS[sampler_name],
-                    number_of_views=cpr_cfg.get(
-                        "number_of_views",
-                        DEFAULT_CAMERA_POSE_RANDOMIZER_CFG["number_of_views"],
-                    ),
-                    **cpr_cfg.get("params", {}),
-                ),
+        if self._camera_config != previous_camera:
+            needs_reload.append(
+                "The camera changed - reload assets to apply it"
+            )
+        if self._render_config != previous_render:
+            needs_reload.append(
+                "The renderer settings changed - reload assets to apply them"
+            )
+        if (
+            self._dataset_config.writer.image_format,
+            self._dataset_config.writer.jpg_quality,
+        ) != (previous_writer.image_format, previous_writer.jpg_quality):
+            needs_reload.append(
+                "The image format or JPEG quality changed - reload assets to "
+                "apply it"
             )
 
+        self._data_generator.engine.physics_config = self._physics_config
+        if blocking:
+            return needs_reload
+
+        nodes = self._create_randomizer_nodes()
+        changed_node_names = {name for name, _, _ in nodes} ^ set(
+            self._randomizer.get_node_stages()
+        )
+        if changed_node_names:
+            needs_reload.append(
+                f"Randomizers {sorted(changed_node_names)} were added or "
+                "removed - reload assets to apply it"
+            )
+            return needs_reload
+        # Prepared instance pools cannot grow.
+        if self._environment.model_manager.is_prepared:
+            exceeded = [
+                name
+                for _, node, _ in nodes
+                for name, count in node.required_instances().items()
+                if count > len(self._environment.get_model_group(name))
+            ]
+            if exceeded:
+                needs_reload.extend(
+                    f"'{name}' capacity increased; reload assets to apply it"
+                    for name in exceeded
+                )
+                return needs_reload
+        for node_name, node, _ in nodes:
+            self._randomizer.replace_randomizer(node_name, node)
         return needs_reload
 
-    def _apply_model_scales(self) -> List[str]:
+    def _apply_model_scales(self) -> list[str]:
         """
         Re-scale already-imported models whose config scale changed.
 
@@ -807,13 +665,11 @@ class BinPickingWorker:
         Returns:
             Descriptions of models that could not be re-scaled.
         """
-        problems: List[str] = []
+        problems: list[str] = []
 
-        for entry in self._config.get("models", []) + self._config.get(
-            "distractors", []
-        ):
-            name = entry["name"]
-            new_scale = entry.get("scale", 1.0)
+        for model_config in self._model_configs:
+            name = model_config.model_name
+            new_scale = model_config.scale
             group = self._environment.get_model_group(name)
             if not group:
                 problems.append(
@@ -860,9 +716,8 @@ class BinPickingWorker:
         """
         Build the 'random' pose-sampling function.
 
-        Reads self._sample_on_surface / self._pose_sampling_params on every
-        call rather than capturing them, so apply_config_updates() can retune
-        the sampling box without rebuilding the randomizer.
+        Reads the pose sampling and model pose configs on every call rather
+        than capturing them, so the function follows configuration updates.
 
         Returns:
             A callable taking the Model to place.
@@ -870,17 +725,13 @@ class BinPickingWorker:
 
         def sample_pose(model: Model):
             """
-            Randomly sample and apply a 6-DoF pose to a model.
-
-            The model's location is sampled uniformly within an axis-aligned
-            box centered around the origin.
+            Randomly sample and apply a 6-DoF pose to a model above the
+            visible container, or above the configured surface.
             """
-            if self._sample_on_surface:
-                target = [self._sample_on_surface]
-            else:
-                # Get visible container in the environment
+            target = self._model_pose_config.sample_on_surface
+            if target is None:
                 visible = self._environment.get_visible_model_names()
-                containers = self._model_supercatgory_map["container"]
+                containers = self._model_names_by_role["container"]
                 target = next(
                     (
                         model_name
@@ -892,7 +743,9 @@ class BinPickingWorker:
             sample_location = upper_region_sampler(
                 self._environment,
                 model_names_to_sample_on=target,  # type: ignore[arg-type]
-                **self._pose_sampling_params,
+                face_sample_range=self._pose_sampling_config.face_sample_range,
+                min_height=self._pose_sampling_config.min_height,
+                max_height=self._pose_sampling_config.max_height,
             )
             model.set_location(sample_location)
             model.set_rotation(
@@ -903,31 +756,26 @@ class BinPickingWorker:
 
     def _make_sample_pose_grid(self) -> Callable[[Model], None]:
         """
-        Build the 'grid' pose-sampling function, creating self._grid_sampler.
+        Build the 'grid' pose-sampling function with its own grid sampler.
 
-        The z-rotation range is read from self._grid_cfg per call instead of
-        being captured, so apply_config_updates() can retune it in place - the
-        grid geometry itself is retuned through
-        GridRegionSampler.update_grid_params().
+        The grid geometry is taken from the current pose sampling config; the
+        z-rotation range is read on every call.
 
         Returns:
             A callable taking the Model to place.
         """
-        self._grid_sampler = GridRegionSampler(
+        pose_sampling_config = self._pose_sampling_config
+        grid_sampler = GridRegionSampler(
             environment=self._environment,
-            rows=self._grid_cfg["rows"],
-            cols=self._grid_cfg["cols"],
-            layers=self._grid_cfg["layers"],
-            layer_spacing=self._grid_cfg["layer_spacing"],
-            face_sample_range=tuple(
-                self._pose_sampling_params.get(
-                    "face_sample_range", (0.05, 0.95)
-                )
-            ),
-            min_height=self._pose_sampling_params.get("min_height", 0.0),
-            max_height=self._pose_sampling_params.get("max_height", 0.0),
-            shuffle=self._grid_cfg["shuffle"],
-            xy_jitter=self._grid_cfg["xy_jitter"],
+            rows=pose_sampling_config.grid.rows,
+            cols=pose_sampling_config.grid.cols,
+            layers=pose_sampling_config.grid.layers,
+            layer_spacing=pose_sampling_config.grid.layer_spacing,
+            face_sample_range=pose_sampling_config.face_sample_range,
+            min_height=pose_sampling_config.min_height,
+            max_height=pose_sampling_config.max_height,
+            shuffle=pose_sampling_config.grid.shuffle,
+            xy_jitter=pose_sampling_config.grid.xy_jitter,
         )
 
         def sample_pose_grid(model: Model):
@@ -935,14 +783,12 @@ class BinPickingWorker:
             Place a model at the next grid cell on the bin's top face
             with optional z-axis rotation randomization.
             """
-            location = self._grid_sampler.next_location(
-                self._model_supercatgory_map["container"]
+            location = grid_sampler.next_location(
+                self._model_names_by_role["container"]
             )
             model.set_location(location)
-            z_rot_min_deg, z_rot_max_deg = self._grid_cfg["z_rotation_range"]
-            z_rot_min, z_rot_max = (
-                np.deg2rad(z_rot_min_deg),
-                np.deg2rad(z_rot_max_deg),
+            z_rot_min, z_rot_max = np.deg2rad(
+                self._pose_sampling_config.grid.z_rotation_range
             )
             z_rot = (
                 np.random.uniform(z_rot_min, z_rot_max)
@@ -953,182 +799,37 @@ class BinPickingWorker:
 
         return sample_pose_grid
 
-    @staticmethod
-    def _parse_material_rule(index: int, rule: Mapping):
-        """Return a validated rule name, targets and node configuration."""
-        if not isinstance(rule, Mapping):
-            raise TypeError(
-                f"material_randomizer.rules[{index}] must be a mapping."
-            )
-        target_models = list(rule.get("target_models", []))
-        if not target_models:
-            raise ValueError(
-                f"material_randomizer.rules[{index}] requires 'target_models'."
-            )
-        name = rule.get("name", f"material_rule_{index}")
-        config = {
-            key: value
-            for key, value in rule.items()
-            if key not in ("name", "target_models")
-        }
-        return name, target_models, config
-
-    @staticmethod
-    def _parse_light_randomizers(config: Mapping) -> dict:
-        """Translate YAML ranges into the existing light and pose nodes."""
-        if not isinstance(config, Mapping):
-            raise TypeError("light_randomizer must be a mapping.")
-        unknown = set(config) - {"active", "lights"}
-        if unknown:
-            raise ValueError(
-                f"Unknown light_randomizer keys: {sorted(unknown)}"
-            )
-        if not isinstance(config.get("active", True), bool):
-            raise TypeError("light_randomizer.active must be a boolean.")
-        if not config or not config.get("active", True):
-            return {}
-        lights = config.get("lights")
-        if not isinstance(lights, list) or not lights:
-            raise ValueError(
-                "An active light_randomizer requires a non-empty lights list."
-            )
-        nodes = {}
-        for entry in lights:
-            if not isinstance(entry, Mapping):
-                raise TypeError(
-                    "Each light_randomizer light must be a mapping."
-                )
-            unknown = set(entry) - {
-                "name",
-                "type",
-                "seed",
-                "properties",
-                "pose",
-            }
-            if unknown:
-                raise ValueError(
-                    f"Unknown light configuration keys: {sorted(unknown)}"
-                )
-            name = entry.get("name")
-            if not isinstance(name, str) or not name.strip() or name in nodes:
-                raise ValueError(
-                    "Configured light names must be non-empty and unique."
-                )
-            light_type = entry.get("type", "POINT")
-            Light._validate_properties(light_type, {})
-            properties = entry.get("properties")
-            if not isinstance(properties, Mapping) or not properties:
-                raise ValueError(
-                    f"Light '{name}' requires a non-empty properties mapping."
-                )
-            properties = dict(properties)
-            for key, value in properties.items():
-                if isinstance(value, Mapping):
-                    if set(value) != {"min", "max"}:
-                        raise ValueError(
-                            f"Light '{name}' {key} range requires min and max."
-                        )
-                    value = properties[key] = uniform(
-                        value["min"], value["max"]
-                    )
-                if isinstance(value, Uniform):
-                    choices = (value.min.tolist(), value.max.tolist())
-                elif key == "shape" and isinstance(value, list):
-                    if not value:
-                        raise ValueError(
-                            f"Light '{name}' shape choices cannot be empty."
-                        )
-                    choices = value
-                else:
-                    choices = (value,)
-                for choice in choices:
-                    Light._validate_properties(light_type, {key: choice})
-
-            pose = entry.get("pose")
-            if not isinstance(pose, Mapping):
-                raise TypeError(f"Light '{name}' requires a pose mapping.")
-            unknown = set(pose) - {
-                "sampler",
-                "params",
-                "min_distance",
-                "max_tries",
-            }
-            if unknown:
-                raise ValueError(f"Unknown light pose keys: {sorted(unknown)}")
-            sampler = pose.get("sampler", "shell_sampler")
-            if sampler not in CAMERA_POSE_SAMPLERS:
-                raise ValueError(f"Unknown light pose sampler '{sampler}'.")
-            params = pose.get("params", {})
-            if not isinstance(params, Mapping):
-                raise TypeError(
-                    f"Light '{name}' pose.params must be a mapping."
-                )
-            params = dict(params)
-            center = params.get("center")
-            if isinstance(center, list) and all(
-                isinstance(v, (int, float)) for v in center
-            ):
-                params["center"] = np.asarray(center, dtype=float)
-            nodes[name] = (
-                light_type,
-                LightRandomizer([name], seed=entry.get("seed"), **properties),
-                LightPoseRandomizer(
-                    CAMERA_POSE_SAMPLERS[sampler],
-                    target_lights=[name],
-                    min_distance=pose.get("min_distance", 0.25),
-                    max_tries=pose.get("max_tries", 100),
-                    **params,
-                ),
-            )
-        return nodes
-
-    def _add_randomizers(
+    def _create_randomizer_nodes(
         self,
-    ) -> None:
+    ) -> list[tuple[str, RandomizerNode, str]]:
         """
-        Define and add the randomizers.
+        Create the randomizer nodes described by the current configs.
+
+        The order is the execution order: instance and pose randomizers,
+        materials, background, light properties and poses, and the camera.
+
+        Returns:
+            A list of (node name, node, stage) tuples.
         """
-        # Add model instance randomizer
-        min_parts, max_parts = self._instance_bounds(
-            "part", "min_number_visible_models", "max_number_visible_models"
-        )
-        model_instance_randomizer = ModelInstanceRandomizer(
-            counts=self._counts_for(self._model_supercatgory_map["part"]),
-            min_num_total_models=min_parts,
-            max_num_total_models=max_parts,
-        )
+        nodes = [
+            (
+                "instance_randomizer_models",
+                ModelInstanceRandomizer(self._instance_configs["part"]),
+                STAGE_COMPOSITION,
+            ),
+            (
+                "instance_randomizer_containers",
+                ModelInstanceRandomizer(self._instance_configs["container"]),
+                STAGE_COMPOSITION,
+            ),
+        ]
 
-        self._randomizer.add_randomizer(
-            randomizer_node=model_instance_randomizer,
-            node_name="instance_randomizer_models",
-            node_config=NodeConfig(stage=STAGE_COMPOSITION),
-        )
-
-        # Add container instance ranodmizer
-        min_containers, max_containers = self._instance_bounds("container")
-        container_instance_randomizer = ModelInstanceRandomizer(
-            counts=self._counts_for(self._model_supercatgory_map["container"]),
-            min_num_total_models=min_containers,
-            max_num_total_models=max_containers,
-        )
-
-        self._randomizer.add_randomizer(
-            randomizer_node=container_instance_randomizer,
-            node_name="instance_randomizer_containers",
-            node_config=NodeConfig(stage=STAGE_COMPOSITION),
-        )
-
-        # Add model pose randomizer
-        # The target models are all the models actively participating in the
-        # simulation
         sample_pose = self._make_sample_pose()
-
-        if self._pose_sampling_strategy == "grid":
-            sample_pose_grid = self._make_sample_pose_grid()
+        if self._pose_sampling_config.strategy == "grid":
 
             def resolve_container_surface(environment: Environment) -> str:
                 visible = environment.get_visible_model_names()
-                containers = self._model_supercatgory_map["container"]
+                containers = self._model_names_by_role["container"]
                 match = next(
                     (
                         name
@@ -1145,157 +846,92 @@ class BinPickingWorker:
                 return match
 
             model_pose_randomizer = ModelPoseRandomizer(
-                pose_sampling_function=sample_pose_grid,
-                target_models=self._model_supercatgory_map["part"],
+                self._model_pose_config,
+                self._make_sample_pose_grid(),
+                self._model_names_by_role["part"],
                 surface_name_resolver=resolve_container_surface,
             )
-        elif self._pose_sampling_strategy == "random":
-            model_pose_randomizer = ModelPoseRandomizer(
-                pose_sampling_function=sample_pose,
-                target_models=self._model_supercatgory_map["part"],
-                sample_on_surface=self._sample_on_surface,
-            )
         else:
-            raise ValueError(
-                f"Unknown pose_sampling.strategy "
-                f"'{self._pose_sampling_strategy}'. Expected 'random' or 'grid'."
+            model_pose_randomizer = ModelPoseRandomizer(
+                self._model_pose_config,
+                sample_pose,
+                self._model_names_by_role["part"],
             )
-
-        self._randomizer.add_randomizer(
-            randomizer_node=model_pose_randomizer,
-            node_name="pose_randomizer_models",
-            node_config=NodeConfig(stage=STAGE_POSE),
+        nodes.append(
+            ("pose_randomizer_models", model_pose_randomizer, STAGE_POSE)
         )
 
-        if self._distractor_names:
-            min_distractors, max_distractors = self._instance_bounds(
-                "distractor",
-                "min_number_visible_distractors",
-                "max_number_visible_distractors",
+        if "distractor" in self._instance_configs:
+            nodes.append(
+                (
+                    "instance_randomizer_distractors",
+                    ModelInstanceRandomizer(
+                        self._instance_configs["distractor"]
+                    ),
+                    STAGE_COMPOSITION,
+                )
             )
-            distractor_instance_randomizer = ModelInstanceRandomizer(
-                counts=self._counts_for(self._distractor_names),
-                min_num_total_models=min_distractors,
-                max_num_total_models=max_distractors,
-            )
-            self._randomizer.add_randomizer(
-                randomizer_node=distractor_instance_randomizer,
-                node_name="instance_randomizer_distractors",
-                node_config=NodeConfig(stage=STAGE_COMPOSITION),
-            )
-
-            distractor_pose_randomizer = ModelPoseRandomizer(
-                pose_sampling_function=sample_pose,
-                target_models=self._distractor_names,
-            )
-            self._randomizer.add_randomizer(
-                randomizer_node=distractor_pose_randomizer,
-                node_name="pose_randomizer_distractors",
-                node_config=NodeConfig(stage=STAGE_POSE),
+            nodes.append(
+                (
+                    "pose_randomizer_distractors",
+                    ModelPoseRandomizer(
+                        self._model_pose_config.replace(sample_on_surface=None),
+                        sample_pose,
+                        self._model_names_by_role["distractor"],
+                    ),
+                    STAGE_POSE,
+                )
             )
 
-        # Add material randomizers. Rule mode permits models with different
-        # imported slot layouts to receive independent material assignments.
         # TODO: Use the existing material rules with PrincipledMaterial and
         # SurfaceImperfections for plausible roughness, scratches and wear;
         # see examples/preview_bin_surface_imperfections.py. Reuse the local
         # Material.infuse_texture/infuse_material helpers for further layers,
         # duplicating shared materials before per-instance shader edits.
-        if self._material_rules is not None:
-            for index, rule in enumerate(self._material_rules):
-                name, targets, config = self._parse_material_rule(index, rule)
-                self._randomizer.add_randomizer(
-                    randomizer_node=MaterialRandomizer.from_config(
-                        target_models=targets,
-                        config=config,
-                        environment=self._environment,
-                    ),
-                    node_name=name,
-                    node_config=NodeConfig(stage=STAGE_APPEARANCE),
+        for name, material_config in self._material_configs.items():
+            nodes.append(
+                (
+                    f"material_randomizer_{name}",
+                    MaterialRandomizer(material_config, self._environment),
+                    STAGE_APPEARANCE,
                 )
-
-        # Add legacy role-level material randomizers.
-        # An empty type list means "do not randomize the material for this
-        # role" - MaterialRandomizer would otherwise load no materials and
-        # fail later in get_random_material().
-        def add_material_randomizer(
-            role: str, target_models, node_name: str
-        ) -> None:
-            types = self._material_cfg.get(role)
-            if not types:
-                logger.info(
-                    f"No material types configured for '{role}' - "
-                    f"skipping {node_name}."
-                )
-                return
-            self._randomizer.add_randomizer(
-                randomizer_node=MaterialRandomizer.from_config(
-                    target_models=target_models,
-                    config=types,
-                    environment=self._environment,
-                ),
-                node_name=node_name,
-                node_config=NodeConfig(stage=STAGE_APPEARANCE),
             )
 
-        if self._material_rules is None:
-            add_material_randomizer(
-                "part",
-                self._model_supercatgory_map["part"],
-                "material_randomizer_parts",
-            )
-            add_material_randomizer(
-                "container",
-                self._model_supercatgory_map["container"],
-                "material_randomizer_crate",
-            )
-            if self._distractor_names:
-                add_material_randomizer(
-                    "distractor",
-                    self._distractor_names,
-                    "material_randomizer_distractors",
-                )
-
-        # Add background randomizer
         # TODO: Extend HDRI variation using Background's existing mapping
         # rotation and background strength nodes, alongside image selection,
         # to vary reflection direction and illumination without new loaders.
-        background_categories = self._background_cfg.get("categories")
-        if background_categories:
-            background_randomizer = BackgroundRandomizer(
-                groups=background_categories,
+        if self._background_config is not None:
+            nodes.append(
+                (
+                    "background_randomizer",
+                    BackgroundRandomizer(self._background_config),
+                    STAGE_APPEARANCE,
+                )
             )
 
-            self._randomizer.add_randomizer(
-                randomizer_node=background_randomizer,
-                node_name="background_randomizer",
-                node_config=NodeConfig(stage=STAGE_APPEARANCE),
-            )
-        else:
-            logger.info(
-                "No background categories configured - "
-                "skipping background_randomizer."
-            )
+        for light_config in self._light_configs:
+            name = light_config.light_name
+            if name in self._light_randomizer_configs:
+                nodes.append(
+                    (
+                        f"light_properties_{name}",
+                        LightRandomizer(
+                            self._light_randomizer_configs[name], [name]
+                        ),
+                        STAGE_APPEARANCE,
+                    )
+                )
+            if name in self._light_pose_configs:
+                nodes.append(
+                    (
+                        f"light_pose_{name}",
+                        LightPoseRandomizer(
+                            self._light_pose_configs[name], [name]
+                        ),
+                        STAGE_POSE,
+                    )
+                )
 
-        self._loaded_light_types = {}
-        for name, (light_type, properties, pose) in self._light_nodes.items():
-            self._environment.add(LightConfig(name, light_type))
-            self._loaded_light_types[name] = light_type
-            self._randomizer.add_randomizer(
-                properties,
-                node_name=f"light_properties_{name}",
-                node_config=NodeConfig(stage=STAGE_APPEARANCE),
-            )
-            self._randomizer.add_randomizer(
-                pose,
-                node_name=f"light_pose_{name}",
-                node_config=NodeConfig(stage=STAGE_POSE),
-            )
-        self._loaded_light_config = deepcopy(
-            self._config.get("light_randomizer", {})
-        )
-
-        # Add camera pose randomizer
         # TODO: Run camera validation in the generator after physics settles
         # and before rendering. Refresh evaluated geometry and reuse
         # blender.types.mesh_object.create_bvh_tree_multi_objects for the
@@ -1313,31 +949,14 @@ class BinPickingWorker:
         # TODO: Resample only failed camera views with a bounded retry budget
         # and report exhaustion. Preserve the settled arrangement and accepted
         # views; randomized views of one arrangement remain separate images.
-        cpr_cfg = self._config.get(
-            "camera_pose_randomizer", DEFAULT_CAMERA_POSE_RANDOMIZER_CFG
-        )
-        sampler_name = cpr_cfg.get(
-            "sampler", DEFAULT_CAMERA_POSE_RANDOMIZER_CFG["sampler"]
-        )
-        if sampler_name not in CAMERA_POSE_SAMPLERS:
-            raise ValueError(
-                f"Unknown camera pose sampler '{sampler_name}'. "
-                f"Available: {sorted(CAMERA_POSE_SAMPLERS)}"
+        nodes.append(
+            (
+                "camera_pose_randomizer",
+                CameraPoseRandomizer(self._camera_pose_config),
+                STAGE_CAMERA,
             )
-        camera_pose_randomizer = CameraPoseRandomizer(
-            pose_sampling_function=CAMERA_POSE_SAMPLERS[sampler_name],
-            number_of_views=cpr_cfg.get(
-                "number_of_views",
-                DEFAULT_CAMERA_POSE_RANDOMIZER_CFG["number_of_views"],
-            ),
-            **cpr_cfg.get("params", {}),
         )
-
-        self._randomizer.add_randomizer(
-            randomizer_node=camera_pose_randomizer,
-            node_name="camera_pose_randomizer",
-            node_config=NodeConfig(stage=STAGE_CAMERA),
-        )
+        return nodes
 
     def generate(self) -> None:
         """
@@ -1345,25 +964,24 @@ class BinPickingWorker:
 
         Each shard is written to its own output directory whose name includes a
         UUID so that multiple workers can run simultaneously without collisions.
+        Generation stops early once the output exceeds
+        dataset.writer.max_size_gb.
         """
-        shard_size = self._config["shard"]["size"]
-        remaining_images = self._num_image
-        output_cfg = self._config.get("output", {})
-        name_template = output_cfg.get(
-            "shard_name_template", "shard_{date}_{uuid}"
+        shard_size = self._dataset_config.shard.size
+        remaining_images = self._dataset_config.num_images
+        num_shards = math.ceil(remaining_images / shard_size)
+        max_output_size_bytes = (
+            self._dataset_config.writer.max_size_gb * (1024**3)
+        )
+        self._output_base = (
+            Path(self._dataset_config.output_directory)
+            / self._dataset_config.name
         )
 
-        dataset_name = self._config["metadata"]["dataset_name"]
-        base_output_directory = self._config["metadata"]["base_output_directory"]
-        if base_output_directory:
-            self._output_base = Path(base_output_directory) / dataset_name
-        else:
-            self._output_base = Path.cwd() / "output" / dataset_name
-
         try:
-            for i in range(self._num_shards):
+            for i in range(num_shards):
                 current_shard_size = min(shard_size, remaining_images)
-                shard_name = name_template.format(
+                shard_name = self._dataset_config.shard.name_template.format(
                     date=datetime.now().strftime("%Y%m%d_%H%M%S"),
                     uuid=uuid4().hex[:8],
                 )
@@ -1371,66 +989,28 @@ class BinPickingWorker:
                 self._writer.set_output_dir(shard_dir)
 
                 logger.info(
-                    f"[shard {i + 1}/{self._num_shards}] "
+                    f"[shard {i + 1}/{num_shards}] "
                     f"Generating {current_shard_size} environments -> {shard_dir.name}"
                 )
 
                 self._data_generator.generate(
                     num_images=current_shard_size,
-                    simulate_physics=self._physics_simulator_params["active"],
-                    min_simulation_time_range=tuple(
-                        self._physics_simulator_params[
-                            "min_simulation_time_range"
-                        ]
-                    ),
-                    max_simulation_time_range=tuple(
-                        self._physics_simulator_params[
-                            "max_simulation_time_range"
-                        ]
-                    ),
-                    check_model_interval=self._physics_simulator_params[
-                        "check_model_interval"
-                    ],
-                    model_stopped_location_threshold=self._physics_simulator_params[
-                        "model_stopped_location_threshold"
-                    ],
-                    model_stopped_rotation_threshold=self._physics_simulator_params[
-                        "model_stopped_rotation_threshold"
-                    ],
-                    substeps_per_frame=self._physics_simulator_params[
-                        "substeps_per_frame"
-                    ],
-                    solver_iters=self._physics_simulator_params["solver_iters"],
-                    verbose=self._physics_simulator_params["verbose"],
-                    use_volume_com=self._physics_simulator_params[
-                        "use_volume_com"
-                    ],
                     clean_up_environment=False,
-                    physics_catch_plane={
-                        **self._physics_simulator_params["catch_plane"],
-                        "container_names": self._model_supercatgory_map[
-                            "container"
-                        ],
-                        "tracked_model_names": [
-                            *self._model_supercatgory_map.get("part", []),
-                            *self._distractor_names,
-                        ],
-                    },
                 )
                 remaining_images -= current_shard_size
 
                 output_size = self._get_output_size_bytes()
                 logger.info(
-                    f"[shard {i + 1}/{self._num_shards}] "
+                    f"[shard {i + 1}/{num_shards}] "
                     f"Current output size: {output_size / (1024**3):.2f} GB "
-                    f"(limit: {self._max_output_size_bytes / (1024**3):.1f} GB)"
+                    f"(limit: {max_output_size_bytes / (1024**3):.1f} GB)"
                 )
-                if output_size >= self._max_output_size_bytes:
+                if output_size >= max_output_size_bytes:
                     logger.warning(
                         f"Output size limit reached "
                         f"({output_size / (1024**3):.2f} GB >= "
-                        f"{self._max_output_size_bytes / (1024**3):.1f} GB). "
-                        f"Stopping after shard {i + 1}/{self._num_shards}."
+                        f"{max_output_size_bytes / (1024**3):.1f} GB). "
+                        f"Stopping after shard {i + 1}/{num_shards}."
                     )
                     break
 
@@ -1439,7 +1019,8 @@ class BinPickingWorker:
 
     def merge_shards(self, preview: bool = True) -> None:
         """
-        Merge the generated shards.
+        Merge the generated shards and export them in
+        dataset.writer.dataset_format.
 
         Args:
             preview (bool):
@@ -1455,20 +1036,22 @@ class BinPickingWorker:
         self._merger = CocoShardMerger(str(self._output_base))
         self._merger.merge()
 
-        if self._dataset_format:
-            output_dir = Path(self._config["metadata"]["dataset_name"]) / Path(
-                self._dataset_format + "_format"
+        dataset_format = self._dataset_config.writer.dataset_format
+        if dataset_format:
+            output_dir = (
+                self._output_base.parent
+                / self._dataset_config.name
+                / f"{dataset_format}_format"
             )
-            output_dir = self._output_base.parent / output_dir
 
             if not output_dir.exists() or self._confirm_overwrite(output_dir):
                 splitter = DatasetConverter(
                     merged_dataset_dir=self._output_base,
                     output_dir=output_dir,
-                    dataset_format=self._dataset_format,
-                    ratios=tuple(self._train_val_tes_ratio),
-                    stratify=self._splitter_stratify,
-                    seed=self._splitter_seed,
+                    dataset_format=dataset_format,
+                    ratios=self._dataset_config.writer.split_ratios,
+                    stratify=self._dataset_config.writer.stratify,
+                    seed=self._dataset_config.writer.split_seed,
                 )
                 splitter.split()
 

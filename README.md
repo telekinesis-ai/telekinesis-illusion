@@ -99,7 +99,7 @@ python examples/quickstart_flying_things.py --preview
 python examples/quickstart_parts_in_bin.py --preview
 ```
 ```bash
-python examples/generate_synthetic_data_with_bin_picking_worker.py --config-file configs/example_bin_picking_gearwheel_2.yaml --preview
+python examples/generate_synthetic_data_with_bin_picking_worker.py --config-file configs/bin_picking_example.yaml --preview
 ```
 
 The bin-picking worker defaults to this example YAML with preview disabled.
@@ -107,50 +107,65 @@ Use `--config-file config.yaml` to select another config file and `--preview`
 or `--no-preview` to control the viewer.
 
 For another asset tree, pass `asset_dir` to `Environment`, or set
-`metadata.asset_directory` in the worker YAML. Relative YAML asset paths
+`dataset.asset_directory` in the worker YAML. Relative YAML asset paths
 resolve against that YAML file.
+
+Every section of the worker YAML is validated as a typed config from
+`telekinesis.illusion.config` before anything is built. Unknown keys and
+invalid values raise an error that names the file and the key path, such as
+`randomizers.camera_pose.params.distance_range`. See
+[DEVELOPMENT.md](DEVELOPMENT.md#yaml-driven-bin-picking) for the file
+structure.
 
 ### Register local assets
 
-`ModelAsset`, `MaterialAsset`, and `BackgroundAsset` describe files without
-loading Blender data. `from_path()` creates one descriptor; `discover()`
-recursively returns descriptors in deterministic order. `Environment.add()`
-registers one descriptor or an iterable of descriptors, such as the list
-returned by `discover()`:
+`config.ModelConfig`, `config.MaterialConfig`, and `config.BackgroundConfig`
+describe files without loading Blender data. `from_path()` creates one config;
+`discover()` recursively returns configs in deterministic order.
+`Environment.add()` registers one config or an iterable of configs, such as the
+list returned by `discover()`:
 
 ```python
-from telekinesis.illusion.types import BackgroundAsset, MaterialAsset, ModelAsset
+from telekinesis.illusion import config
 
-environment.add(ModelAsset.from_path("extra_assets/gear.glb", model_name="gear"))
-environment.add(MaterialAsset.from_path(
-    "extra_assets/Steel_1K", groups="metal/steel"))
-environment.add(BackgroundAsset.discover(
-    "extra_assets/hdris/industrial", group_prefix="indoor/industrial"
-))
+environment.add(
+    config.ModelConfig.from_path("extra_assets/gear.glb", model_name="gear")
+)
+environment.add(
+    config.MaterialConfig.from_path("extra_assets/Steel_1K", groups="metal/steel")
+)
+environment.add(
+    config.BackgroundConfig.discover(
+        "extra_assets/hdris/industrial", group_prefix="indoor/industrial"
+    )
+)
 ```
 
 Material directories use `<directory-name>_Color.png`, `.jpg`, or `.jpeg`;
 other texture maps are optional. Backgrounds accept `.hdr` and `.exr` files.
 Names default to the material directory name or file stem and must be unique
-within each asset type. Existing `ModelAsset(path, model_name, ...)` calls remain
-valid; model selection groups do not change annotation categories.
+within each asset type. Model selection groups do not change annotation
+categories.
 
 `environment.model_manager` owns model registration, categories, instance pools,
 activation, and sample resets. Existing `Environment` model methods remain
 available. Use `environment.prepare()` and `environment.clean_up()` to coordinate
 the model lifecycle with shared Blender scene setup and teardown.
 
-Direct material and background descriptors require groups. `indoor/industrial`
+Material and background configs require groups. `indoor/industrial`
 includes membership in both `indoor` and `indoor/industrial`. Discovery derives
 groups from relative parent directories. Supply `group_prefix` when the root
 itself contains assets or represents part of an existing hierarchy.
 
 The environment registers nothing implicitly: add every model, material, and
 background that a randomizer should be able to choose. Randomizers only select
-from the registered assets, by group or by name:
-`MaterialRandomizer(target_models, groups=["metal/steel"])` and
-`BackgroundRandomizer(groups=["indoor/industrial"])`, or `names=[...]` for
-individual assets. Without a selection, every registered asset is eligible.
+from the registered assets, by group or by name. Each randomizer takes its
+config:
+`MaterialRandomizer(config.MaterialRandomizerConfig(target_models=("gear",), groups=("metal/steel",)))`
+and
+`BackgroundRandomizer(config.BackgroundRandomizerConfig(groups=("indoor/industrial",)))`,
+or `names=(...)` for individual assets. Without a selection, every registered
+asset is eligible.
 Registration does not load a material or activate a background; randomizers
 apply them later. URL download and archive support are deferred.
 
@@ -172,7 +187,7 @@ python -m pip install -e ".[viewer]"
 ```
 
 ```bash
-python examples/view_dataset.py output/example_bin_picking_gearwheel_2/coco_format
+python examples/view_dataset.py output/bin_picking_example/coco_format
 ```
 
 The script detects native shards and merged datasets as well as exported COCO

@@ -9,9 +9,9 @@ from typing import Callable, List, Dict, Tuple
 import random
 import numpy as np
 from loguru import logger
-from copy import deepcopy
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 
+from telekinesis.illusion import config
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 # Must run before bpy is imported. See blender_env.py for why.
@@ -30,20 +30,19 @@ from telekinesis.illusion.blender.collision import CollisionUtility
 from telekinesis.illusion.types.distribution import Uniform
 from telekinesis.illusion.core.environment import Environment
 from telekinesis.illusion.types.model import Model
-from telekinesis.illusion.types.light import AREA_SHAPES, Light, _vector
+from telekinesis.illusion.types.light import Light
+from telekinesis.illusion.randomizer import instance_counts
 from telekinesis.illusion.randomizer.materials import (
     AllSlots,
-    MaterialChoice,
-    MaterialMode,
     MaterialPool,
-    MaterialSlots,
-    MaterialTarget,
     PBRMaterial,
     _names,
     assign_material,
     clean_generated_materials,
-    material_choices_from_config,
     slot_pools,
+)
+from telekinesis.illusion.sampler.camera_pose_sampler import (
+    CAMERA_POSE_SAMPLERS,
 )
 
 # Stages group the randomizer nodes by what part of the scene they change, so
@@ -106,15 +105,16 @@ class ModelPoseRandomizer(RandomizerNode):
         def sample_pose(model):
             model.set_location(np.zeros(3))
 
-        randomizer = ModelPoseRandomizer(sample_pose, ["part"])
+        randomizer = ModelPoseRandomizer(
+            config.ModelPoseRandomizerConfig(), sample_pose, ["part"]
+        )
     """
 
     def __init__(
         self,
+        randomizer_config: config.ModelPoseRandomizerConfig,
         pose_sampling_function: Callable[[Model], None],
-        target_models: List[str] = [],
-        max_tries: int = 10,
-        sample_on_surface: str | None = None,
+        target_models: Sequence[str] = (),
         surface_name_resolver: Callable[["Environment"], str] | None = None,
     ) -> None:
         """
@@ -135,30 +135,25 @@ class ModelPoseRandomizer(RandomizerNode):
                 )
 
         Args:
-            target_models: List[str]
-                A list of the target model names.
+            randomizer_config: config.ModelPoseRandomizerConfig
+                Placement attempts per model and the optional surface the
+                poses are sampled on.
             pose_sampling_function: Callable[[Model], None]
                 A sampling function that takes a Model as its argument and
                 sets its location and orientation according to some sampling
                 logic. This function is used to randomly place the models in
                 the current scene and returns None.
-            max_tries: int
-                The maximum number of attempts for trying to place the model
-                collisionfree with the provided 'pose_sampling_function'.
-                If the model can not be placed wihtout collison after
-                'max_tries' attempts, it is hidden for the current rendering.
-            sample_on_surface: str or None
-                If provided, the sampling function samples the poses on this
-                surface (static name).
+            target_models: Sequence[str]
+                Prefixes of the instance names of the target models. Empty
+                targets all visible models.
             surface_name_resolver: Callable or None
-                If provided and sample_on_surface is None, this callable is
-                invoked with the Environment at randomize-time to dynamically
-                resolve the surface name.
+                If provided and the config has no sample_on_surface, this
+                callable is invoked with the Environment at randomize-time to
+                dynamically resolve the surface name.
         """
+        self.randomizer_config = randomizer_config
         self.pose_sampling_function = pose_sampling_function
-        self.target_models = target_models
-        self.max_tries = max_tries
-        self._sample_on_surface = sample_on_surface
+        self.target_models = list(target_models)
         self._surface_name_resolver = surface_name_resolver
 
     def randomize(self, environment: Environment) -> None:
@@ -194,7 +189,7 @@ class ModelPoseRandomizer(RandomizerNode):
         if not visible_target_models:
             return
 
-        surface_name = self._sample_on_surface
+        surface_name = self.randomizer_config.sample_on_surface
         if surface_name is None and self._surface_name_resolver is not None:
             surface_name = self._surface_name_resolver(environment)
 
@@ -212,7 +207,7 @@ class ModelPoseRandomizer(RandomizerNode):
                 visible_target_models,
                 models_to_check_collisions=visible_target_models,
                 sample_pose_func=self.pose_sampling_function,
-                max_tries=self.max_tries,
+                max_tries=self.randomizer_config.max_tries,
             )
 
     def sample_poses(
@@ -661,48 +656,37 @@ class ModelInstanceRandomizer(RandomizerNode):
     disjoint instances. Pose/material nodes don't reserve additional models.
 
     Example:
-        randomizer = ModelInstanceRandomizer({"gear": (1, 3)})
+        randomizer = ModelInstanceRandomizer(
+            config.InstanceRandomizerConfig(counts={"gear": (1, 3)})
+        )
     """
 
     def __init__(
-        self,
-        counts: Mapping[str, tuple[int, int]],
-        min_num_total_models: int | None = None,
-        max_num_total_models: int | None = None,
-    ):
-        from telekinesis.illusion.randomizer.instance_counts import (
-            validate_counts,
-        )
+        self, randomizer_config: config.InstanceRandomizerConfig
+    ) -> None:
+        """Create the node from validated instance bounds.
 
-        self.counts = {name: tuple(bounds) for name, bounds in counts.items()}
-        self.target_models = list(self.counts)
-        self.min_num_total_models = min_num_total_models
-        self.max_num_total_models = max_num_total_models
-        validate_counts(
-            self.counts, min_num_total_models, max_num_total_models
-        )
+        Args:
+            randomizer_config: Per-model and total instance bounds, keyed by
+                registered model name.
+        """
+        self.randomizer_config = randomizer_config
 
     def required_instances(self) -> dict[str, int]:
-        from telekinesis.illusion.randomizer.instance_counts import (
-            validate_counts,
+        cfg = self.randomizer_config
+        _, total_max = instance_counts.validate_counts(
+            cfg.counts, cfg.min_num_total_models, cfg.max_num_total_models
         )
-
-        _, total_max = validate_counts(
-            self.counts, self.min_num_total_models, self.max_num_total_models
-        )
-        minimum_sum = sum(bounds[0] for bounds in self.counts.values())
+        minimum_sum = sum(bounds[0] for bounds in cfg.counts.values())
         return {
             name: int(min(bounds[1], total_max - minimum_sum + bounds[0]))
-            for name, bounds in self.counts.items()
+            for name, bounds in cfg.counts.items()
         }
 
     def randomize(self, environment: Environment) -> None:
-        from telekinesis.illusion.randomizer.instance_counts import (
-            sample_counts,
-        )
-
-        selected = sample_counts(
-            self.counts, self.min_num_total_models, self.max_num_total_models
+        cfg = self.randomizer_config
+        selected = instance_counts.sample_counts(
+            cfg.counts, cfg.min_num_total_models, cfg.max_num_total_models
         )
         active = set(environment.get_visible_model_names())
         for name, count in selected.items():
@@ -723,110 +707,108 @@ class ModelInstanceRandomizer(RandomizerNode):
 class BackgroundRandomizer(RandomizerNode):
     """Choose one of the HDRIs registered in the environment.
 
-    Selects the union of the assets in the requested groups and the requested
-    asset names. Groups are exact normalized groups, including ancestors such
-    as "indoor". Without a selection, every registered background is eligible.
-    Backgrounds are registered with Environment.add(); this randomizer does
-    not discover files.
+    Selects the union of the backgrounds in the configured groups and the
+    configured names. Groups are exact normalized groups, including ancestors
+    such as "indoor". Without a selection, every registered background is
+    eligible. Backgrounds are registered with Environment.add(); this
+    randomizer does not discover files.
 
     Example:
-        randomizer = BackgroundRandomizer(groups=["indoor/industrial"])
+        randomizer = BackgroundRandomizer(
+            config.BackgroundRandomizerConfig(groups=("indoor/industrial",))
+        )
         randomizer.randomize(environment)
     """
 
     def __init__(
-        self,
-        groups: Sequence[str] | None = None,
-        names: Sequence[str] | None = None,
+        self, randomizer_config: config.BackgroundRandomizerConfig
     ) -> None:
         """Create a selection over registered backgrounds.
 
         Args:
-            groups: Groups whose backgrounds are eligible. None or empty adds
-                no groups to the selection.
-            names: Names of individual backgrounds that are eligible. None or
-                empty adds no names to the selection.
+            randomizer_config: Groups and names of the eligible backgrounds.
 
         Unknown groups or names, or an empty selection, raise ValueError when
         the randomizer is prepared against an environment.
         """
-        self.groups = None if groups is None else list(groups)
-        self.names = None if names is None else list(names)
+        self.randomizer_config = randomizer_config
 
     def prepare(self, environment: Environment) -> None:
         """Validate the selection against the environment's backgrounds."""
-        environment.background_manager.get_names(self.groups, self.names)
+        environment.background_manager.get_names(
+            self.randomizer_config.groups, self.randomizer_config.names
+        )
 
     def randomize(self, environment: Environment) -> None:
         """Select a registered HDRI and apply it to the environment's world."""
         manager = environment.background_manager
-        name = random.choice(manager.get_names(self.groups, self.names))
+        name = random.choice(
+            manager.get_names(
+                self.randomizer_config.groups, self.randomizer_config.names
+            )
+        )
         environment.get_background().set_background_texture(
             str(manager.assets_by_name[name].path)
         )
 
 
 class MaterialRandomizer(RandomizerNode):
-    """Randomize materials with independent target/source/assignment policies.
+    """Randomize the materials of registered models.
 
-    Existing calls keep prefix matching and active-slot PBR assignment. Use
-    mode='model' for one sample across every slot of each selected mesh.
-    material_slots='all' samples every slot independently; a mapping assigns
-    separate pools to selected original slot names or zero-based indices.
-    Named slots must exist on every selected mesh. Use separate nodes when
-    parts have different layouts. A seed gives this node a private RNG stream.
+    Targets are the instances of the models selected by the config's
+    target_models and target_groups. Mode 'active' replaces the active
+    material slot, mode 'model' uses one sample across every slot of each
+    target, and mode 'slots' samples slots independently. A mapping of
+    material slots assigns separate choices to original slot names or
+    zero-based indices; named slots must exist on every target. Use separate
+    nodes when targets have different slot layouts. A seed gives this node a
+    private random number generator.
+
+    Example:
+        randomizer = MaterialRandomizer(
+            config.MaterialRandomizerConfig(
+                target_groups=("part",), groups=("metal",)
+            ),
+            environment,
+        )
     """
 
     def __init__(
         self,
-        target_models: list[str] | MaterialTarget,
+        randomizer_config: config.MaterialRandomizerConfig,
         environment: Environment | None = None,
-        groups: Sequence[str] | None = None,
-        names: Sequence[str] | None = None,
-        *,
-        mode: MaterialMode | None = None,
-        materials: Sequence[MaterialChoice] | None = None,
-        material_slots: MaterialSlots | None = None,
-        seed: int | None = None,
     ) -> None:
-        if isinstance(target_models, MaterialTarget):
-            self.target_models = target_models
-        else:
-            self.target_models = list(_names(target_models, "target_models"))
-        if mode not in (None, "active", "model", "slots"):
-            raise ValueError("mode must be 'active', 'model' or 'slots'.")
-        selects_registered = groups is not None or names is not None
-        if selects_registered and materials is not None:
-            raise ValueError("Use either groups/names or materials, not both.")
-        if material_slots is not None and mode not in (None, "slots"):
-            raise ValueError("material_slots requires mode='slots'.")
-        if seed is not None and (
-            isinstance(seed, bool) or not isinstance(seed, int)
-        ):
-            raise ValueError("seed must be an integer or None.")
-        self._mode = mode or (
+        """Create the material sources described by the config.
+
+        Args:
+            randomizer_config: Target models, material sources, assignment
+                mode and seed.
+            environment: If given, the node is prepared immediately, which
+                validates the targets and loads the selected PBR materials.
+        """
+        cfg = randomizer_config
+        self.randomizer_config = randomizer_config
+        self._mode = cfg.mode or (
             "slots"
-            if material_slots is not None
+            if cfg.material_slots is not None
             else "model"
-            if materials is not None
+            if cfg.materials is not None
             else "active"
         )
-        self._rng = random if seed is None else random.Random(seed)
-        self.groups = None if groups is None else list(groups)
-        self.names = None if names is None else list(names)
-        self.configuration = None
-        if self._mode == "slots" and material_slots != "all":
-            if materials is not None or selects_registered:
-                raise ValueError(
-                    "Put material choices inside the slot mapping."
-                )
-            self._slot_pools = slot_pools(material_slots)
+        self._rng = random if cfg.seed is None else random.Random(cfg.seed)
+        if self._mode == "slots" and cfg.material_slots != "all":
+            self._slot_pools = slot_pools(
+                {
+                    slot: self._material_choices(choices)
+                    for slot, choices in cfg.material_slots.items()
+                }
+            )
             self._pool = None
         else:
             self._pool = MaterialPool(
-                materials
-                if materials is not None
-                else [PBRMaterial(groups, names)]
+                self._material_choices(cfg.materials)
+                if cfg.materials is not None
+                else [PBRMaterial(cfg.groups, cfg.names)]
             )
             self._slot_pools = (
                 [(AllSlots(), self._pool)] if self._mode == "slots" else []
@@ -835,7 +817,29 @@ class MaterialRandomizer(RandomizerNode):
         if environment is not None:
             self.prepare(environment)
 
+    @staticmethod
+    def _material_choices(choices) -> list:
+        """Turn configured choices into material pool choices.
+
+        Args:
+            choices: PBR group names and Principled recipe configs.
+
+        Returns:
+            The group names unchanged and each recipe as a PrincipledMaterial.
+        """
+        return [
+            choice
+            if isinstance(choice, str)
+            else choice.to_principled_material()
+            for choice in choices
+        ]
+
     def prepare(self, environment: Environment) -> None:
+        """Validate the targets and load the selected materials once."""
+        environment.model_manager.get_names(
+            self.randomizer_config.target_groups,
+            self.randomizer_config.target_models,
+        )
         if self._prepared_manager is environment.material_manager:
             return
         pools = [p for _, p in self._slot_pools] or [self._pool]
@@ -843,49 +847,16 @@ class MaterialRandomizer(RandomizerNode):
             pool.prepare(environment.material_manager)
         self._prepared_manager = environment.material_manager
 
-    @classmethod
-    def from_config(cls, target_models, environment, config):
-        """Build from a legacy PBR list or an explicit YAML/JSON mapping."""
-        if isinstance(config, list):
-            result = cls(target_models, environment, groups=config)
-        elif isinstance(config, Mapping):
-            unknown = set(config) - {
-                "types",
-                "groups",
-                "names",
-                "materials",
-                "material_slots",
-                "mode",
-                "seed",
-            }
-            if unknown:
-                raise ValueError(
-                    f"Unknown material randomizer keys: {unknown}."
-                )
-            kwargs = dict(config)
-            # "types" is the configuration-file spelling of groups.
-            if "types" in kwargs:
-                if "groups" in kwargs:
-                    raise ValueError("Use either types or groups, not both.")
-                kwargs["groups"] = kwargs.pop("types")
-            if "materials" in kwargs:
-                kwargs["materials"] = material_choices_from_config(
-                    kwargs["materials"]
-                )
-            if isinstance(kwargs.get("material_slots"), Mapping):
-                kwargs["material_slots"] = {
-                    slot: material_choices_from_config(choices)
-                    for slot, choices in kwargs["material_slots"].items()
-                }
-            result = cls(target_models, environment, **kwargs)
-        else:
-            raise TypeError("Material configuration must be a list or mapping.")
-        result.configuration = deepcopy(config)
-        return result
-
     def randomize(self, environment: Environment) -> None:
         self.prepare(environment)
-        targets = self._targets(environment)
+        targets = [
+            model
+            for name in environment.model_manager.get_names(
+                self.randomizer_config.target_groups,
+                self.randomizer_config.target_models,
+            )
+            for model in environment.get_model_group(name)
+        ]
         # Resolve every target before sampling or mutation, so bad selectors
         # cannot leave a partially randomized asset behind.
         plan = [(model, self._assignments(model)) for model in targets]
@@ -898,16 +869,6 @@ class MaterialRandomizer(RandomizerNode):
                     assign_material(model, indices, material)
         finally:
             clean_generated_materials()
-
-    def _targets(self, environment):
-        if isinstance(self.target_models, MaterialTarget):
-            return self.target_models.resolve(environment)
-        prefixes = tuple(self.target_models)
-        return [
-            model
-            for name, model in environment.get_models().items()
-            if name.startswith(prefixes)
-        ]
 
     def _assignments(self, model):
         if self._mode == "slots":
@@ -949,54 +910,53 @@ def _light_targets(environment: Environment, names) -> list[Light]:
 class LightRandomizer(RandomizerNode):
     """Sample properties independently for each named light.
 
-    None selects all registered lights; explicit names match exactly. Numeric
-    properties accept fixed values or ``uniform(min, max)`` (including RGB).
-    ``shape`` accepts a fixed area shape or a non-empty sequence of choices.
-    See Light for properties and units. Unsupported properties raise before
-    any target changes; use separate nodes for different light types.
+    None selects all registered lights; explicit names match exactly. Each
+    configured property is fixed, a uniform range (including RGB), or for
+    ``shape`` a list of area shapes. See config.LightConfig for properties and
+    units. Properties unsupported by a target's light type raise before any
+    target changes; use separate nodes for different light types.
+
+    Example:
+        randomizer = LightRandomizer(
+            config.LightRandomizerConfig(
+                properties={"power": {"min": 20.0, "max": 60.0}}
+            ),
+            ["key"],
+        )
     """
 
     def __init__(
         self,
+        randomizer_config: config.LightRandomizerConfig,
         target_lights: Sequence[str] | None = None,
-        *,
-        seed: int | None = None,
-        **properties,
     ) -> None:
+        """Create the node for a set of lights.
+
+        Args:
+            randomizer_config: Property values, ranges or choices, and seed.
+            target_lights: Exact names of the target lights. None targets all
+                registered lights.
+        """
+        self.randomizer_config = randomizer_config
         self.target_lights = (
             None
             if target_lights is None
             else _names(target_lights, "target_lights")
         )
-        if seed is not None and (
-            isinstance(seed, bool) or not isinstance(seed, int)
-        ):
-            raise ValueError("seed must be an integer or None.")
-        if not properties:
-            raise ValueError("Supply at least one light property to randomize.")
-        self._rng = random if seed is None else random.Random(seed)
-        self._properties = deepcopy(properties)
+        self._rng = (
+            random
+            if randomizer_config.seed is None
+            else random.Random(randomizer_config.seed)
+        )
 
     def randomize(self, environment: Environment) -> None:
         lights = _light_targets(environment, self.target_lights)
         # Validate range endpoints and all choices before sampling or mutation.
         for light in lights:
-            for name, value in self._properties.items():
-                if isinstance(value, Uniform):
-                    choices = (value.min.tolist(), value.max.tolist())
-                elif name == "shape" and not isinstance(value, str):
-                    if not isinstance(value, Sequence) or not value:
-                        raise ValueError(
-                            f"shape needs choices from {AREA_SHAPES}."
-                        )
-                    choices = value
-                else:
-                    choices = (value,)
-                for choice in choices:
-                    Light._validate_properties(light.get_type(), {name: choice})
+            self.randomizer_config.check_light_type(light.get_type())
         for light in lights:
             sampled = {}
-            for name, value in self._properties.items():
+            for name, value in self.randomizer_config.properties.items():
                 if isinstance(value, Uniform):
                     values = [
                         self._rng.uniform(low, high)
@@ -1012,48 +972,49 @@ class LightRandomizer(RandomizerNode):
 class LightPoseRandomizer(RandomizerNode):
     """Sample poses with clearance from every visible mesh in the environment.
 
-    The callable follows CameraPoseRandomizer:
-    ``sampler(environment=..., **kwargs)`` returns (location in meters,
-    XYZ Euler radians). Existing shell_sampler
-    aims the light at its center; use positive elevations for overhead lights.
-    Run after model placement and LightRandomizer so the bounds and emitter
-    sizes are current. Clearance is checked at the time this node runs.
+    The configured sampler returns a location in meters and XYZ Euler angles
+    in radians; shell_sampler aims the light at its center, so use positive
+    elevations for overhead lights. Run after model placement and
+    LightRandomizer so the bounds and emitter sizes are current. Clearance is
+    checked at the time this node runs.
 
-    ``min_distance`` is measured from the emitter's enclosing sphere to each
-    mesh's world AABB, including containers and unregistered environment meshes.
-    SUN has no finite position and is exempt. An exhausted retry budget raises
-    RuntimeError and leaves every targeted light's pose unchanged.
+    The clearance is measured from the emitter's enclosing sphere to each
+    mesh's world AABB, including containers and unregistered environment
+    meshes. SUN has no finite position and is exempt. An exhausted retry
+    budget raises RuntimeError and leaves every targeted light's pose
+    unchanged.
+
+    Example:
+        randomizer = LightPoseRandomizer(
+            config.LightPoseRandomizerConfig(min_distance=0.3), ["key"]
+        )
     """
 
     def __init__(
         self,
-        pose_sampling_function: Callable[..., tuple[np.ndarray, np.ndarray]],
+        randomizer_config: config.LightPoseRandomizerConfig,
         target_lights: Sequence[str] | None = None,
-        min_distance: float = 0.25,
-        max_tries: int = 100,
-        **kwargs,
     ) -> None:
-        if not callable(pose_sampling_function):
-            raise TypeError("pose_sampling_function must be callable.")
-        if not np.isfinite(min_distance) or min_distance < 0:
-            raise ValueError("min_distance must be finite and non-negative.")
-        if (
-            isinstance(max_tries, bool)
-            or not isinstance(max_tries, int)
-            or max_tries < 1
-        ):
-            raise ValueError("max_tries must be a positive integer.")
+        """Create the node for a set of lights.
+
+        Args:
+            randomizer_config: Pose sampler, its parameters, clearance and
+                retry budget.
+            target_lights: Exact names of the target lights. None targets all
+                registered lights.
+        """
+        self.randomizer_config = randomizer_config
         self.target_lights = (
             None
             if target_lights is None
             else _names(target_lights, "target_lights")
         )
-        self.min_distance = min_distance
-        self.max_tries = max_tries
-        self._pose_sampling_function = pose_sampling_function
-        self._kwargs = kwargs
+        self._pose_sampling_function = CAMERA_POSE_SAMPLERS[
+            randomizer_config.sampler
+        ]
 
     def randomize(self, environment: Environment) -> None:
+        cfg = self.randomizer_config
         lights = _light_targets(environment, self.target_lights)
         bpy.context.view_layer.update()
         # shortcut: AABBs over-reject; use mesh distances for tight placements.
@@ -1065,15 +1026,20 @@ class LightPoseRandomizer(RandomizerNode):
         boxes = [
             (corners.min(axis=0), corners.max(axis=0)) for corners in bounds
         ]
+        params = cfg.params.to_dict()
         poses = []
         for light in lights:
-            clearance = self.min_distance + light.get_emitter_radius()
-            for _ in range(self.max_tries):
+            clearance = cfg.min_distance + light.get_emitter_radius()
+            for _ in range(cfg.max_tries):
                 location, rotation = self._pose_sampling_function(
-                    environment=environment, **self._kwargs
+                    environment=environment, **params
                 )
-                location = _vector(location, "sampled light location")
-                rotation = _vector(rotation, "sampled light rotation")
+                location = config.as_vector3(
+                    location, "sampled light location"
+                )
+                rotation = config.as_vector3(
+                    rotation, "sampled light rotation"
+                )
                 if light.get_type() == "SUN" or all(
                     np.linalg.norm(location - np.clip(location, lower, upper))
                     > clearance
@@ -1084,7 +1050,7 @@ class LightPoseRandomizer(RandomizerNode):
             else:
                 raise RuntimeError(
                     f"Could not place light {light.get_name()!r} with "
-                    f"{self.min_distance} m clearance after {self.max_tries} attempts."
+                    f"{cfg.min_distance} m clearance after {cfg.max_tries} attempts."
                 )
         for light, location, rotation in poses:
             light.set_location(location)
@@ -1092,47 +1058,46 @@ class LightPoseRandomizer(RandomizerNode):
 
 
 class CameraPoseRandomizer(RandomizerNode):
-    """
-    Class for randomizing the pose of the camera.
+    """Sample one camera pose per rendered view.
+
+    Example:
+        randomizer = CameraPoseRandomizer(
+            config.CameraPoseRandomizerConfig(
+                sampler="shell_sampler", number_of_views=2
+            )
+        )
     """
 
     def __init__(
-        self,
-        pose_sampling_function: Callable[..., Tuple[np.ndarray, np.ndarray]],
-        number_of_views: int = 0,
-        **kwargs,
+        self, randomizer_config: config.CameraPoseRandomizerConfig
     ) -> None:
         """
         Initialize the internal states.
 
         Args:
-            pose_sampling_function: Callable[..., Any]
-                A sampling function that samples 6-DoF pose and returns a
-                location and XYZ Euler angles as seperate np.ndarray.
-                Called with environment= and the supplied keyword arguments.
-            number_of_views: int
-                Number of views to render for each scene realization.
-            **kwargs:
-                Named arguments for the pose sampling function.
+            randomizer_config: config.CameraPoseRandomizerConfig
+                Pose sampler, its parameters, and the number of views per
+                scene.
         """
-        self._number_of_views = number_of_views
-        self._kwargs = kwargs
-        self._pose_sampling_function = pose_sampling_function
+        self.randomizer_config = randomizer_config
+        self._pose_sampling_function = CAMERA_POSE_SAMPLERS[
+            randomizer_config.sampler
+        ]
 
     def randomize(self, environment: Environment) -> None:
         """
-        Randomizes the camera pose(s) for the configured number of views
-        according to the provided 'pose_sampling_function' and its arguments
-        'kwargs'.
+        Sample a camera pose for each configured view with the configured
+        sampler and its parameters.
 
         Args:
             environment: Environment
                 Environment containing the camera.
         """
         camera = environment.get_camera()
-        for frame in range(self._number_of_views):
+        params = self.randomizer_config.params.to_dict()
+        for frame in range(self.randomizer_config.number_of_views):
             location, rotation_euler = self._pose_sampling_function(
-                environment=environment, **self._kwargs
+                environment=environment, **params
             )
 
             rotation_matrix = Euler(rotation_euler).to_matrix()

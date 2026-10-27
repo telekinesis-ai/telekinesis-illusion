@@ -4,32 +4,36 @@ import random
 from collections.abc import Sequence
 from pathlib import Path
 
+from telekinesis.illusion import config
 from telekinesis.illusion.blender.loaders.material_loader import load_material_asset
 from telekinesis.illusion.blender.types.material import Material
 from telekinesis.illusion.core.asset_manager import AssetManager
-from telekinesis.illusion.types.material_asset import MaterialAsset
 from telekinesis.illusion.utils.assets import resolve_asset_dir
 
 
-class MaterialManager(AssetManager[MaterialAsset]):
+class MaterialManager(AssetManager[config.MaterialConfig]):
     """Register PBR descriptors and cache loaded materials separately by name.
 
-    assets_by_name holds descriptors and names_by_group indexes their normalized
+    assets_by_name holds material configs and names_by_group indexes their normalized
     groups in registration order. add() validates a copy, rejects duplicate names
     with ValueError, and never loads textures. Nothing is registered
     implicitly; register materials with add(), for example from
-    MaterialAsset.discover(). update_materials() loads selected materials, and
+    config.MaterialConfig.discover(). update_materials() loads selected materials, and
     get_random_material() samples a group uniformly, then one material within
     it. Without groups, top-level groups are used.
 
     Example:
         manager = MaterialManager("assets")
-        manager.add(MaterialAsset.from_path("assets/materials/metal/Metal001", groups="metal"))
+        manager.add(
+            config.MaterialConfig.from_path(
+                "assets/materials/metal/Metal001", groups="metal"
+            )
+        )
         manager.update_materials(groups=["metal"])
         material = manager.get_random_material(["metal"])
     """
 
-    _asset_type = MaterialAsset
+    _asset_type = config.MaterialConfig
 
     def __init__(
         self,

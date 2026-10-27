@@ -21,7 +21,7 @@ def main(argv: Sequence[str] = ()) -> None:
         default=(
             Path(__file__).resolve().parents[1]
             / "configs"
-            / "example_bin_picking_gearwheel_2.yaml"
+            / "bin_picking_example.yaml"
         ),
         help="Path to the bin-picking YAML configuration (default: %(default)s).",
     )

@@ -55,7 +55,7 @@ rendered passes. The writer consumes that result without querying the live scene
 The diagram includes the system's entrypoints and asset families. This branch
 provides Python examples and YAML workers, with `BlenderEngine` as the engine
 implementation and `CocoWriter` as the concrete writer. Model loading currently
-uses single-mesh `ModelAsset` definitions; a URDF loader and a Blender extension
+uses single-mesh `ModelConfig` definitions; a URDF loader and a Blender extension
 entrypoint are not included in this source tree.
 
 ## Component responsibilities
@@ -68,7 +68,7 @@ entrypoint are not included in this source tree.
 | [MaterialManager](src/telekinesis/illusion/core/material_manager.py) / [BackgroundManager](src/telekinesis/illusion/core/background_manager.py) | Register material and HDRI descriptors by name and selection group; MaterialManager also loads and caches Blender materials. |
 | Scene (realization) | The selected instances and sampled properties for one generation sample, including its camera views. |
 | [Randomizer](src/telekinesis/illusion/randomizer/randomizer.py) | Plans instance capacity and executes the rules that realize or update a scene in the environment. |
-| [BlenderEngine](src/telekinesis/illusion/core/engine.py) | Configures rendering and physics, simulates the scene, and produces captured batches. Uses `RenderConfig` and `PhysicsConfig`. |
+| [BlenderEngine](src/telekinesis/illusion/core/engine.py) | Configures rendering and physics, simulates the scene, and produces captured batches. Uses `config.RenderConfig` and `config.PhysicsConfig`. |
 | [RenderResult](src/telekinesis/illusion/types/render_result.py) | Carries rendered pass data, category mappings, and capture metadata independently of the scene's lifetime. |
 | [Writer / CocoWriter](src/telekinesis/illusion/writer/writer.py) | Declares required segmentation attributes and writes a captured batch, returning the number of images written. |
 
@@ -110,20 +110,21 @@ when a later operation fails.
 
 ### Registration and instance pools
 
-A [ModelAsset](src/telekinesis/illusion/types/model_asset.py) is a frozen model
-reference and import configuration; constructing it does not import geometry.
-`Environment.add()` delegates model registration to `environment.model_manager`,
-which validates its path, scale, name, and annotation category, then returns a
-normalized copy without changing the input specification. Existing environment
+A [ModelConfig](src/telekinesis/illusion/config.py) is a frozen model
+reference and import configuration; constructing it validates its settings but
+does not import geometry. `Environment.add()` delegates model registration to
+`environment.model_manager`, which checks that the file exists, rejects
+duplicate names, and resolves the annotation category, then returns a
+normalized copy without changing the input config. Existing environment
 model methods delegate to the manager, including the read-only definition view
 returned by `get_assets()`. The environment also accepts `LightConfig`
-descriptors. `environment.light_manager` creates each light from its config,
+configs. `environment.light_manager` creates each light from its config,
 registered separately from model definitions and mesh instances, and
 `environment.camera_manager` creates the camera from a `CameraConfig` added the
 same way.
 
-`MaterialAsset` and `BackgroundAsset` are immutable, Blender-independent
-descriptors of one PBR texture directory or HDRI file. All three descriptors
+`MaterialConfig` and `BackgroundConfig` are immutable, Blender-independent
+descriptions of one PBR texture directory or HDRI file. All three asset configs
 support local `from_path()` and recursive `discover()` creation through shared
 validation and traversal. Selection groups include slash-separated ancestors;
 model groups remain independent of annotation categories. Discovery stops at
@@ -143,8 +144,8 @@ Loaded Blender materials are cached separately; `Background` only applies a
 selected HDRI to the world. Registration does not load textures or activate
 HDRIs. Randomizers select registered assets by group or name; material
 preparation loads only the requested materials. Procedural
-`PrincipledMaterial` recipes, including their value ranges, are not assets and
-are passed directly to `MaterialRandomizer(materials=...)`.
+`PrincipledMaterialConfig` recipes, including their value ranges, are not
+assets and are listed in `MaterialRandomizerConfig.materials`.
 
 `ModelManager.prepare()` imports each requested asset once and creates live
 [Model](src/telekinesis/illusion/types/model.py) instances through linked
@@ -171,7 +172,7 @@ The environment creates its camera, background, and asset managers during
 construction. Lights must be constructed after the environment. Its asset
 directory supplies the initial background and material registrations. Workers
 resolve model paths against their configured asset directory; direct
-`ModelAsset` paths are relative to the working directory unless absolute.
+`ModelConfig` paths are relative to the working directory unless absolute.
 
 There is one active Blender scene per process. Constructing another `Environment`
 resets the shared Blender state. `Environment.clean_up()` resets that state and
@@ -224,10 +225,8 @@ configuration selects the device, sample count, and optional depth and normal
 passes. The normal segmentation path uses Blender's object-index pass to
 produce instance maps and associated attributes.
 
-Physics is optional. When a catch plane is configured, the engine reuses an
-invisible plane below the active container and can deactivate escaped models.
-The plane participates only during simulation, is disabled even if simulation
-fails, and is released during engine cleanup.
+Physics is optional. When it is active, the engine simulates the active
+models and keeps their settled poses.
 
 Each `RenderResult` carries:
 
@@ -263,8 +262,10 @@ captured by the engine, but `CocoWriter` does not export those arrays.
 
 [BinPickingWorker](src/telekinesis/illusion/workers/bin_picking_worker.py)
 resolves a YAML config file into an environment, randomization nodes,
-rendering settings, and a writer. Relative asset roots are anchored to the YAML
-file. Its generation loop changes the writer's output directory for each shard
+rendering settings, and a writer. Every section is first validated as its
+config from [config.py](src/telekinesis/illusion/config.py), and the configs
+are passed to the classes that use them. Relative asset roots are anchored to
+the YAML file. Its generation loop changes the writer's output directory for each shard
 and reuses prepared pools until the run completes or fails, then cleans up.
 The output-size limit is checked after each shard.
 
@@ -278,7 +279,7 @@ image and annotation IDs, updates image paths, and validates category mappings.
 [DatasetConverter](src/telekinesis/illusion/dataset/converter.py) then creates
 train/validation/test splits in COCO or YOLO format. These operations consume
 the generated files rather than live scene state. Shard accumulation can use
-`output.dataset_format: null`, with format export performed after generation.
+`dataset.writer.dataset_format: null`, with format export performed after generation.
 
 ## Blender integration and supporting modules
 
@@ -294,11 +295,11 @@ configuration. Wrappers created inside a reverted block must not escape it.
 
 | Package | Supporting role |
 | --- | --- |
-| [types/](src/telekinesis/illusion/types/) | Model specifications and instances, cameras, lights, material recipes, and captured results. |
+| [config.py](src/telekinesis/illusion/config.py) | Validated, immutable configs for assets, scene, randomizers, rendering, physics, and output. |
+| [types/](src/telekinesis/illusion/types/) | Model instances, cameras, lights, material recipes, and captured results. |
 | [sampler/](src/telekinesis/illusion/sampler/) | Camera, grid, and region sampling used by randomizers and workers. |
 | [utils/](src/telekinesis/illusion/utils/) | Asset-path resolution and isolation from Blender user-extension packages. |
 | [viewer/](src/telekinesis/illusion/viewer/) | Optional inspection of generated datasets. |
 
-Existing workers use legacy physics keywords accepted by the generator;
-the engine's `PhysicsConfig` and `RenderConfig` hold those settings for new
-integrations.
+The engine's `PhysicsConfig` and `RenderConfig` hold the simulation and render
+settings for every generation run.

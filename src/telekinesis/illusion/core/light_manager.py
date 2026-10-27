@@ -2,6 +2,7 @@
 
 import dataclasses
 
+from telekinesis.illusion import config
 from telekinesis.illusion.types import light
 
 
@@ -14,32 +15,30 @@ class LightManager:
 
     Example:
         manager = LightManager()
-        manager.add(light.LightConfig("key", "POINT", properties={"power": 40.0}))
+        manager.add(
+            config.LightConfig("key", "POINT", properties={"power": 40.0})
+        )
     """
 
     def __init__(self) -> None:
         """Create the owned, empty light registry."""
         self._lights: dict[str, light.Light] = {}
 
-    def add(self, config: light.LightConfig) -> light.LightConfig:
+    def add(self, light_config: config.LightConfig) -> config.LightConfig:
         """Create one light from its config and register it by name.
 
         Returns a copy of the config. Raises TypeError for the wrong config
         type and ValueError if the name is already registered or a scene object
         with that name exists. Existing lights are never overwritten.
         """
-        if not isinstance(config, light.LightConfig):
-            raise TypeError("config must be a LightConfig.")
-        if config.light_name in self._lights:
-            raise ValueError(f"Light {config.light_name!r} already exists.")
-        self._lights[config.light_name] = light.Light(
-            config.light_name,
-            config.light_type,
-            location=config.location,
-            rotation=config.rotation,
-            **config.properties,
-        )
-        return dataclasses.replace(config)
+        if not isinstance(light_config, config.LightConfig):
+            raise TypeError("light_config must be a LightConfig.")
+        if light_config.light_name in self._lights:
+            raise ValueError(
+                f"Light {light_config.light_name!r} already exists."
+            )
+        self._lights[light_config.light_name] = light.Light(light_config)
+        return dataclasses.replace(light_config)
 
     def get_lights(self) -> dict[str, light.Light]:
         """Return lights by their exact registered names."""

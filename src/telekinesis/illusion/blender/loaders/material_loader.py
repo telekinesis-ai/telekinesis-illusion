@@ -4,10 +4,7 @@ import os
 from pathlib import Path
 from typing import List
 
-from telekinesis.illusion.types.material_asset import (
-    MaterialAsset,
-    find_color_texture,
-)
+from telekinesis.illusion import config
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 # Must run before bpy is imported. See blender_env.py for why.
@@ -140,10 +137,10 @@ def load_ccmaterials(
     raise FileNotFoundError(f"The folder path does not exist: {folder_path}")
 
 
-def load_material_asset(asset: MaterialAsset) -> Material:
+def load_material_asset(asset: config.MaterialConfig) -> Material:
     """Load exactly one registered PBR directory, including opacity if present.
 
-    The descriptor name is used for the Blender material. The existing PBR
+    The config name is used for the Blender material. The existing PBR
     shader configuration and optional-map handling are preserved. An asset
     whose color texture has disappeared raises ValueError.
     """
@@ -164,7 +161,7 @@ def _load_ccmaterial(
     skip_transparent_materials: bool,
 ) -> Material | None:
     """Load one PBR set, or return None when the legacy filters exclude it."""
-    color_texture = find_color_texture(Path(current_path))
+    color_texture = config.find_color_texture(Path(current_path))
     if color_texture is None:
         return None
     base_image_path = str(color_texture)

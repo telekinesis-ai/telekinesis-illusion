@@ -8,16 +8,16 @@ from types import MappingProxyType
 import numpy as np
 from loguru import logger
 
+from telekinesis.illusion import config
 from telekinesis.illusion.blender.labels import LabelIdMapping
 from telekinesis.illusion.core.asset_manager import AssetManager
 from telekinesis.illusion.types.model import Model
-from telekinesis.illusion.types.model_asset import ModelAsset
 
 
-class ModelManager(AssetManager[ModelAsset]):
+class ModelManager(AssetManager[config.ModelConfig]):
     """Own model definitions, categories, instance pools, and active models.
 
-    add() validates one ModelAsset without importing geometry. get_names()
+    add() registers one ModelConfig without importing geometry. get_names()
     selects registered models by selection group or exact model name. prepare() imports
     each requested model once and creates a fixed pool of linked instances.
     Registration closes after preparation, and later preparation can only reuse
@@ -33,11 +33,14 @@ class ModelManager(AssetManager[ModelAsset]):
 
     Example:
         manager = ModelManager()
-        asset = manager.add(ModelAsset(
-            "assets/models/mechanical_parts/gearwheel_1.glb", "gear"))
+        model = manager.add(
+            config.ModelConfig(
+                "assets/models/mechanical_parts/gearwheel_1.glb", "gear"
+            )
+        )
     """
 
-    _asset_type = ModelAsset
+    _asset_type = config.ModelConfig
 
     def __init__(self) -> None:
         """Create the owned model registry, category mapping, and empty pools."""
@@ -60,52 +63,38 @@ class ModelManager(AssetManager[ModelAsset]):
         """Whether cleanup or a failed import permanently closed the manager."""
         return self._closed
 
-    def add(self, asset: ModelAsset) -> ModelAsset:
+    def add(self, asset: config.ModelConfig) -> config.ModelConfig:
         """Register one model without importing geometry.
 
         Args:
             asset: Model definition with a unique, nonempty model name.
 
         Returns:
-            A copy with an absolute path, a float or three-float tuple scale,
-            and resolved annotation category. Missing categories default to
+            A copy with an absolute path and resolved annotation category. Missing categories default to
             the model name; existing names or IDs reuse their mapping.
             The category name "distractor" receives no ID. The supplied
             definition is unchanged.
 
         Raises:
-            TypeError: The asset is not a ModelAsset.
+            TypeError: The asset is not a ModelConfig.
             RuntimeError: Preparation or cleanup has closed registration.
             FileNotFoundError: The model path does not point to a file.
-            ValueError: The model name is empty or duplicated, scale is not a
-                positive finite scalar or three-vector, or categories conflict.
+            ValueError: The model name is already registered or categories
+                conflict.
         """
-        if not isinstance(asset, ModelAsset):
-            raise TypeError("asset must be a ModelAsset.")
+        if not isinstance(asset, config.ModelConfig):
+            raise TypeError("asset must be a ModelConfig.")
         if self._prepared or self._closed:
             raise RuntimeError(
                 "Register models before preparing the environment."
             )
-        if (
-            not asset.model_name
-            or asset.model_name in self.assets_by_name
-        ):
+        if asset.model_name in self.assets_by_name:
             raise ValueError(
-                f"Model name {asset.model_name!r} is empty or already registered."
+                f"Model name {asset.model_name!r} is already registered."
             )
         path = Path(asset.model_path).resolve()
         if not path.is_file():
             raise FileNotFoundError(path)
-        values = np.asarray(asset.scale, dtype=float)
-        if (
-            values.shape not in ((), (3,))
-            or not np.all(np.isfinite(values))
-            or np.any(values <= 0)
-        ):
-            raise ValueError(
-                "scale must be a positive scalar or three positive values."
-            )
-        scale = float(values) if values.ndim == 0 else tuple(map(float, values))
         category_name, category_id = self._resolve_category_id_and_name(
             asset.model_name, asset.category_name, asset.category_id
         )
@@ -115,11 +104,10 @@ class ModelManager(AssetManager[ModelAsset]):
                 model_path=path,
                 category_name=category_name,
                 category_id=category_id,
-                scale=scale,
             )
         )
 
-    def get_assets(self) -> Mapping[str, ModelAsset]:
+    def get_assets(self) -> Mapping[str, config.ModelConfig]:
         """Return a read-only view of definitions keyed by exact model name."""
         return MappingProxyType(self.assets_by_name)
 
@@ -155,7 +143,7 @@ class ModelManager(AssetManager[ModelAsset]):
         """Return the pool for one exact registered model name.
 
         Args:
-            model_name: The model_name of the ModelAsset registered with add().
+            model_name: The model_name of the ModelConfig registered with add().
 
         Returns:
             The live list of instances, including inactive models. Return an

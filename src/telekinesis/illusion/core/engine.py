@@ -1,55 +1,26 @@
 """Simulation and capture using the local bpy algorithms."""
 
-from dataclasses import dataclass, field
 import random
-import numpy as np
 from loguru import logger
+from telekinesis.illusion import config
 from telekinesis.illusion.blender import physics
-from telekinesis.illusion.blender.types import mesh_object
 from telekinesis.illusion.blender.rendering import renderer
 from telekinesis.illusion.types.render_result import RenderResult
 import bpy
 
 
-@dataclass(frozen=True)
-class RenderConfig:
-    device: str = "CUDA"
-    samples: int | None = None
-    noise_threshold: float | None = None
-    max_retries: int = 2
-    verbose: bool = False
-    depth: bool = False
-    normals: bool = False
-
-
-@dataclass(frozen=True)
-class PhysicsConfig:
-    active: bool = False
-    min_simulation_time_range: tuple[float, float] = (0.5, 1.0)
-    max_simulation_time_range: tuple[float, float] = (2.0, 5.0)
-    check_model_interval: float = 2.0
-    model_stopped_location_threshold: float = 0.01
-    model_stopped_rotation_threshold: float = 0.1
-    substeps_per_frame: int = 10
-    solver_iters: int = 10
-    verbose: bool = False
-    use_volume_com: bool = False
-    catch_plane: dict = field(default_factory=dict)
-
-
 class BlenderEngine:
     def __init__(
         self,
-        render_config: RenderConfig | None = None,
-        physics_config: PhysicsConfig | None = None,
+        render_config: config.RenderConfig | None = None,
+        physics_config: config.PhysicsConfig | None = None,
     ):
-        self.render_config = render_config or RenderConfig()
-        self.physics_config = physics_config or PhysicsConfig()
+        self.render_config = render_config or config.RenderConfig()
+        self.physics_config = physics_config or config.PhysicsConfig()
         self._prepared = False
-        self._physics_catch_plane: mesh_object.MeshObject | None = None
 
     def clean_up(self) -> None:
-        """Release engine-owned physics and rendering resources.
+        """Release engine-owned rendering resources.
 
         Standalone ``bpy`` can unregister Cycles RNA properties before its
         render engine is destroyed during interpreter shutdown. This causes
@@ -58,13 +29,6 @@ class BlenderEngine:
         while its RNA types are still available. Interactive Blender is left
         unchanged because it manages the renderer lifecycle itself.
         """
-        if self._physics_catch_plane is not None:
-            plane_model = self._physics_catch_plane.blender_obj
-            plane_mesh = plane_model.data
-            bpy.data.objects.remove(plane_model, do_unlink=True)
-            bpy.data.meshes.remove(plane_mesh)
-            self._physics_catch_plane = None
-
         # Release Cycles before standalone bpy unregisters its RNA properties.
         if (
             not bpy.app.binary_path
@@ -75,54 +39,63 @@ class BlenderEngine:
     def prepare(self, segmentation_config: dict) -> None:
         if self._prepared:
             return
-        config = self.render_config
-        if config.max_retries < 0:
-            raise ValueError("Render retries must be nonnegative.")
+        render_config = self.render_config
         renderer.enable_segmentation_output(**segmentation_config)
-        if config.device == "CPU":
+        if render_config.device == "CPU":
             renderer.set_render_devices(use_only_cpu=True)
         else:
-            renderer.set_render_devices(desired_gpu_device_type=config.device)
+            renderer.set_render_devices(
+                desired_gpu_device_type=render_config.device
+            )
         renderer.set_tiling(use_auto_tile=False, tile_size=4096)
-        if config.samples is not None:
-            if config.samples <= 0:
-                raise ValueError("Render samples must be positive.")
-            renderer.set_max_amount_of_samples(config.samples)
-        if config.noise_threshold is not None:
-            renderer.set_noise_threshold(config.noise_threshold)
-        if config.depth:
+        if render_config.samples is not None:
+            renderer.set_max_amount_of_samples(render_config.samples)
+        if render_config.noise_threshold is not None:
+            renderer.set_noise_threshold(render_config.noise_threshold)
+        if render_config.depth:
             renderer.enable_depth_output(activate_antialiasing=False)
-        if config.normals:
+        if render_config.normals:
             renderer.enable_normals_output()
         self._prepared = True
 
-    def simulate(self, scene, config: PhysicsConfig | None = None) -> None:
-        config = config or self.physics_config
-        if not config.active:
+    def simulate(
+        self, scene, physics_config: config.PhysicsConfig | None = None
+    ) -> None:
+        """Simulate rigid-body physics and keep the settled model poses.
+
+        Models that fall below the lowest point of every static model, such
+        as parts that miss the container, have nothing left to land on. They
+        do not delay the end of the simulation and are deactivated
+        afterwards, so they are neither rendered nor annotated.
+
+        Args:
+            scene: Environment whose active models are simulated.
+            physics_config: Simulation settings. None uses the engine's
+                physics_config. Nothing happens when the settings are inactive.
+        """
+        physics_config = physics_config or self.physics_config
+        if not physics_config.active:
             return
-        plane_z = None
-        catch = config.catch_plane
-        try:
-            if catch.get("active", False):
-                _, plane_z = self._prepare_physics_catch_plane(scene, catch)
-            physics.simulate_physics_and_fix_final_poses(
-                random.uniform(*config.min_simulation_time_range),
-                random.uniform(*config.max_simulation_time_range),
-                config.check_model_interval,
-                config.model_stopped_location_threshold,
-                config.model_stopped_rotation_threshold,
-                config.substeps_per_frame,
-                config.solver_iters,
-                config.verbose,
-                config.use_volume_com,
+        fallen_names = physics.simulate_physics_and_fix_final_poses(
+            random.uniform(*physics_config.min_simulation_time_range),
+            random.uniform(*physics_config.max_simulation_time_range),
+            physics_config.check_model_interval,
+            physics_config.model_stopped_location_threshold,
+            physics_config.model_stopped_rotation_threshold,
+            physics_config.substeps_per_frame,
+            physics_config.solver_iters,
+            physics_config.verbose,
+            physics_config.use_volume_com,
+        )
+        models = scene.get_models()
+        fallen_names = [name for name in fallen_names if name in models]
+        for name in fallen_names:
+            scene.deactivate(models[name])
+        if fallen_names:
+            logger.info(
+                f"Deactivated {len(fallen_names)} model(s) that fell below "
+                f"all static models: {fallen_names}"
             )
-            if plane_z is not None:
-                self._cull_models_on_catch_plane(scene, plane_z, catch)
-        finally:
-            if self._physics_catch_plane is not None:
-                if self._physics_catch_plane.has_rigidbody_enabled():
-                    self._physics_catch_plane.disable_rigidbody()
-                self._physics_catch_plane.hide(True)
 
     def render(self, scene, max_views: int | None = None) -> RenderResult:
         """Capture pass arrays and metadata before undo or scene cleanup."""
@@ -170,118 +143,3 @@ class BlenderEngine:
         finally:
             blender_scene.frame_end = original_end
             blender_scene.frame_set(original_frame)
-
-    @staticmethod
-    def _catch_plane_geometry(
-        container_bounds: np.ndarray,
-        distance_fraction: float,
-        minimum_distance: float,
-        size_factor: float,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Return the location and scale of a plane below a container."""
-        bounds = np.asarray(container_bounds, dtype=float)
-        if bounds.shape != (8, 3):
-            raise ValueError("container_bounds must have shape (8, 3).")
-        if distance_fraction < 0:
-            raise ValueError("distance_fraction must be non-negative.")
-        if minimum_distance <= 0:
-            raise ValueError("minimum_distance must be positive.")
-        if size_factor <= 0:
-            raise ValueError("size_factor must be positive.")
-
-        lower = bounds.min(axis=0)
-        upper = bounds.max(axis=0)
-        extent = upper - lower
-        distance = max(extent[2] * distance_fraction, minimum_distance)
-        location = np.array(
-            [
-                (lower[0] + upper[0]) / 2,
-                (lower[1] + upper[1]) / 2,
-                lower[2] - distance,
-            ]
-        )
-        # Blender's plane primitive is two units wide, so its XY scale is
-        # half the desired footprint. Z scale is irrelevant for a plane.
-        scale = np.array(
-            [
-                max(extent[0] * size_factor / 2, minimum_distance),
-                max(extent[1] * size_factor / 2, minimum_distance),
-                1.0,
-            ]
-        )
-        return location, scale
-
-    def _prepare_physics_catch_plane(
-        self, scene, config: dict
-    ) -> tuple[mesh_object.MeshObject, float]:
-        """Create or reposition the reusable plane beneath the visible bin."""
-        container_prefixes = tuple(config.get("container_names", ()))
-        visible_names = scene.get_visible_model_names()
-        container_name = next(
-            (
-                name
-                for name in visible_names
-                if name.startswith(container_prefixes)
-            ),
-            None,
-        )
-        if container_name is None:
-            raise RuntimeError(
-                "Cannot create a physics catch plane without a visible "
-                "container."
-            )
-
-        container = scene.get_models()[container_name]
-        location, scale = self._catch_plane_geometry(
-            container.get_bound_box(),
-            distance_fraction=float(config.get("distance_fraction", 0.25)),
-            minimum_distance=float(config.get("minimum_distance", 0.05)),
-            size_factor=float(config.get("size_factor", 6.0)),
-        )
-        if self._physics_catch_plane is None:
-            self._physics_catch_plane = mesh_object.create_primitive("PLANE")
-            self._physics_catch_plane.set_name("ILLUSION_PHYSICS_CATCH_PLANE")
-        plane = self._physics_catch_plane
-        plane.set_location(location)
-        plane.set_scale(scale)
-        # Restore dependency-graph evaluation for physics, but keep the plane
-        # invisible to rendering. It is hidden again after simulation.
-        plane.hide(False)
-        plane.blender_obj.hide_render = True
-        plane.enable_rigidbody(active=False, collision_shape="BOX")
-        logger.debug(
-            f"Prepared physics catch plane at z={location[2]:.4f} "
-            f"below '{container_name}'."
-        )
-        return plane, float(location[2])
-
-    def _cull_models_on_catch_plane(
-        self, scene, plane_z: float, config: dict
-    ) -> list[str]:
-        """Hide tracked models whose bounding boxes touch the catch plane."""
-        tolerance = float(config.get("contact_tolerance", 0.05))
-        if tolerance < 0:
-            raise ValueError("contact_tolerance must be non-negative.")
-
-        tracked_prefixes = tuple(config.get("tracked_model_names", ()))
-        visible_names = list(scene.get_visible_model_names())
-        models = scene.get_models()
-        escaped = []
-        for name in visible_names:
-            if not name.startswith(tracked_prefixes):
-                continue
-            bounds = models[name].get_bound_box()
-            if float(np.min(bounds[:, 2])) <= plane_z + tolerance:
-                scene.deactivate(models[name])
-                escaped.append(name)
-
-        if escaped:
-            escaped_set = set(escaped)
-            scene.set_visible_model_names(
-                [name for name in visible_names if name not in escaped_set]
-            )
-            logger.info(
-                f"Culled {len(escaped)} model(s) that escaped the bin: "
-                f"{escaped}"
-            )
-        return escaped

@@ -4,13 +4,9 @@ import argparse
 
 import numpy as np
 
+from telekinesis.illusion import config
 from telekinesis.illusion.core.environment import Environment
-from telekinesis.illusion.core.engine import (
-    BlenderEngine,
-    RenderConfig,
-    PhysicsConfig,
-)
-from telekinesis.illusion.types.camera import CameraConfig
+from telekinesis.illusion.core.engine import BlenderEngine
 from telekinesis.illusion.core.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
@@ -24,12 +20,6 @@ from telekinesis.illusion.randomizer.randomizer_node import (
     ModelInstanceRandomizer,
     ModelPoseRandomizer,
 )
-from telekinesis.illusion.sampler.camera_pose_sampler import shell_sampler
-from telekinesis.illusion.types.distribution import uniform
-from telekinesis.illusion.types.background_asset import BackgroundAsset
-from telekinesis.illusion.types.light import LightConfig
-from telekinesis.illusion.types.material_asset import MaterialAsset
-from telekinesis.illusion.types.model_asset import ModelAsset
 from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.utils.assets import resolve_asset_dir
 from telekinesis.illusion.writer.writer import CocoWriter
@@ -59,22 +49,26 @@ def main():
     # Create the environment
     environment = Environment()
     environment.add(
-        CameraConfig(image_width=args.resolution, image_height=args.resolution)
+        config.CameraConfig(
+            image_width=args.resolution, image_height=args.resolution
+        )
     )
 
     assets_dir = resolve_asset_dir()
 
     environment.add(
-        LightConfig("key", "POINT", properties={"power": 40.0, "radius": 0.05})
+        config.LightConfig(
+            "key", "POINT", properties={"power": 40.0, "radius": 0.05}
+        )
     )
-    environment.add(LightConfig("sun", "SUN", properties={"power": 0.2}))
+    environment.add(config.LightConfig("sun", "SUN", properties={"power": 0.2}))
 
     # Add models to the environment
     model_1_path = str(
         assets_dir / "models" / "mechanical_parts" / "gearwheel_1.glb"
     )
     environment.add(
-        ModelAsset.from_path(
+        config.ModelConfig.from_path(
             model_1_path,
             model_name="part_1",
             groups="mechanical_parts",
@@ -86,7 +80,7 @@ def main():
         assets_dir / "models" / "mechanical_parts" / "pipe_1.glb"
     )
     environment.add(
-        ModelAsset.from_path(
+        config.ModelConfig.from_path(
             model_2_path,
             model_name="part_2",
             groups="mechanical_parts",
@@ -96,17 +90,19 @@ def main():
 
     # Add materials and HDRIs to the environment. The randomizers below only
     # select among the assets registered here.
-    environment.add(MaterialAsset.discover(assets_dir / "materials"))
-    environment.add(BackgroundAsset.discover(assets_dir / "hdris"))
+    environment.add(config.MaterialConfig.discover(assets_dir / "materials"))
+    environment.add(config.BackgroundConfig.discover(assets_dir / "hdris"))
 
     # Create the randomizer
     randomizer = Randomizer()
 
     # Add model instance randomizer
     model_instance_randomizer = ModelInstanceRandomizer(
-        counts={"part_1": (1, 3), "part_2": (1, 1)},
-        min_num_total_models=2,
-        max_num_total_models=4,
+        config.InstanceRandomizerConfig(
+            counts={"part_1": (1, 3), "part_2": (1, 1)},
+            min_num_total_models=2,
+            max_num_total_models=4,
+        )
     )
 
     randomizer.add_randomizer(
@@ -130,7 +126,9 @@ def main():
         )
 
     model_pose_randomizer = ModelPoseRandomizer(
-        pose_sampling_function=sample_pose, target_models=["part_1", "part_2"]
+        config.ModelPoseRandomizerConfig(),
+        pose_sampling_function=sample_pose,
+        target_models=["part_1", "part_2"],
     )
 
     randomizer.add_randomizer(
@@ -139,7 +137,9 @@ def main():
 
     # Add matrial randomizer
     material_randomizer = MaterialRandomizer(
-        target_models=["part_1", "part_2"], groups=["metal"]
+        config.MaterialRandomizerConfig(
+            target_models=("part_1", "part_2"), groups=("metal",)
+        )
     )
 
     randomizer.add_randomizer(
@@ -148,7 +148,9 @@ def main():
 
     # Add background randomizer
     background_randomizer = BackgroundRandomizer(
-        groups=["indoor/industrial", "indoor/studio"]
+        config.BackgroundRandomizerConfig(
+            groups=("indoor/industrial", "indoor/studio")
+        )
     )
 
     randomizer.add_randomizer(
@@ -158,40 +160,54 @@ def main():
     # Randomize point-light power/radius and sun strength/angular diameter.
     randomizer.add_randomizer(
         LightRandomizer(
+            config.LightRandomizerConfig(
+                properties={
+                    "color": {"min": (0.8, 0.85, 0.9), "max": (1.0, 1.0, 1.0)},
+                    "power": {"min": 20.0, "max": 60.0},
+                    "radius": {"min": 0.02, "max": 0.08},
+                }
+            ),
             ["key"],
-            color=uniform((0.8, 0.85, 0.9), (1.0, 1.0, 1.0)),
-            power=uniform(20.0, 60.0),
-            radius=uniform(0.02, 0.08),
         ),
         node_name="point_light_properties",
     )
     randomizer.add_randomizer(
         LightRandomizer(
-            ["sun"], power=uniform(0.1, 0.4), angle=uniform(0.01, 0.1)
+            config.LightRandomizerConfig(
+                properties={
+                    "power": {"min": 0.1, "max": 0.4},
+                    "angle": {"min": 0.01, "max": 0.1},
+                }
+            ),
+            ["sun"],
         ),
         node_name="sun_properties",
     )
     # Sample overhead poses aimed at the parts, keeping the emitter clear.
-    # Light and camera nodes pass environment= to their pose samplers.
     randomizer.add_randomizer(
         LightPoseRandomizer(
-            shell_sampler,
+            config.LightPoseRandomizerConfig(
+                sampler="shell_sampler",
+                min_distance=0.3,
+                params={
+                    "radius_min": 1.0,
+                    "radius_max": 1.5,
+                    "elevation_min": 35.0,
+                    "elevation_max": 75.0,
+                },
+            ),
             target_lights=["key", "sun"],
-            min_distance=0.3,
-            radius_min=1.0,
-            radius_max=1.5,
-            elevation_min=35.0,
-            elevation_max=75.0,
         ),
         node_name="light_poses",
     )
 
     # Add camera pose randomizer
     camera_pose_randomizer = CameraPoseRandomizer(
-        pose_sampling_function=shell_sampler,
-        number_of_views=2,
-        radius_min=0.5,
-        radius_max=0.7,
+        config.CameraPoseRandomizerConfig(
+            sampler="shell_sampler",
+            number_of_views=2,
+            params={"radius_min": 0.5, "radius_max": 0.7},
+        )
     )
 
     randomizer.add_randomizer(
@@ -210,8 +226,8 @@ def main():
         randomizer=randomizer,
         writer=writer,
         engine=BlenderEngine(
-            RenderConfig(device=args.device, samples=args.samples),
-            PhysicsConfig(active=False),
+            config.RenderConfig(device=args.device, samples=args.samples),
+            config.PhysicsConfig(active=False),
         ),
     )
 

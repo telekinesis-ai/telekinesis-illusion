@@ -4,38 +4,44 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Generic, TypeVar
 
-from telekinesis.illusion.types.background_asset import BackgroundAsset
-from telekinesis.illusion.types.material_asset import MaterialAsset
-from telekinesis.illusion.types.model_asset import ModelAsset
+from telekinesis.illusion import config
 
 
-AssetType = TypeVar("AssetType", MaterialAsset, BackgroundAsset, ModelAsset)
+AssetType = TypeVar(
+    "AssetType",
+    config.MaterialConfig,
+    config.BackgroundConfig,
+    config.ModelConfig,
+)
 
 
 class AssetManager(Generic[AssetType]):
-    """Store descriptors by unique name and index every selection group.
+    """Store asset configs by unique name and index every selection group.
 
     Registration never loads Blender data. Index lists retain registration
     order. Treat the exposed dictionaries as read-only; register through add().
 
     Example:
+        from telekinesis.illusion import config
         from telekinesis.illusion.core.background_manager import BackgroundManager
 
         manager = BackgroundManager()
-        manager.add(BackgroundAsset.from_path("studio.exr", groups="indoor"))
+        manager.add(
+            config.BackgroundConfig.from_path("studio.exr", groups="indoor")
+        )
     """
 
     _asset_type: type[AssetType]
 
     def __init__(self) -> None:
-        """Create owned descriptor and group indexes."""
+        """Create owned asset config and group indexes."""
         self.assets_by_name: dict[str, AssetType] = {}
         self.names_by_group: dict[str, list[str]] = {}
 
     def add(self, asset: AssetType) -> AssetType:
-        """Validate and register one descriptor, returning a normalized copy.
+        """Validate and register one asset config, returning a normalized copy.
 
-        Raises TypeError for the wrong descriptor type, ValueError for a
+        Raises TypeError for the wrong config type, ValueError for a
         duplicate name or invalid descriptor, and FileNotFoundError for a
         missing path. Existing registrations are never overwritten.
         """

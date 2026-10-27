@@ -34,11 +34,14 @@ class Randomizer:
     select active instances and configure the environment's current scene.
 
     Example:
+        from telekinesis.illusion import config
         from telekinesis.illusion.randomizer import randomizer_node
 
         randomizer = Randomizer()
         randomizer.add_randomizer(
-            randomizer_node.ModelInstanceRandomizer({"gear": (1, 3)}),
+            randomizer_node.ModelInstanceRandomizer(
+                config.InstanceRandomizerConfig(counts={"gear": (1, 3)})
+            ),
             "counts",
         )
     """

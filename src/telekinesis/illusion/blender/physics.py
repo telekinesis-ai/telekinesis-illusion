@@ -50,6 +50,9 @@ def simulate_physics_and_fix_final_poses(
     :param verbose: If True, more details during the physics simulation are printed.
     :param use_volume_com: If True, the center of mass will be calculated by using the object volume.
                            This is more accurate than using the surface area (default), but requires a watertight mesh.
+    :return: The names of the active objects whose center of mass ended below the lowest point of every passive
+             object. Nothing is left that could catch them, so they have left the scene. Empty if the scene has no
+             passive objects.
     """
     # Undo changes made in the simulation like origin adjustment and persisting the object's scale
     with UndoAfterExecution():
@@ -111,6 +114,15 @@ def simulate_physics_and_fix_final_poses(
     # Deactivate the simulation so it does not influence object positions
     bpy.context.scene.rigidbody_world.enabled = False
     bpy.context.view_layer.update()
+
+    floor_z = _PhysicsSimulation.get_lowest_passive_z()
+    if floor_z is None:
+        return []
+    return [
+        name
+        for name, pose in obj_poses_after_sim.items()
+        if pose["location"].z < floor_z
+    ]
 
 
 def simulate_physics_and_persist_all_frames(
@@ -346,6 +358,9 @@ class _PhysicsSimulation:
                 "max_simulation_iterations has to be bigger than min_simulation_iterations"
             )
 
+        # Objects below every passive object can never come to rest, so they must not keep the simulation running
+        floor_z = _PhysicsSimulation.get_lowest_passive_z()
+
         # Run simulation starting from min to max in the configured steps
         for current_time in np.arange(
             min_simulation_time, max_simulation_time, check_object_interval
@@ -369,6 +384,12 @@ class _PhysicsSimulation:
             # Go to last frame of simulation and get poses
             bpy.context.scene.frame_set(current_frame)
             new_poses = _PhysicsSimulation.get_pose()
+            if floor_z is not None:
+                new_poses = {
+                    name: pose
+                    for name, pose in new_poses.items()
+                    if pose["location"].z >= floor_z
+                }
 
             # If objects have stopped moving between the last two frames, then stop here
             if _PhysicsSimulation.have_objects_stopped_moving(
@@ -419,6 +440,20 @@ class _PhysicsSimulation:
         return objects_poses
 
     @staticmethod
+    def get_lowest_passive_z() -> float | None:
+        """Returns the lowest world-space z coordinate of all objects with PASSIVE rigid_body type.
+
+        :return: The lowest z coordinate of the bounding boxes, or None if there are no passive objects.
+        """
+        corner_z = [
+            (obj.matrix_world @ mathutils.Vector(corner)).z
+            for obj in get_all_blender_mesh_objects()
+            if obj.rigid_body is not None and obj.rigid_body.type == "PASSIVE"
+            for corner in obj.bound_box
+        ]
+        return min(corner_z, default=None)
+
+    @staticmethod
     def have_objects_stopped_moving(
         last_poses: dict,
         new_poses: dict,
@@ -435,17 +470,17 @@ class _PhysicsSimulation:
         :param object_stopped_rotation_threshold: The maximum difference per second and per coordinate in the rotation
                                                   Euler vector that is allowed such that an object is still recognized
                                                   as 'stopped moving'.
-        :return: True, if no objects are moving anymore.
+        :return: True, if no objects in new_poses are moving anymore.
         """
         stopped = True
-        for obj_name in last_poses:
+        for obj_name in new_poses:
             # Check location difference
             location_diff = (
                 last_poses[obj_name]["location"]
                 - new_poses[obj_name]["location"]
             )
             stopped = stopped and not any(
-                location_diff[i] > object_stopped_location_threshold
+                abs(location_diff[i]) > object_stopped_location_threshold
                 for i in range(3)
             )
 
@@ -455,7 +490,7 @@ class _PhysicsSimulation:
                 - new_poses[obj_name]["rotation"]
             )
             stopped = stopped and not any(
-                rotation_diff[i] > object_stopped_rotation_threshold
+                abs(rotation_diff[i]) > object_stopped_rotation_threshold
                 for i in range(3)
             )
 

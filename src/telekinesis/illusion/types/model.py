@@ -2,6 +2,7 @@ from loguru import logger
 import numpy as np
 from typing import List, Union
 
+from telekinesis.illusion import config
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 # Must run before bpy is imported. See blender_env.py for why.
@@ -13,9 +14,6 @@ from mathutils import Vector, Matrix
 from telekinesis.illusion.blender.types.mesh_object import MeshObject
 
 from telekinesis.illusion.blender.loaders.object_loader import load_obj
-
-
-UV_MAPPING_METHODS = ("smart", "cube", "cylinder", "sphere")
 
 
 class Model:
@@ -95,9 +93,9 @@ class Model:
                 "material_preprocessing must be 'replace' or 'preserve'."
             )
         self._material_preprocessing = material_preprocessing
-        if uv_mapping not in UV_MAPPING_METHODS:
+        if uv_mapping not in config.UV_MAPPING_METHODS:
             raise ValueError(
-                f"uv_mapping must be one of {UV_MAPPING_METHODS}; "
+                f"uv_mapping must be one of {config.UV_MAPPING_METHODS}; "
                 f"got {uv_mapping!r}."
             )
         self._uv_mapping = uv_mapping

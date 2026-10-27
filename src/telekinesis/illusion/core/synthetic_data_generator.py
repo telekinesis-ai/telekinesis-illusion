@@ -1,6 +1,5 @@
 """The generation lifecycle: prepare, randomize, simulate, render, write."""
 
-from dataclasses import replace
 from pathlib import Path
 import uuid
 from loguru import logger
@@ -61,14 +60,13 @@ class SyntheticDataGenerator:
         num_samples: int | None = None,
         clean_up_environment: bool = True,
         save_blender_scene: bool = False,
-        **legacy_options,
     ) -> int:
         """Write exactly num_images views, or all views of num_samples scenes.
 
         Each sample is one scene realization of the shared environment under
         the randomizer tree's rules. A scene can produce multiple camera views.
-        The legacy physics keyword arguments remain accepted for existing
-        workers. New scripts pass PhysicsConfig/RenderConfig to their engine.
+        Physics and rendering follow the engine's physics_config and
+        render_config.
         Keep clean_up_environment=False between shards to reuse the environment;
         explicitly clean up at the end.
         Asset registration is closed after preparation. Bounds may change only
@@ -87,29 +85,7 @@ class SyntheticDataGenerator:
             or target <= 0
         ):
             raise ValueError("Generation count must be a positive integer.")
-        physics_overrides = {}
-        render_overrides = {}
-        aliases = {
-            "simulate_physics": "active",
-            "physics_catch_plane": "catch_plane",
-        }
-        for name, value in legacy_options.items():
-            if name in ("render_max_retries", "render_verbose"):
-                render_overrides[
-                    {
-                        "render_max_retries": "max_retries",
-                        "render_verbose": "verbose",
-                    }[name]
-                ] = value
-            else:
-                physics_overrides[aliases.get(name, name)] = value
-        physics_config = replace(
-            self.engine.physics_config, **physics_overrides
-        )
-        if render_overrides:
-            self.engine.render_config = replace(
-                self.engine.render_config, **render_overrides
-            )
+        physics_config = self.engine.physics_config
         images_written = 0
         samples_written = 0
         try:

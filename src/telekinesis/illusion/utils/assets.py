@@ -36,7 +36,7 @@ def resolve_asset_dir(
     Args:
         explicit: str, Path or None
             An explicitly configured asset directory, e.g. the config's
-            'metadata.asset_directory'.
+            'dataset.asset_directory'.
         base_dir: str, Path or None
             Directory a relative 'explicit' is anchored on. Typically the
             directory containing the config file.
@@ -68,7 +68,7 @@ def resolve_asset_dir(
         return _REPO_ASSETS
 
     raise FileNotFoundError(
-        "No asset directory found. Set 'metadata.asset_directory' in your "
+        "No asset directory found. Set 'dataset.asset_directory' in your "
         f"config, or run from a directory containing an 'assets' folder "
         f"(looked for '{cwd_assets}' and '{_REPO_ASSETS}')."
     )
@@ -136,7 +136,7 @@ def resolve_asset_path(
     asset_dir: Union[str, Path],
 ) -> Path:
     """
-    Resolve a single asset path, e.g. a config's 'models[].path'.
+    Resolve a single asset path, e.g. a config's 'models[].model_path'.
 
     Absolute paths are returned unchanged, relative ones are resolved against
     'asset_dir'.

@@ -1,4 +1,4 @@
-"""Material targeting, source adapters and assignment for Blender scenes."""
+"""Material slot selection, source adapters and assignment for Blender scenes."""
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -23,7 +23,6 @@ from telekinesis.illusion.types.material import (
 )
 
 if TYPE_CHECKING:
-    from telekinesis.illusion.core.environment import Environment
     from telekinesis.illusion.core.material_manager import MaterialManager
     from telekinesis.illusion.types.model import Model
 
@@ -35,30 +34,6 @@ def _names(values, label: str) -> tuple[str, ...]:
     if any(not isinstance(n, str) or not n for n in result):
         raise ValueError(f"{label} must contain non-empty names.")
     return result
-
-
-@dataclass(frozen=True)
-class MaterialTarget:
-    """Exact registered model names; None selects all registered models."""
-
-    models: tuple[str, ...] | None = None
-
-    def __post_init__(self):
-        if self.models is not None:
-            names = _names(self.models, "models")
-            if not names:
-                raise ValueError("models cannot be empty; use None for all.")
-            if len(set(names)) != len(names):
-                raise ValueError("models contains duplicate names.")
-            object.__setattr__(self, "models", names)
-
-    def resolve(self, environment: "Environment") -> list["Model"]:
-        available = environment.get_models()
-        names = sorted(available) if self.models is None else self.models
-        missing = [name for name in names if name not in available]
-        if missing:
-            raise ValueError(f"Missing material target models: {missing}.")
-        return [available[name] for name in names]
 
 
 class SlotSelector(Protocol):
@@ -210,36 +185,6 @@ MaterialSlots: TypeAlias = (
     Mapping[str | int, Sequence[MaterialChoice]] | Literal["all"]
 )
 MaterialMode: TypeAlias = Literal["active", "model", "slots"]
-
-
-def material_choices_from_config(choices):
-    """Parse YAML/JSON choices without changing string PBR-tag semantics."""
-    if not isinstance(choices, (tuple, list)):
-        raise TypeError("Material choices must be a list.")
-    result = []
-    for choice in choices:
-        if isinstance(choice, Mapping):
-            unknown = set(choice) - {
-                "preset",
-                "parameters",
-                "surface_imperfections",
-            }
-            if unknown:
-                raise ValueError(
-                    f"Unknown Principled configuration keys: {unknown}."
-                )
-            parameters = choice.get("parameters", {})
-            if not isinstance(parameters, Mapping):
-                raise TypeError("Principled parameters must be a mapping.")
-            choice = PrincipledMaterial(
-                choice.get("preset"),
-                surface_imperfections=choice.get(
-                    "surface_imperfections", False
-                ),
-                **parameters,
-            )
-        result.append(choice)
-    return result
 
 
 class MaterialPool:

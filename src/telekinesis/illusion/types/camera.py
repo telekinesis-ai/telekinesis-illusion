@@ -3,8 +3,9 @@ Defines the camera class that is reponsible for the camera settings in the
 context
 """
 
-from dataclasses import dataclass
 import numpy as np
+
+from telekinesis.illusion import config
 
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
@@ -17,79 +18,21 @@ from telekinesis.illusion.blender.camera import settings as camera_settings
 from telekinesis.illusion.blender import math as blender_math
 
 
-@dataclass
-class CameraConfig:
-    # Camera defaults for scene initialization.
-    image_width: int | None = 720
-    image_height: int | None = 720
-    focal_length: float | None = None
-    field_of_view: float | None = None
-    clip_start: float | None = 0.1
-    clip_end: float | None = 1000
-    pixel_aspect_x: float | None = 1
-    pixel_aspect_y: float | None = 1
-    shift_x: float | None = 0
-    shift_y: float | None = 0
-    location: np.ndarray | None = None
-    rotation: np.ndarray | None = None
-
-    def __post_init__(self) -> None:
-        """
-        Method for validating the args.
-
-        Raises:
-            ValueError:
-                - If both focal_length and field_of_view are provided.
-                - If focal_length is smaller than 1mm.
-        """
-        if self.focal_length is not None and self.field_of_view is not None:
-            raise ValueError(
-                "Provide either 'focal_length' or 'field_of_view', not both."
-            )
-
-        if self.focal_length is not None and self.focal_length < 1:
-            raise ValueError(
-                "The focal length must be greater or equal to 1mm."
-            )
-
-
 class Camera:
     """
     Class for managing the camera in the context.
     """
 
-    def __init__(self, config: CameraConfig | None = None) -> None:
+    def __init__(self, camera_config: config.CameraConfig | None = None) -> None:
         """
-        Initialize the internal camera states.
+        Create the camera state and apply a camera config.
 
         Args:
-            image_width: int
-                The image width in pixels.
-            image_height: int
-                The image height in pixels.
-            focal_length: float
-                Focal length of the lens in millimeters. Must be greater or
-                equal 1.
-            field_of_view: float
-                Field of view (FOV) in radians
-            clip_start: float
-                Near clipping distance.
-            clip_end: float
-                Far clipping distance.
-            pixel_aspect_x: float
-                Pixel aspect ratio along the x-axis.
-            pixel_aspect_y: float
-                Pixel aspect ratio along the y-axis.
-            shift_x: float
-                Lens shift in the x direction.
-            shift_y: float
-                Lens shift in the y direction.
-
+            camera_config: config.CameraConfig or None
+                Image size, lens and initial pose of the camera. None applies
+                the default config.
         """
-        if config is None:
-            config = CameraConfig()
-
-        self.apply_config(config)
+        self.apply_config(camera_config or config.CameraConfig())
 
     # Use a lightweight proxy-style accessor to avoid updating bpy refs
     def _camera_obj(self):
@@ -98,36 +41,43 @@ class Camera:
     def _camera_data(self):
         return self._camera_obj().data
 
-    def apply_config(self, config: CameraConfig) -> None:
+    def apply_config(self, camera_config: config.CameraConfig) -> None:
         """
-        Apply the camera configs on the camera class.
+        Apply a camera config to the scene camera.
+
+        Fields set to None keep the current setting. An unset location or
+        rotation applies the default pose.
+
+        Args:
+            camera_config: config.CameraConfig
+                Image size, lens and initial pose of the camera.
         """
-        if config.image_width is not None:
-            self.image_width = config.image_width
-        if config.image_height is not None:
-            self.image_height = config.image_height
-        if config.focal_length is not None:
-            self.focal_length = config.focal_length
-        if config.field_of_view is not None:
-            self.field_of_view = config.field_of_view
-        if config.clip_start is not None:
-            self.clip_start = config.clip_start
-        if config.clip_end is not None:
-            self.clip_end = config.clip_end
-        if config.pixel_aspect_x is not None:
-            self.pixel_aspect_x = config.pixel_aspect_x
-        if config.pixel_aspect_y is not None:
-            self.pixel_aspect_y = config.pixel_aspect_y
-        if config.shift_x is not None:
-            self.shift_x = config.shift_x
-        if config.shift_y is not None:
-            self.shift_y = config.shift_y
-        if config.location is not None:
-            self._location = config.location
+        if camera_config.image_width is not None:
+            self.image_width = camera_config.image_width
+        if camera_config.image_height is not None:
+            self.image_height = camera_config.image_height
+        if camera_config.focal_length is not None:
+            self.focal_length = camera_config.focal_length
+        if camera_config.field_of_view is not None:
+            self.field_of_view = camera_config.field_of_view
+        if camera_config.clip_start is not None:
+            self.clip_start = camera_config.clip_start
+        if camera_config.clip_end is not None:
+            self.clip_end = camera_config.clip_end
+        if camera_config.pixel_aspect_x is not None:
+            self.pixel_aspect_x = camera_config.pixel_aspect_x
+        if camera_config.pixel_aspect_y is not None:
+            self.pixel_aspect_y = camera_config.pixel_aspect_y
+        if camera_config.shift_x is not None:
+            self.shift_x = camera_config.shift_x
+        if camera_config.shift_y is not None:
+            self.shift_y = camera_config.shift_y
+        if camera_config.location is not None:
+            self._location = np.asarray(camera_config.location)
         else:
             self._location = np.array([0.22912, -0.572652, 0.366659])
-        if config.rotation is not None:
-            self._rotation = config.rotation
+        if camera_config.rotation is not None:
+            self._rotation = np.asarray(camera_config.rotation)
         else:
             self._rotation = np.array([60.0, 0.0, 20.0])
 

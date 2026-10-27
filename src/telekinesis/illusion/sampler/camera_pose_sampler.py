@@ -66,9 +66,15 @@ def shell_sampler(
     This method determines a point of interest (POI) to look at based on
     `center`:
     - If `center` is None, the POI is computed from visible scene models.
-    - If `center` is a list, the POI is computed from these model prefixes.
-    - If `center` is an np.ndarray, it is used directly as the POI.
+    - If `center` is a list of strings, the POI is computed from these model
+      prefixes.
+    - If `center` is a list of three numbers or an np.ndarray, it is used
+      directly as the POI.
     """
+    if isinstance(center, list) and all(
+        isinstance(value, (int, float)) for value in center
+    ):
+        center = np.asarray(center, dtype=float)
     if center is None:
         target_models = _resolve_target_models(environment, visible_only=True)
         if not target_models:
@@ -282,6 +288,8 @@ def autocompute_distance(
     return distance
 
 
+# Keep the keys equal to config.POSE_SAMPLER_CONFIGS, which validates the
+# sampler names and parameters without importing Blender.
 CAMERA_POSE_SAMPLERS = {
     "volume_sampler": volume_sampler,
     "shell_sampler": shell_sampler,

@@ -5,9 +5,7 @@ Reusable Blender environment resources and the current scene realization.
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from telekinesis.illusion.types.model_asset import ModelAsset
-from telekinesis.illusion.types.material_asset import MaterialAsset
-from telekinesis.illusion.types.background_asset import BackgroundAsset
+from telekinesis.illusion import config
 from telekinesis.illusion.core.background_manager import BackgroundManager
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
@@ -26,8 +24,8 @@ from telekinesis.illusion.core.material_manager import MaterialManager
 from telekinesis.illusion.core.model_manager import ModelManager
 from telekinesis.illusion.types.model import Model
 from telekinesis.illusion.types.background import Background
-from telekinesis.illusion.types.camera import Camera, CameraConfig
-from telekinesis.illusion.types.light import Light, LightConfig
+from telekinesis.illusion.types.camera import Camera
+from telekinesis.illusion.types.light import Light
 from telekinesis.illusion.utils.assets import (
     resolve_asset_dir,
 )
@@ -55,8 +53,10 @@ class Environment:
 
     Example:
         environment = Environment()
-        environment.add(CameraConfig(image_width=128, image_height=128))
-        environment.add(LightConfig("key", properties={"power": 40.0}))
+        environment.add(
+            config.CameraConfig(image_width=128, image_height=128)
+        )
+        environment.add(config.LightConfig("key", properties={"power": 40.0}))
     """
 
     def __init__(
@@ -161,7 +161,7 @@ class Environment:
 
         Args:
             model_name: str
-                The model_name of the ModelAsset registered with add().
+                The model_name of the ModelConfig registered with add().
 
         Returns:
             The live list of instances, including inactive models. Return an
@@ -187,32 +187,33 @@ class Environment:
 
     def add(
         self,
-        asset: ModelAsset
-        | MaterialAsset
-        | BackgroundAsset
-        | LightConfig
-        | CameraConfig
+        asset: config.ModelConfig
+        | config.MaterialConfig
+        | config.BackgroundConfig
+        | config.LightConfig
+        | config.CameraConfig
         | Iterable[
-            ModelAsset
-            | MaterialAsset
-            | BackgroundAsset
-            | LightConfig
-            | CameraConfig
+            config.ModelConfig
+            | config.MaterialConfig
+            | config.BackgroundConfig
+            | config.LightConfig
+            | config.CameraConfig
         ],
     ) -> (
-        ModelAsset
-        | MaterialAsset
-        | BackgroundAsset
-        | LightConfig
-        | CameraConfig
+        config.ModelConfig
+        | config.MaterialConfig
+        | config.BackgroundConfig
+        | config.LightConfig
+        | config.CameraConfig
         | list
     ):
-        """Register a descriptor or an iterable of descriptors.
+        """Register a config or an iterable of configs.
 
         Models, materials, and backgrounds are all registered here and are
         selected afterwards by the randomizers, by group or name. Nothing is
         registered implicitly, so add every collection that a randomizer should
-        be able to select, for example the result of MaterialAsset.discover().
+        be able to select, for example the result of
+        config.MaterialConfig.discover().
 
         Models are validated and assigned an annotation category without
         importing meshes. Register them before preparation; instance counts
@@ -222,49 +223,47 @@ class Environment:
         its image size, lens, and pose; add it before calling get_camera().
 
         Args:
-            asset: A model, material, background, light, or camera descriptor,
+            asset: A model, material, background, light, or camera config,
                 or an iterable of these, such as the list returned by
                 discover(). Items are registered in order; an error leaves the
                 earlier items registered.
 
         Returns:
-            For a model, the registered copy with an absolute Path, a float or
-            three-float tuple scale, and resolved category metadata. The input
-            specification is unchanged. Materials and backgrounds return a
-            normalized descriptor without loading or activating it. A light
+            For a model, the registered copy with an absolute Path and
+            resolved category metadata. The input config is unchanged.
+            Materials and backgrounds return a copy without loading or
+            activating them. A light
             returns a copy of its config; get_light() returns the created
             light. A camera returns a copy of its config. For an iterable,
             return the list of these results.
 
         Raises:
-            TypeError: The asset is not a supported descriptor or iterable of
+            TypeError: The asset is not a supported config or iterable of
                 them.
             RuntimeError: A model is added after preparation or cleanup.
-            ValueError: A model name is empty or already registered, a light
-                name is already registered, a camera was already added, scale
-                is not a positive finite
-                scalar or three-vector, category metadata conflicts, or a
-                material/background descriptor is invalid or duplicates a name.
+            ValueError: A model, material, background, or light name is
+                already registered, a camera was already added, or category
+                metadata conflicts.
             FileNotFoundError: An asset path is missing.
         """
         if isinstance(asset, Iterable) and not isinstance(asset, str):
             return [self.add(item) for item in asset]
-        if isinstance(asset, ModelAsset):
+        if isinstance(asset, config.ModelConfig):
             return self.model_manager.add(asset)
-        if isinstance(asset, MaterialAsset):
+        if isinstance(asset, config.MaterialConfig):
             return self.material_manager.add(asset)
-        if isinstance(asset, BackgroundAsset):
+        if isinstance(asset, config.BackgroundConfig):
             return self.background_manager.add(asset)
-        if isinstance(asset, LightConfig):
+        if isinstance(asset, config.LightConfig):
             return self.light_manager.add(asset)
-        if isinstance(asset, CameraConfig):
+        if isinstance(asset, config.CameraConfig):
             return self.camera_manager.add(asset)
         raise TypeError(
-            "asset must be a ModelAsset, MaterialAsset, BackgroundAsset, "
+            "asset must be a ModelConfig, MaterialConfig, BackgroundConfig, "
             "LightConfig, or CameraConfig."
         )
 
-    def get_assets(self) -> Mapping[str, ModelAsset]:
+    def get_assets(self) -> Mapping[str, config.ModelConfig]:
         """Return a read-only view of definitions keyed by exact model name."""
         return self.model_manager.get_assets()
 
