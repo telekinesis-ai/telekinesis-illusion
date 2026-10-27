@@ -8,6 +8,15 @@ This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) f
 
 ### Added
 
+- `resolve_asset_dir()`, and therefore `Environment()` and the quickstarts,
+  fall back to the public example assets when no explicit directory,
+  `./assets`, or checkout `assets/` exists. The first lookup downloads
+  `https://assets.telekinesis.ai/telekinesis-illusion/assets-<VERSION>.zip` and
+  extracts it to `~/.cache/telekinesis//telekinesis-illusion/assets-<VERSION>/assets`; later
+  lookups reuse the cache. Archive members with paths outside the extraction
+  directory are rejected, and an interrupted download leaves no partial
+  cache. `resolve_asset_dir()` no longer raises `FileNotFoundError` when no
+  local directory is found; a failed download raises `httpx.HTTPError`.
 - Added the `telekinesis.illusion.config` module. Every config derives from
   `BaseConfig`, is immutable, validates its values on construction, converts to
   and from plain dictionaries with `to_dict()` and `from_dict()`, and returns a
@@ -41,7 +50,7 @@ This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) f
   All three support local `from_path()` and deterministic recursive `discover()`.
   Material discovery recognizes the existing color-texture convention and stops
   descending at an asset directory; model formats match the existing loader.
-  Background discovery accepts `.hdr` and `.exr`. URL support is deferred.
+  Background discovery accepts `.hdr` and `.exr`.
 - Added normalized selection groups with forward-slash ancestor membership.
   Discovery derives groups from relative parent directories and accepts
   `group_prefix`; material/background assets directly in the collection root

@@ -11,7 +11,9 @@ the generator renders that scene from the configured camera views.
 ## 1. Prepare your environment
 
 Use a source checkout with its `assets/` directory and install the package as
-described in [Getting started](DEVELOPMENT.md#get-started). Activate that
+described in [Getting started](DEVELOPMENT.md#get-started). Without a local
+`assets/` directory, the public example assets are downloaded on first use and
+cached in `~/.cache/telekinesis/telekinesis-illusion/assets-<VERSION>/assets`. Activate that
 environment and run the following steps from the repository root.
 
 The example uses CPU rendering, a 128-by-128 image size, and eight Cycles samples

@@ -27,7 +27,7 @@ configuration. The current requirements are:
 | Blender runtime | `bpy==4.2.17`, installed by pip with the package. |
 | Platform | An OS and architecture with a compatible [bpy wheel](https://pypi.org/project/bpy/4.2.17/#files). |
 | Rendering | The default is CUDA. CPU rendering can be selected explicitly. |
-| Assets | The repository's `assets/` tree, or a compatible external asset directory. |
+| Assets | The repository's `assets/` tree, a compatible external asset directory, or the public example assets downloaded on first use. |
 
 Run scripts with the environment's `python`. The standalone `bpy` package
 provides the Blender runtime; the examples do not need the Blender desktop
@@ -105,8 +105,7 @@ The top-level `assets/` directory is not included in the Python wheel. Even a
 basic `Environment` needs an asset directory for relative paths such as surface
 imperfections. Models, materials, and HDRIs are not registered automatically:
 add them with `Environment.add()`, for example
-`environment.add(config.MaterialConfig.discover(assets_dir / "materials"))`. Keep the
-asset tree available when running examples.
+`environment.add(config.MaterialConfig.discover(assets_dir / "materials"))`.
 
 Asset lookup is implemented in
 [utils/assets.py](src/telekinesis/illusion/utils/assets.py):
@@ -116,7 +115,13 @@ Asset lookup is implemented in
    a worker's `dataset.asset_directory` is relative to its YAML file.
 2. Without an explicit directory, lookup checks `./assets` in the working
    directory, then the repository's `assets/` next to an editable checkout.
-3. Model paths in worker YAML are relative to the resolved asset directory;
+3. If neither exists, the public example assets are used from
+   `~/.cache/telekinesis/telekinesis-illusion/assets-<VERSION>/assets`. The first such lookup
+   downloads `https://assets.telekinesis.ai/telekinesis-illusion/assets-<VERSION>.zip`
+   and extracts it there; members with paths outside the archive are
+   rejected. An interrupted download leaves no partial cache. Delete the
+   directory to download the assets again.
+4. Model paths in worker YAML are relative to the resolved asset directory;
    absolute model paths are used directly.
 
 For example, `dataset.asset_directory: ../assets` in a file under `configs/`
@@ -399,7 +404,8 @@ ordinary contributions do not require publishing credentials or a version bump.
 | --- | --- |
 | Installation rejects Python or cannot find `bpy` | Check `python --version`, the active environment, and wheel availability for `bpy==4.2.17`. Python 3.12+ does not satisfy this project's metadata. |
 | Imports use old code or fail after an edit | Check the IDE interpreter and `python -m pip show telekinesis-illusion`. Reinstall editable metadata when needed and restart Python. |
-| Missing asset directory, model, HDRI, or material | Check the working directory, YAML-relative asset root, and referenced files. A wheel does not supply the top-level example assets. |
+| Missing asset directory, model, HDRI, or material | Check the working directory, YAML-relative asset root, and referenced files. A wheel does not supply the top-level example assets; they are downloaded to `~/.cache/telekinesis/illusion/assets-<VERSION>/assets` when no local `assets/` directory exists. |
+| Downloading the public assets fails | Check network access to `assets.telekinesis.ai`, or provide a local asset directory. |
 | CUDA device selection fails | Check the GPU and driver, or select CPU explicitly as described above. |
 | Viewer import fails or a preview starts unexpectedly | Install the `viewer` extra, or pass `--no-preview` to the quickstarts. |
 | NumPy/SciPy ABI error or imports resolve into Blender extensions | Check environment isolation and any `BLENDER_USER_EXTENSIONS` override. Blender extension wheels can shadow environment packages; see `utils/blender_env.py`. |

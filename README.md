@@ -83,8 +83,10 @@ setups; other configurations may also work.
 
 The example scripts are run from the Git checkout and are not included in the
 package installed from PyPI. Follow the GitHub installation above, then run
-these commands from the repository root. The examples rely on the checkout's
-`assets/` directory, and the worker example also uses `configs/`.
+these commands from the repository root. The examples use the checkout's
+`assets/` directory, and the worker example also uses `configs/`. Without an
+`assets/` directory, the first run downloads the public example assets (174 MB) to
+`~/.cache/telekinesis/telekinesis-illusion/assets-<VERSION>/assets` and later runs reuse them.
 
 The examples default to CUDA (`--device CUDA`); pass `--device CPU` to select
 CPU rendering:
