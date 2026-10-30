@@ -228,6 +228,100 @@ Relative paths resolve as follows: `dataset.asset_directory` against the YAML
 file, `models[].model_path` against the asset directory, and
 `dataset.output_directory` against the working directory.
 
+#### Material randomization
+
+Each entry under `randomizers.material` is one rule. A rule selects target
+models, a material pool, and how the sampled materials are assigned to the
+material slots of each target instance. Every instance receives its own
+samples.
+
+Targets are the union of `target_models`, exact model names, and
+`target_groups`, model groups such as `[part]`.
+
+The material pool comes from exactly one of these settings:
+
+| Setting | Samples from |
+| --- | --- |
+| `groups`, `names` | Registered PBR texture materials, selected by group, such as `metal` or `metal/steel`, or by material name. Groups are sub-directories of `<asset_directory>/materials`. |
+| `materials` | A list of choices, each drawn with equal probability. A string is a PBR material group. A mapping is a procedural Principled BSDF recipe with the keys `preset`, `parameters` and `surface_imperfections`. |
+| `material_slots` mapping | Separate choice lists per slot name or zero-based slot index. Cannot be combined with `groups`, `names` or `materials`. |
+
+`mode` decides which slots receive a material:
+
+| Mode | Assignment |
+| --- | --- |
+| `active` | One sample replaces only the active slot. |
+| `model` | One sample replaces all slots. |
+| `slots` | Each slot is sampled separately. Used with `material_slots`. |
+
+Without `mode`, a rule with `material_slots` uses `slots`, a rule with
+`materials` uses `model`, and a rule with only `groups` or `names` uses
+`active`. Set `mode: model` to texture a whole multi-slot model from PBR
+groups.
+
+Procedural recipes start from the preset `metal`, `plastic` or `rubber`, or
+from plain Principled BSDF defaults when `preset` is omitted. Each entry in
+`parameters` overrides a Principled BSDF input with a fixed value or a
+`[min, max]` range; colors are RGB or RGBA in linear space, and a color range
+is a pair of colors. `surface_imperfections` is `true` or a mapping with
+`enabled`, `directory` (relative to the asset directory), `roughness_strength`,
+`bump_strength`, `bump_distance` and `scale`, each a fixed value or a
+`[min, max]` range.
+
+Whole parts with PBR metal textures:
+
+```yaml
+randomizers:
+  material:
+    parts_metal:
+      target_groups: [part]
+      groups: [metal]
+      mode: model
+```
+
+Whole parts with procedural materials:
+
+```yaml
+randomizers:
+  material:
+    parts_procedural:
+      target_groups: [part]
+      materials:
+        - preset: metal
+          parameters: {roughness: [0.2, 0.5]}
+        - preset: plastic
+          surface_imperfections: {enabled: true, roughness_strength: [0.1, 0.3]}
+```
+
+Every slot sampled separately from the same pool:
+
+```yaml
+randomizers:
+  material:
+    connector_all_slots:
+      target_models: [connector]
+      material_slots: all
+      groups: [metal]
+```
+
+Slot-specific choices:
+
+```yaml
+randomizers:
+  material:
+    housing_slots:
+      target_models: [housing]
+      material_slots:
+        Body: [plastic]
+        Seal: [rubber, {preset: rubber}]
+```
+
+The `slots` mode requires the target models to keep their imported slots with
+`material_preprocessing: preserve`. A slot name that is missing or occurs more
+than once on a model raises `ValueError`; address duplicate names by index. A
+`seed` gives the rule its own random number generator, so its samples do not
+depend on other randomizers.
+
 #### Validation
 
 Unknown sections or keys, missing required keys, invalid values, and

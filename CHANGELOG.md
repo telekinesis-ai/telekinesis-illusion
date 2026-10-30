@@ -4,6 +4,15 @@ Notable changes to `telekinesis-illusion` are recorded here, newest first.
 
 This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
 
+## Unreleased
+
+### Added
+
+- `BinPickingWorker.generate()` saves the configuration file to
+  `<output_directory>/<name>/config.yaml`, headed by a comment with the
+  installed telekinesis-illusion version and the generation time. The copy can
+  be used to rerun the generation as-is.
+
 ## 0.3.0 - 2026-10-27
 
 ### Added

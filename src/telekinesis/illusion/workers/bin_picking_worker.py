@@ -5,6 +5,7 @@ Worker class for generating shards for the bin picking use case.
 import math
 import shutil
 from collections.abc import Mapping
+from importlib import metadata
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Callable
@@ -966,6 +967,11 @@ class BinPickingWorker:
         UUID so that multiple workers can run simultaneously without collisions.
         Generation stops early once the output exceeds
         dataset.writer.max_size_gb.
+
+        The configuration file is saved unchanged to
+        <output_directory>/<name>/config.yaml, headed by a comment with the
+        installed telekinesis-illusion version and the generation time. An
+        existing copy from an earlier run is overwritten.
         """
         shard_size = self._dataset_config.shard.size
         remaining_images = self._dataset_config.num_images
@@ -976,6 +982,16 @@ class BinPickingWorker:
         self._output_base = (
             Path(self._dataset_config.output_directory)
             / self._dataset_config.name
+        )
+        # The header is a YAML comment, so the copy can be used to rerun the
+        # generation as-is.
+        self._output_base.mkdir(parents=True, exist_ok=True)
+        (self._output_base / "config.yaml").write_text(
+            f"# Generated with telekinesis-illusion "
+            f"{metadata.version('telekinesis-illusion')} on "
+            f"{datetime.now().isoformat(timespec='seconds')}\n"
+            + self._config_file_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
         )
 
         try:
