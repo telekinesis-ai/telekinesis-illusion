@@ -229,3 +229,6 @@ AGENTS.md
 
 # VS Code
 settings.json
+
+# Mac
+.DS_Store
