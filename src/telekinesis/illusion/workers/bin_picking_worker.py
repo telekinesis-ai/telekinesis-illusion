@@ -177,7 +177,7 @@ class BinPickingWorker:
 
         self._randomizer = Randomizer()
         for node_name, node, stage in self._create_randomizer_nodes():
-            self._randomizer.add_randomizer(
+            self._randomizer.add(
                 randomizer_node=node,
                 node_name=node_name,
                 node_config=NodeConfig(stage=stage),

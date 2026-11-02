@@ -75,7 +75,7 @@ def validate_dataset(path, count, resolution):
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "name", ["quickstart_flying_things.py", "quickstart_parts_in_bin.py"]
+    "name", ["quickstart_object_based_data_generation.py", "quickstart_parts_in_bin.py"]
 )
 def test_quickstarts_render_multiple_samples(tmp_path, name):
     """Quickstarts render the requested image count with camera metadata."""

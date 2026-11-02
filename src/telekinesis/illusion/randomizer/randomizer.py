@@ -38,7 +38,7 @@ class Randomizer:
         from telekinesis.illusion.randomizer import randomizer_node
 
         randomizer = Randomizer()
-        randomizer.add_randomizer(
+        randomizer.add(
             randomizer_node.ModelInstanceRandomizer(
                 config.InstanceRandomizerConfig(counts={"gear": (1, 3)})
             ),
@@ -153,7 +153,7 @@ class Randomizer:
             edge_config if edge_config is not None else EdgeConfig()
         )
 
-    def add_randomizer(
+    def add(
         self,
         randomizer_node: RandomizerNode,
         node_name: str,
@@ -196,6 +196,23 @@ class Randomizer:
         # Append: end -> new
         self.add_edge(self.end_node_name, node_name, edge_config=edge_config)
         self.end_node_name = node_name
+
+    def add_randomizer(
+        self,
+        randomizer_node: RandomizerNode,
+        node_name: str,
+        node_config: NodeConfig | None = None,
+        edge_config: EdgeConfig | None = None,
+    ) -> None:
+        """
+        Alias of add(), kept for compatibility.
+        """
+        self.add(
+            randomizer_node,
+            node_name,
+            node_config=node_config,
+            edge_config=edge_config,
+        )
 
     def get_randomizer_node(self, node_name: str) -> RandomizerNode | None:
         """

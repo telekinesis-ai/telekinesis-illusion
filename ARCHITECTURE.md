@@ -189,8 +189,8 @@ rather than constructing another Blender scene.
 ## Randomization tree
 
 The randomization tree is represented by a directed acyclic graph (DAG).
-`add_randomizer()` appends a node to a chain; `add_node()` and `add_edge()` allow
-explicit dependencies and shared nodes. Execution uses a stable topological
+`add()` (alias `add_randomizer()`) appends a node to a chain; `add_node()`
+and `add_edge()` allow explicit dependencies and shared nodes. Execution uses a stable topological
 order, with insertion order resolving ties. Cycles are rejected.
 
 [RandomizerNode](src/telekinesis/illusion/randomizer/randomizer_node.py)

@@ -12,6 +12,8 @@ This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) f
   `<output_directory>/<name>/config.yaml`, headed by a comment with the
   installed telekinesis-illusion version and the generation time. The copy can
   be used to rerun the generation as-is.
+- `Randomizer.add()` appends a randomizer node, matching `Environment.add()`.
+  `add_randomizer()` remains as an alias, so existing code keeps working.
 
 ## 0.3.0 - 2026-10-27
 

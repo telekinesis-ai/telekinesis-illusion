@@ -55,13 +55,13 @@ dataset_environment.add(
 )
 
 randomization = randomizer.Randomizer()
-randomization.add_randomizer(
+randomization.add(
     randomizer_node.ModelInstanceRandomizer(
         config.InstanceRandomizerConfig(counts={"gear": (1, 1)})
     ),
     "counts",
 )
-randomization.add_randomizer(
+randomization.add(
     randomizer_node.CameraPoseRandomizer(
         config.CameraPoseRandomizerConfig(
             sampler="shell_sampler",
