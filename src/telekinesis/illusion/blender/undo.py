@@ -5,6 +5,7 @@ Wrappers created inside a reverted block must not escape the block.
 """
 
 import inspect
+import sys
 from types import TracebackType
 from typing import Optional, Type, List, Tuple
 from typing import TYPE_CHECKING
@@ -29,11 +30,10 @@ class UndoAfterExecution:
         perform_undo_op: bool = True,
     ):
         if check_point_name is None:
-            check_point_name = (
-                inspect.stack()[1].filename
-                + " - "
-                + inspect.stack()[1].function
-            )
+            # sys._getframe instead of inspect.stack(): the latter reads source context for the
+            # whole stack and cost ~70 ms per physics run.
+            caller = sys._getframe(1)
+            check_point_name = caller.f_code.co_filename + " - " + caller.f_code.co_name
         self.check_point_name = check_point_name
         self._perform_undo_op = perform_undo_op
         self.struct_instances: List[Tuple[str, "Struct"]] = []

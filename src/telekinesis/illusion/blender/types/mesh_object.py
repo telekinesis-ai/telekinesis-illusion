@@ -11,6 +11,7 @@ import numpy as np
 import bmesh
 import mathutils
 from mathutils import Vector, Matrix
+from _bpy import ops as _bpy_ops
 from trimesh import Trimesh
 
 from telekinesis.illusion.blender.types.entity import Entity
@@ -30,6 +31,37 @@ if platform != "win32":
 # Vertex budget of collision stand-ins (0: collide with the full mesh); set from
 # PhysicsConfig.collision_max_vertices. See MeshObject.get_collision_mesh.
 COLLISION_MAX_VERTICES = 0
+
+# Local-space (vertices, polygons) per collision mesh, keyed by name, size and first vertex: an
+# origin change moves every vertex and so invalidates the entry. Building the placement BVH from
+# these arrays avoids a full bmesh copy of the mesh on every check.
+_ARRAYS: dict = {}
+# World-space placement BVH per object, reused while mesh and pose are unchanged.
+_TREES: dict = {}
+
+
+def _collision_arrays(mesh):
+    n = len(mesh.vertices)
+    first = tuple(mesh.vertices[0].co) if n else ()
+    key = (mesh.name, n, len(mesh.polygons), first)
+    hit = _ARRAYS.get(mesh.name)
+    if hit is not None and hit[0] == key:
+        return hit[1], hit[2]
+    vertices = np.empty(n * 3, dtype=np.float64)
+    mesh.vertices.foreach_get("co", vertices)
+    loops = np.empty(len(mesh.loops), dtype=np.int64)
+    mesh.loops.foreach_get("vertex_index", loops)
+    starts = np.empty(len(mesh.polygons), dtype=np.int64)
+    totals = np.empty(len(mesh.polygons), dtype=np.int64)
+    mesh.polygons.foreach_get("loop_start", starts)
+    mesh.polygons.foreach_get("loop_total", totals)
+    if len(totals) and (totals == totals[0]).all():
+        polygons = loops.reshape(-1, int(totals[0])).tolist()  # all triangles (or all quads): one call
+    else:
+        polygons = [loops[s:s + t].tolist() for s, t in zip(starts, totals)]
+    vertices = vertices.reshape(-1, 3)
+    _ARRAYS[mesh.name] = (key, vertices, polygons)
+    return vertices, polygons
 
 
 class MeshObject(Entity):
@@ -244,9 +276,10 @@ class MeshObject(Entity):
         :param angular_damping: Amount of angular velocity that is lost over time.
         :param linear_damping: Amount of linear velocity that is lost over time.
         """
-        # Enable rigid body component
+        # Enable rigid body component. Called directly: the bpy.ops wrapper updates the whole
+        # view layer before and after every operator, which dominated placement time.
         with bpy.context.temp_override(object=self.blender_obj):
-            bpy.ops.rigidbody.object_add()
+            _bpy_ops.call("rigidbody.object_add", {})
         # Sett attributes
         rigid_body = self.blender_obj.rigid_body
         rigid_body.type = "ACTIVE" if active else "PASSIVE"
@@ -302,7 +335,7 @@ class MeshObject(Entity):
         """Disables the rigidbody element of the object"""
         if self.has_rigidbody_enabled():
             with bpy.context.temp_override(object=self.blender_obj):
-                bpy.ops.rigidbody.object_remove()
+                _bpy_ops.call("rigidbody.object_remove", {})
         else:
             warnings.warn(
                 f"MeshObject {self.get_name()} has no rigid_body component enabled"
@@ -423,12 +456,18 @@ class MeshObject(Entity):
 
         :return: The new bvh tree
         """
-        bm = bmesh.new()
-        bm.from_mesh(self.get_collision_mesh())
-        bm.transform(Matrix(self.get_local2world_mat()))
-        bvh_tree = mathutils.bvhtree.BVHTree.FromBMesh(bm)
-        bm.free()
-        return bvh_tree
+        mesh = self.get_collision_mesh()
+        vertices, polygons = _collision_arrays(mesh)
+        matrix = np.asarray(self.get_local2world_mat(), dtype=np.float64)
+        # Static objects (bins, containers) are checked again and again at the same pose.
+        key = (_ARRAYS[mesh.name][0], matrix.tobytes())
+        hit = _TREES.get(self.get_name())
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        world = vertices @ matrix[:3, :3].T + matrix[:3, 3]
+        tree = mathutils.bvhtree.BVHTree.FromPolygons(world.tolist(), polygons)
+        _TREES[self.get_name()] = (key, tree)
+        return tree
 
     def get_collision_mesh(self) -> bpy.types.Mesh:
         """The mesh used for collision: a cached decimated stand-in for convex-hull
@@ -439,12 +478,18 @@ class MeshObject(Entity):
         full-mesh BVH on every try. The stand-in is in the mesh's unshifted local frame.
         """
         mesh = self.get_mesh()
-        rigid_body = self.blender_obj.rigid_body
-        if (not COLLISION_MAX_VERTICES or len(mesh.vertices) <= COLLISION_MAX_VERTICES
-                or rigid_body is None or rigid_body.collision_shape != "CONVEX_HULL"):
+        if not COLLISION_MAX_VERTICES or len(mesh.vertices) <= COLLISION_MAX_VERTICES:
             return mesh
-        # Looked up by name: the physics undo reloads ID blocks, invalidating Python references.
+        # Looked up by name every time: the physics undo reloads ID blocks, so Python references
+        # held across it can silently point at stale data.
         proxy = bpy.data.meshes.get(f"{mesh.name}_collision")
+        rigid_body = self.blender_obj.rigid_body
+        if rigid_body is None:
+            # Placement runs before the rigid body exists: reuse the convex-hull stand-in once
+            # physics has built it, so placement checks the same shape that is simulated.
+            return proxy or mesh
+        if rigid_body.collision_shape != "CONVEX_HULL":
+            return mesh
         if proxy is not None:
             return proxy
         holder = bpy.data.objects.new("_collision_proxy", mesh)
