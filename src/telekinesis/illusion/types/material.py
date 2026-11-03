@@ -34,6 +34,11 @@ PARAMETERS = MappingProxyType(
         "subsurface_radius": ("Subsurface Radius", 3, 0.0, _BLENDER_FLOAT_MAX),
         "emission_color": ("Emission Color", 4, 0.0, 1.0),
         "emission_strength": ("Emission Strength", 1, 0.0, _BLENDER_FLOAT_MAX),
+        # Velvet/fibre retro-reflection (foam, cloth) and brushed-metal anisotropy.
+        "sheen_weight": ("Sheen Weight", 1, 0.0, 1.0),
+        "sheen_roughness": ("Sheen Roughness", 1, 0.0, 1.0),
+        "anisotropic": ("Anisotropic", 1, 0.0, 1.0),
+        "anisotropic_rotation": ("Anisotropic Rotation", 1, 0.0, 1.0),
     }
 )
 

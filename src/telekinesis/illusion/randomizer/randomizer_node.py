@@ -671,9 +671,12 @@ class ModelInstanceRandomizer(RandomizerNode):
                 registered model name.
         """
         self.randomizer_config = randomizer_config
+        # Capacity always follows the configured bounds, even while a scene
+        # family has temporarily swapped randomizer_config for sampling.
+        self.capacity_config = randomizer_config
 
     def required_instances(self) -> dict[str, int]:
-        cfg = self.randomizer_config
+        cfg = self.capacity_config
         _, total_max = instance_counts.validate_counts(
             cfg.counts, cfg.min_num_total_models, cfg.max_num_total_models
         )
@@ -1105,3 +1108,85 @@ class CameraPoseRandomizer(RandomizerNode):
             camera.set_camera_pose(
                 location=location, rotation=rotation_matrix, frame=frame
             )
+
+
+class CameraMountRandomizer(RandomizerNode):
+    """Attach visible props to the camera, like hardware on a wrist camera.
+
+    Each mounted model's import transform is read as an offset in camera
+    space (Blender cameras look along -Z with +Y up), so the prop stays at
+    the same place in every view, e.g. a gripper at the bottom of the image.
+    Mounted props are excluded from physics.
+    """
+
+    def __init__(self, model_names: Sequence[str]) -> None:
+        """
+        Args:
+            model_names: Names of the models to mount on the camera.
+        """
+        self._model_names = tuple(model_names)
+        self._offsets: dict[str, mathutils.Matrix] = {}
+
+    def randomize(self, environment: Environment) -> None:
+        camera = bpy.context.scene.camera
+        if camera is None:
+            raise RuntimeError("No camera to mount models on.")
+        models = environment.get_models()
+        for instance_name in environment.get_visible_model_names():
+            if not instance_name.startswith(self._model_names):
+                continue
+            model = models[instance_name]
+            blender_obj = model.get_mesh_object().blender_obj
+            offset = self._offsets.setdefault(
+                blender_obj.name, blender_obj.matrix_basis.copy()
+            )
+            model.disable_rigid_body()
+            blender_obj.parent = camera
+            blender_obj.matrix_parent_inverse = mathutils.Matrix.Identity(4)
+            blender_obj.matrix_basis = offset
+
+
+class SceneFamilyRandomizer(RandomizerNode):
+    """Choose a scene family and hand its instance bounds to the role nodes.
+
+    Runs before the instance randomizers. Each chosen family replaces the
+    ``randomizer_config`` of the instance nodes for the roles it lists;
+    other roles fall back to their base bounds.
+    """
+
+    def __init__(
+        self,
+        families: dict[str, config.SceneFamilyConfig],
+        role_nodes: dict[str, "ModelInstanceRandomizer"],
+    ) -> None:
+        """
+        Args:
+            families: Scene families by name.
+            role_nodes: Instance randomizer node per model role.
+        """
+        self._families = dict(families)
+        self._role_nodes = dict(role_nodes)
+        self._base = {
+            role: node.randomizer_config for role, node in role_nodes.items()
+        }
+        self.current: str | None = None
+
+    def required_instances(self) -> dict[str, int]:
+        # Capacity beyond the base nodes for the largest family bounds.
+        needed: dict[str, int] = {}
+        for family in self._families.values():
+            for bounds in family.instance.values():
+                probe = ModelInstanceRandomizer(bounds).required_instances()
+                for name, count in probe.items():
+                    needed[name] = max(needed.get(name, 0), count)
+        return needed
+
+    def randomize(self, environment: Environment) -> None:
+        names = list(self._families)
+        weights = np.array([self._families[n].weight for n in names], float)
+        self.current = names[
+            int(np.random.choice(len(names), p=weights / weights.sum()))
+        ]
+        family = self._families[self.current]
+        for role, node in self._role_nodes.items():
+            node.randomizer_config = family.instance.get(role, self._base[role])

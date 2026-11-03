@@ -244,11 +244,12 @@ class Region2D:
         """
         ret = self._base_point.copy()
         # Walk over both vectors in the plane and determine a distance in both
-        # direction
-        for vec in self._vectors:
-            ret += vec * random.uniform(
-                face_sample_range[0], face_sample_range[1]
-            )
+        # direction. A (2, 2) range gives one [min, max] per face vector.
+        ranges = np.asarray(face_sample_range, dtype=float)
+        if ranges.ndim == 1:
+            ranges = np.stack([ranges, ranges])
+        for vec, (low, high) in zip(self._vectors, ranges):
+            ret += vec * random.uniform(low, high)
         return ret
 
     def normal(self):

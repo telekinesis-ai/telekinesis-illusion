@@ -11,7 +11,7 @@ from typing import Any, Callable
 from uuid import uuid4
 import yaml
 
-from telekinesis.illusion import config
+from telekinesis.illusion import config, sensor
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 # Must run before bpy is imported. See blender_env.py for why.
@@ -39,6 +39,8 @@ from telekinesis.illusion.randomizer.randomizer_node import (
     BackgroundRandomizer,
     MaterialRandomizer,
     CameraPoseRandomizer,
+    CameraMountRandomizer,
+    SceneFamilyRandomizer,
     LightRandomizer,
     LightPoseRandomizer,
     NodeConfig,
@@ -53,6 +55,16 @@ from telekinesis.illusion.utils.assets import (
     resolve_asset_dir,
     resolve_asset_path,
 )
+
+
+class _SceneCallbackNode(RandomizerNode):
+    """Run a callback once per scene, before the nodes that follow it."""
+
+    def __init__(self, callback: Callable[[], None]) -> None:
+        self._callback = callback
+
+    def randomize(self, environment: Environment) -> None:
+        self._callback()
 
 
 class BinPickingWorker:
@@ -197,6 +209,9 @@ class BinPickingWorker:
             supercategory_map=supercategory_map,
             color_file_format=self._dataset_config.writer.image_format,
             jpg_quality=self._dataset_config.writer.jpg_quality,
+            color_transform=sensor.make_color_transform(self._sensor_config),
+            metadata_provider=self._scene_provenance,
+            include_camera_metadata=True,
         )
 
         # TODO: For RGB-D datasets, enable RenderConfig.depth and reuse
@@ -239,6 +254,7 @@ class BinPickingWorker:
             "lights",
             "pose_sampling",
             "randomizers",
+            "sensor",
         }
         if not isinstance(raw_config, Mapping):
             raise TypeError("The configuration must be a mapping of sections.")
@@ -275,6 +291,13 @@ class BinPickingWorker:
             config.PoseSamplingConfig,
             raw_config.get("pose_sampling", {}),
         )
+        sensor_config = (
+            config.build_config(
+                "sensor", config.SensorConfig, raw_config["sensor"]
+            )
+            if raw_config.get("sensor") is not None
+            else None
+        )
         if (
             not isinstance(raw_config["models"], list)
             or not raw_config["models"]
@@ -293,6 +316,7 @@ class BinPickingWorker:
 
         randomizers = raw_config["randomizers"]
         randomizer_sections = {
+            "scene_families",
             "instance",
             "model_pose",
             "material",
@@ -332,6 +356,9 @@ class BinPickingWorker:
 
         instance_configs = build_named_configs(
             "instance", config.InstanceRandomizerConfig
+        )
+        scene_family_configs = build_named_configs(
+            "scene_families", config.SceneFamilyConfig
         )
         material_configs = build_named_configs(
             "material", config.MaterialRandomizerConfig
@@ -488,6 +515,8 @@ class BinPickingWorker:
         self._light_randomizer_configs = light_randomizer_configs
         self._light_pose_configs = light_pose_configs
         self._camera_pose_config = camera_pose_config
+        self._sensor_config = sensor_config
+        self._scene_family_configs = scene_family_configs
 
     def get_output_base_directory(self) -> Path:
         """
@@ -740,12 +769,36 @@ class BinPickingWorker:
                     ),
                     None,
                 )
+                pose_sampling = self._pose_sampling_config
+                secondary = [
+                    model_name
+                    for model_name in visible
+                    if any(
+                        model_name.startswith(prefix)
+                        for prefix in pose_sampling.secondary_targets
+                    )
+                ]
+                if (
+                    secondary
+                    and np.random.random() < pose_sampling.secondary_probability
+                ):
+                    target = secondary[np.random.randint(len(secondary))]
+            pose_sampling = self._pose_sampling_config
+            face_sample_range: Any = pose_sampling.face_sample_range
+            max_height = pose_sampling.max_height
+            pile = getattr(self, "_pile_window", None)
+            if pile is not None and not any(
+                str(target).startswith(prefix)
+                for prefix in pose_sampling.secondary_targets
+            ):
+                face_sample_range = pile
+                max_height *= pose_sampling.pile_height_scale
             sample_location = upper_region_sampler(
                 self._environment,
                 model_names_to_sample_on=target,  # type: ignore[arg-type]
-                face_sample_range=self._pose_sampling_config.face_sample_range,
-                min_height=self._pose_sampling_config.min_height,
-                max_height=self._pose_sampling_config.max_height,
+                face_sample_range=face_sample_range,
+                min_height=pose_sampling.min_height,
+                max_height=max_height,
             )
             model.set_location(sample_location)
             model.set_rotation(
@@ -753,6 +806,20 @@ class BinPickingWorker:
             )
 
         return sample_pose
+
+    def _sample_pile_window(self) -> None:
+        """Pick this scene's pile window (per face axis), or None for a spread scene."""
+        pose_sampling = self._pose_sampling_config
+        self._pile_window = None
+        if np.random.random() >= pose_sampling.pile_probability:
+            return
+        low, high = pose_sampling.face_sample_range
+        window = []
+        for _ in range(2):
+            side = min(np.random.uniform(*pose_sampling.pile_size), high - low)
+            start = np.random.uniform(low, high - side)
+            window.append([start, start + side])
+        self._pile_window = window
 
     def _make_sample_pose_grid(self) -> Callable[[Model], None]:
         """
@@ -811,18 +878,35 @@ class BinPickingWorker:
         Returns:
             A list of (node name, node, stage) tuples.
         """
-        nodes = [
-            (
-                "instance_randomizer_models",
-                ModelInstanceRandomizer(self._instance_configs["part"]),
-                STAGE_COMPOSITION,
-            ),
+        # Nodes run in insertion order, not grouped by stage: every instance
+        # node (props included) must come before the pose nodes, or parts
+        # cannot be dropped onto props such as neighbour bins.
+        role_nodes = {
+            role: ModelInstanceRandomizer(self._instance_configs[role])
+            for role in ("part", "container", "prop")
+            if role in self._instance_configs
+        }
+        nodes = []
+        self._scene_family_node = None
+        if self._scene_family_configs:
+            self._scene_family_node = SceneFamilyRandomizer(
+                self._scene_family_configs, role_nodes
+            )
+            nodes.append(
+                ("scene_family_randomizer", self._scene_family_node, STAGE_COMPOSITION)
+            )
+        nodes += [
+            ("instance_randomizer_models", role_nodes["part"], STAGE_COMPOSITION),
             (
                 "instance_randomizer_containers",
-                ModelInstanceRandomizer(self._instance_configs["container"]),
+                role_nodes["container"],
                 STAGE_COMPOSITION,
             ),
         ]
+        if "prop" in role_nodes:
+            nodes.append(
+                ("instance_randomizer_props", role_nodes["prop"], STAGE_COMPOSITION)
+            )
 
         sample_pose = self._make_sample_pose()
         if self._pose_sampling_config.strategy == "grid":
@@ -857,6 +941,14 @@ class BinPickingWorker:
                 sample_pose,
                 self._model_names_by_role["part"],
             )
+            if self._pose_sampling_config.pile_probability > 0:
+                nodes.append(
+                    (
+                        "pile_window_randomizer",
+                        _SceneCallbackNode(self._sample_pile_window),
+                        STAGE_POSE,
+                    )
+                )
         nodes.append(
             ("pose_randomizer_models", model_pose_randomizer, STAGE_POSE)
         )
@@ -956,7 +1048,74 @@ class BinPickingWorker:
                 STAGE_CAMERA,
             )
         )
+        # Props in the "camera_mount" group ride along with the camera, such
+        # as a gripper below a wrist camera.
+        mounted = [
+            model_config.model_name
+            for model_config in self._model_configs
+            if "camera_mount" in model_config.groups
+        ]
+        if mounted:
+            nodes.append(
+                (
+                    "camera_mount_randomizer",
+                    CameraMountRandomizer(mounted),
+                    STAGE_CAMERA,
+                )
+            )
         return nodes
+
+    def _scene_provenance(self) -> dict:
+        """Sampled scene parameters of the current sample, for each image."""
+        scene = bpy.context.scene
+        provenance: dict[str, Any] = {
+            "scene_family": getattr(self._scene_family_node, "current", None),
+            "view_transform": scene.view_settings.view_transform,
+            "exposure": float(scene.view_settings.exposure),
+        }
+        world = scene.world
+        if world is not None and world.use_nodes:
+            for node in world.node_tree.nodes:
+                if node.type == "BACKGROUND":
+                    provenance["background_strength"] = float(
+                        node.inputs["Strength"].default_value
+                    )
+                elif node.type == "TEX_ENVIRONMENT" and node.image is not None:
+                    provenance["background"] = node.image.name
+                elif node.type == "MAPPING":
+                    provenance["background_rotation_z"] = float(
+                        node.inputs["Rotation"].default_value[2]
+                    )
+        provenance["lights"] = [
+            {
+                "name": obj.name,
+                "type": obj.data.type,
+                "power": float(obj.data.energy),
+                "color": [float(c) for c in obj.data.color],
+                "location": [float(v) for v in obj.matrix_world.translation],
+            }
+            for obj in scene.objects
+            if obj.type == "LIGHT"
+        ]
+        visible = self._environment.get_visible_model_names()
+        models = self._environment.get_models()
+        by_role: dict[str, list] = {}
+        materials: dict[str, list] = {}
+        for name in visible:
+            base = name.split("_INSTANCE_")[0]
+            role = next(
+                (r for r, names in self._model_names_by_role.items() if base in names),
+                "unknown",
+            )
+            by_role.setdefault(role, []).append(base)
+            blender_obj = models[name].get_mesh_object().blender_obj
+            materials[name] = [
+                slot.material.name if slot.material else None
+                for slot in blender_obj.material_slots
+            ]
+        provenance["models"] = {role: sorted(v) for role, v in by_role.items()}
+        provenance["materials"] = materials
+        return {"illusion": provenance}
 
     def generate(self) -> None:
         """

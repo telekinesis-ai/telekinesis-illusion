@@ -19,7 +19,9 @@ Attributes:
         Blender attribute, the supporting light types, and the valid bounds.
     UV_MAPPING_METHODS: UV projections applied during model preprocessing.
     MODEL_ROLES: Roles a model can have in a bin-picking scene. A model
-        declares its role as one of its groups.
+        declares its role as one of its groups. Props are static scene
+        dressing (neighbouring bins, tables, fixtures) kept at their import
+        pose.
     COLLISION_SHAPES: Collision shapes for physics and collision checks.
     SHADING_MODES: Shading modes applied during model preprocessing.
     MATERIAL_PREPROCESSING_MODES: How imported material slots are handled
@@ -28,6 +30,7 @@ Attributes:
     POSE_SAMPLING_STRATEGIES: Strategies for placing parts in a container.
     RENDER_DEVICES: Render devices. GPU devices fall back to the CPU when they
         are unavailable.
+    VIEW_TRANSFORMS: Colour management view transforms of Blender 4.x.
     IMAGE_FORMATS: File formats of written color images.
     DATASET_FORMATS: Formats a merged dataset can be exported to.
     POSE_SAMPLER_CONFIGS: Camera and light pose sampler names mapped to the
@@ -61,7 +64,7 @@ LIGHT_PROPERTIES = {
     "spot_blend": ("spot_blend", ("SPOT",), 0.0, 1.0),
 }
 UV_MAPPING_METHODS = ("smart", "cube", "cylinder", "sphere")
-MODEL_ROLES = frozenset({"part", "container", "distractor"})
+MODEL_ROLES = frozenset({"part", "container", "distractor", "prop"})
 COLLISION_SHAPES = frozenset(
     {
         "BOX",
@@ -79,6 +82,9 @@ MATERIAL_PREPROCESSING_MODES = frozenset({"replace", "preserve"})
 MATERIAL_MODES = frozenset({"active", "model", "slots"})
 POSE_SAMPLING_STRATEGIES = frozenset({"random", "grid"})
 RENDER_DEVICES = frozenset({"CPU", "CUDA", "OPTIX", "HIP", "METAL"})
+VIEW_TRANSFORMS = frozenset(
+    {"Standard", "Filmic", "AgX", "Khronos PBR Neutral", "Raw"}
+)
 IMAGE_FORMATS = frozenset({"JPEG", "PNG"})
 DATASET_FORMATS = frozenset({"coco", "yolo"})
 
@@ -1051,6 +1057,9 @@ class CameraConfig(BaseConfig):
             pose.
         rotation: Initial XYZ Euler rotation in degrees. ``None`` uses a
             default pose.
+        intrinsics: Calibrated pinhole intrinsics ``[fx, fy, cx, cy]`` in
+            pixels for image_width x image_height. Overrides focal_length,
+            field_of_view, pixel aspect and shift.
 
     Example:
         camera_config = CameraConfig(image_width=640, image_height=480)
@@ -1068,6 +1077,7 @@ class CameraConfig(BaseConfig):
     shift_y: float | None = 0.0
     location: tuple[float, float, float] | None = None
     rotation: tuple[float, float, float] | None = None
+    intrinsics: tuple[float, float, float, float] | None = None
 
     def __post_init__(self) -> None:
         """Validate the camera settings.
@@ -1120,6 +1130,21 @@ class CameraConfig(BaseConfig):
                     name,
                     tuple(as_vector3(getattr(self, name), name).tolist()),
                 )
+        if self.intrinsics is not None:
+            values = self.intrinsics
+            if (
+                isinstance(values, (str, bytes))
+                or not isinstance(values, Sequence)
+                or len(values) != 4
+            ):
+                raise ValueError(
+                    f"intrinsics: must be [fx, fy, cx, cy], got {values!r}."
+                )
+            for value in values:
+                _check_number("intrinsics", value, 0.0, exclusive_minimum=True)
+            object.__setattr__(
+                self, "intrinsics", tuple(float(v) for v in values)
+            )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1193,6 +1218,23 @@ class RenderConfig(BaseConfig):
         verbose: Whether to print the Blender render output.
         depth: Whether to render a depth pass.
         normals: Whether to render a surface normal pass.
+        view_transform: Colour management view transform, one of
+            :data:`VIEW_TRANSFORMS`. ``None`` keeps the default (Filmic).
+            ``Standard`` clips highlights like most camera sensors.
+        look: Colour management look, such as ``"Medium High Contrast"``.
+            ``None`` keeps the default.
+        exposure: ``[min, max]`` exposure in stops, sampled per render.
+            ``None`` keeps the default of 0.
+        background_strength: ``[min, max]`` HDRI strength, sampled per
+            render. ``None`` keeps 1.0.
+        background_rotation: ``[min, max]`` HDRI rotation about Z in
+            degrees, sampled per render. ``None`` keeps 0.
+        bevel_radius: ``[min, max]`` render-time edge rounding in meters,
+            sampled per render. Real parts have small fillets that catch a
+            highlight line; CAD edges are perfectly sharp. ``None`` disables.
+        bevel_models: Model-name prefixes whose materials get the bevel.
+            ``None`` bevels every material; the Bevel node traces extra
+            rays, so limiting it to small parts keeps rendering fast.
 
     Example:
         render_config = RenderConfig(device="CPU", samples=16)
@@ -1205,6 +1247,13 @@ class RenderConfig(BaseConfig):
     verbose: bool = False
     depth: bool = False
     normals: bool = False
+    view_transform: str | None = None
+    look: str | None = None
+    exposure: tuple[float, float] | None = None
+    background_strength: tuple[float, float] | None = None
+    background_rotation: tuple[float, float] | None = None
+    bevel_radius: tuple[float, float] | None = None
+    bevel_models: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         """Validate the render settings.
@@ -1213,6 +1262,29 @@ class RenderConfig(BaseConfig):
             ValueError: If a setting is invalid.
         """
         _check_choice("device", self.device, RENDER_DEVICES)
+        if self.view_transform is not None:
+            _check_choice(
+                "view_transform", self.view_transform, VIEW_TRANSFORMS
+            )
+        if self.bevel_models is not None:
+            object.__setattr__(
+                self, "bevel_models", _as_names("bevel_models", self.bevel_models)
+            )
+        if self.look is not None and (
+            not isinstance(self.look, str) or not self.look.strip()
+        ):
+            raise ValueError(f"look: must be a look name, got {self.look!r}.")
+        for name, minimum in (
+            ("exposure", -10.0),
+            ("background_strength", 0.0),
+            ("background_rotation", -360.0),
+            ("bevel_radius", 0.0),
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(
+                    self, name, _as_interval(name, value, minimum)
+                )
         if self.samples is not None:
             _check_int("samples", self.samples, 1)
         if self.noise_threshold is not None:
@@ -1223,6 +1295,105 @@ class RenderConfig(BaseConfig):
                 exclusive_minimum=True,
             )
         _check_int("max_retries", self.max_retries, 0)
+
+
+@dataclasses.dataclass(frozen=True)
+class SensorConfig(BaseConfig):
+    """Camera sensor and ISP effects applied to every rendered image.
+
+    Each effect is a ``[min, max]`` range sampled independently per image,
+    or ``None`` to disable it. The effects run in camera order; see
+    :mod:`telekinesis.illusion.sensor`. Values are in display-referred
+    8-bit space unless noted.
+
+    Attributes:
+        probability: Chance that an image is processed at all.
+        white_balance: Per-channel gain range; gains are normalised to a
+            mean of 1, so only the tint changes.
+        gain: Brightness multiplier.
+        blur_sigma: Gaussian optical blur in pixels.
+        contrast: Contrast around mid-grey (1 keeps the image).
+        gamma: Tone gamma (>1 brightens mid-tones).
+        saturation: Colour saturation multiplier.
+        vignetting: Corner darkening fraction.
+        shot_noise: Signal-dependent noise variance per intensity level.
+        read_noise: Signal-independent noise sigma in 8-bit levels.
+        chroma_noise: Fraction of noise that differs between channels
+            (0 is luminance-only noise).
+        sharpen_amount: In-camera unsharp-mask amount.
+        sharpen_sigma: Unsharp-mask radius in pixels.
+        jpeg_quality: In-camera JPEG quality range, as integers.
+
+    Example:
+        sensor_config = SensorConfig(read_noise=(1.0, 3.0))
+    """
+
+    RANGE_FIELDS = (
+        "gain",
+        "blur_sigma",
+        "contrast",
+        "gamma",
+        "saturation",
+        "vignetting",
+        "shot_noise",
+        "read_noise",
+        "chroma_noise",
+        "sharpen_amount",
+        "sharpen_sigma",
+    )
+    _RANGE_LIMITS = {
+        "gain": (0.0, 10.0),
+        "blur_sigma": (0.0, 20.0),
+        "contrast": (0.0, 5.0),
+        "gamma": (0.05, 10.0),
+        "saturation": (0.0, 5.0),
+        "vignetting": (0.0, 1.0),
+        "shot_noise": (0.0, 100.0),
+        "read_noise": (0.0, 100.0),
+        "chroma_noise": (0.0, 1.0),
+        "sharpen_amount": (0.0, 10.0),
+        "sharpen_sigma": (0.1, 20.0),
+    }
+
+    probability: float = 1.0
+    white_balance: tuple[float, float] | None = None
+    gain: tuple[float, float] | None = None
+    blur_sigma: tuple[float, float] | None = None
+    contrast: tuple[float, float] | None = None
+    gamma: tuple[float, float] | None = None
+    saturation: tuple[float, float] | None = None
+    vignetting: tuple[float, float] | None = None
+    shot_noise: tuple[float, float] | None = None
+    read_noise: tuple[float, float] | None = None
+    chroma_noise: tuple[float, float] | None = None
+    sharpen_amount: tuple[float, float] | None = None
+    sharpen_sigma: tuple[float, float] | None = None
+    jpeg_quality: tuple[int, int] | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the effect ranges.
+
+        Raises:
+            ValueError: If a range is invalid.
+        """
+        _check_number("probability", self.probability, 0.0, 1.0)
+        for name, (minimum, maximum) in self._RANGE_LIMITS.items():
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(
+                    self, name, _as_interval(name, value, minimum, maximum)
+                )
+        if self.white_balance is not None:
+            object.__setattr__(
+                self,
+                "white_balance",
+                _as_interval("white_balance", self.white_balance, 0.1, 10.0),
+            )
+        if self.jpeg_quality is not None:
+            low, high = _as_interval(
+                "jpeg_quality", self.jpeg_quality, 1, 100
+            )
+            object.__setattr__(self, "jpeg_quality", (int(low), int(high)))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1250,6 +1421,9 @@ class PhysicsConfig(BaseConfig):
         verbose: Whether to log simulation progress.
         use_volume_com: Whether to compute centers of mass from the volume
             instead of the surface.
+        collision_max_vertices: Vertex budget of the decimated stand-in used
+            for convex-hull physics and placement collision checks; 0 uses the
+            full mesh. Rendering always uses the full mesh.
 
     Example:
         physics_config = PhysicsConfig(active=True)
@@ -1265,6 +1439,7 @@ class PhysicsConfig(BaseConfig):
     solver_iters: int = 10
     verbose: bool = False
     use_volume_com: bool = False
+    collision_max_vertices: int = 0
 
     def __post_init__(self) -> None:
         """Validate the simulation settings.
@@ -1348,6 +1523,57 @@ class InstanceRandomizerConfig(BaseConfig):
         except ValueError as error:
             raise ValueError(f"counts: {error}") from error
         object.__setattr__(self, "counts", counts)
+
+
+@dataclasses.dataclass(frozen=True)
+class SceneFamilyConfig(BaseConfig):
+    """One coherent scene setup, chosen per sample with probability ~ weight.
+
+    A family replaces the instance bounds of the roles it lists, so models
+    that belong together (a bin, its insert, its neighbour layout) are
+    selected together and incompatible props never co-occur. Roles a family
+    does not list keep their bounds from ``randomizers.instance``.
+
+    Attributes:
+        weight: Relative selection weight, > 0.
+        instance: Instance bounds per model role, as in
+            ``randomizers.instance``.
+
+    Example:
+        family = SceneFamilyConfig(
+            weight=2.0, instance={"prop": {"counts": {"table": [1, 1]}}}
+        )
+    """
+
+    weight: float = 1.0
+    instance: dict[str, InstanceRandomizerConfig] = dataclasses.field(
+        default_factory=dict
+    )
+
+    def __post_init__(self) -> None:
+        """Validate the weight and build the per-role instance configs.
+
+        Raises:
+            ValueError: If the weight is not positive or a role is unknown.
+        """
+        _check_number("weight", self.weight, 0.0, exclusive_minimum=True)
+        if not isinstance(self.instance, Mapping):
+            raise TypeError("instance: must be a mapping of roles to bounds.")
+        unknown = sorted(set(self.instance) - MODEL_ROLES)
+        if unknown:
+            raise ValueError(
+                f"instance: unknown roles {unknown}; use {sorted(MODEL_ROLES)}."
+            )
+        object.__setattr__(
+            self,
+            "instance",
+            {
+                role: build_config(
+                    f"instance.{role}", InstanceRandomizerConfig, bounds
+                )
+                for role, bounds in self.instance.items()
+            },
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1835,6 +2061,10 @@ class VolumeSamplerConfig(BaseConfig):
         volume_center: Center of the box in meters.
         inplane_rot_min: Smallest rotation about the viewing axis in degrees.
         inplane_rot_max: Largest rotation about the viewing axis in degrees.
+        up_hint: World direction that points up in the image before the
+            in-plane rotation, such as ``[0, 1, 0]``. Keeps the yaw of
+            top-down views well defined. ``None`` derives the yaw from the
+            viewing direction alone, which is arbitrary for top-down views.
 
     Example:
         volume_config = VolumeSamplerConfig(distance_range=(0.5, 1.0))
@@ -1846,6 +2076,7 @@ class VolumeSamplerConfig(BaseConfig):
     volume_center: tuple[float, float, float] | None = None
     inplane_rot_min: float = -60.0
     inplane_rot_max: float = 60.0
+    up_hint: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
         """Validate the volume parameters.
@@ -1882,11 +2113,87 @@ class VolumeSamplerConfig(BaseConfig):
         _check_ordered(
             "inplane_rot", self.inplane_rot_min, self.inplane_rot_max
         )
+        if self.up_hint is not None:
+            up = as_vector3(self.up_hint, "up_hint")
+            if not np.linalg.norm(up) > 0:
+                raise ValueError("up_hint: must not be the zero vector.")
+            object.__setattr__(self, "up_hint", tuple(up.tolist()))
+
+
+@dataclasses.dataclass(frozen=True)
+class MountedSamplerConfig(BaseConfig):
+    """Parameters of ``mounted_sampler``: a camera on a robot wrist.
+
+    A tool-centre-point (TCP) pose is sampled pointing down (TCP +Z = world
+    -Z) above ``tcp_center``, then the camera is placed with the hand-eye
+    transform ``camera_in_tcp``, so a tilted wrist camera sees the scene as
+    the real robot does.
+
+    Attributes:
+        tcp_center: World point the TCP is sampled above, in meters.
+        tcp_volume_size: XY extent of the TCP sampling box in meters.
+        tcp_height_range: ``[min, max]`` TCP height above tcp_center.
+        tcp_yaw_min: Smallest TCP yaw about world Z in degrees.
+        tcp_yaw_max: Largest TCP yaw about world Z in degrees.
+        tcp_tilt_max: Largest TCP tilt away from vertical in degrees.
+        camera_in_tcp: Camera optical frame (OpenCV: x right, y down, z
+            forward) in the TCP frame as ``[x, y, z, rx, ry, rz]`` in meters
+            and XYZ Euler degrees, e.g. from a hand-eye calibration.
+
+    Example:
+        mounted_config = MountedSamplerConfig(tcp_height_range=(0.25, 0.35))
+    """
+
+    tcp_center: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    tcp_volume_size: tuple[float, float] = (0.0, 0.0)
+    tcp_height_range: tuple[float, float] = (0.3, 0.3)
+    tcp_yaw_min: float = 0.0
+    tcp_yaw_max: float = 0.0
+    tcp_tilt_max: float = 0.0
+    camera_in_tcp: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        """Validate the mount parameters.
+
+        Raises:
+            ValueError: If a parameter is invalid or a range is reversed.
+        """
+        object.__setattr__(
+            self,
+            "tcp_center",
+            tuple(as_vector3(self.tcp_center, "tcp_center").tolist()),
+        )
+        if len(self.tcp_volume_size) != 2:
+            raise ValueError("tcp_volume_size: must be [x, y] in meters.")
+        for value in self.tcp_volume_size:
+            _check_number("tcp_volume_size", value, 0.0)
+        object.__setattr__(
+            self,
+            "tcp_volume_size",
+            tuple(float(v) for v in self.tcp_volume_size),
+        )
+        object.__setattr__(
+            self,
+            "tcp_height_range",
+            _as_interval("tcp_height_range", self.tcp_height_range, 0.0),
+        )
+        _check_ordered("tcp_yaw", self.tcp_yaw_min, self.tcp_yaw_max)
+        _check_number("tcp_tilt_max", self.tcp_tilt_max, 0.0, 90.0)
+        if len(self.camera_in_tcp) != 6:
+            raise ValueError(
+                "camera_in_tcp: must be [x, y, z, rx, ry, rz] (m, degrees)."
+            )
+        for value in self.camera_in_tcp:
+            _check_number("camera_in_tcp", value)
+        object.__setattr__(
+            self, "camera_in_tcp", tuple(float(v) for v in self.camera_in_tcp)
+        )
 
 
 POSE_SAMPLER_CONFIGS = {
     "shell_sampler": ShellSamplerConfig,
     "volume_sampler": VolumeSamplerConfig,
+    "mounted_sampler": MountedSamplerConfig,
 }
 
 
@@ -2028,6 +2335,18 @@ class PoseSamplingConfig(BaseConfig):
         face_sample_range: ``[min, max]`` fraction of the top face's extent
             that positions are sampled in, within [0, 1].
         grid: Grid settings, used by the ``"grid"`` strategy.
+        secondary_targets: Model-name prefixes of other surfaces parts may
+            be dropped on, such as neighbouring bins added as props. Only
+            used by the ``"random"`` strategy.
+        secondary_probability: Chance that a part is dropped on a visible
+            secondary target instead of the container.
+        pile_probability: Chance per scene that the container's parts are
+            dropped into one small window of the face, so they stack into a
+            heap. Only used by the ``"random"`` strategy.
+        pile_size: ``[min, max]`` side of the pile window as a fraction of the
+            face, within face_sample_range.
+        pile_height_scale: Multiplier on max_height in pile scenes, giving
+            stacked parts room to be placed without collision.
 
     Example:
         pose_sampling_config = PoseSamplingConfig(
@@ -2042,6 +2361,11 @@ class PoseSamplingConfig(BaseConfig):
     grid: GridSamplingConfig = dataclasses.field(
         default_factory=GridSamplingConfig
     )
+    secondary_targets: tuple[str, ...] = ()
+    secondary_probability: float = 0.0
+    pile_probability: float = 0.0
+    pile_size: tuple[float, float] = (0.25, 0.45)
+    pile_height_scale: float = 3.0
 
     def __post_init__(self) -> None:
         """Validate the placement settings and coerce grid into a config.
@@ -2060,6 +2384,19 @@ class PoseSamplingConfig(BaseConfig):
         object.__setattr__(
             self, "grid", build_config("grid", GridSamplingConfig, self.grid)
         )
+        object.__setattr__(
+            self,
+            "secondary_targets",
+            _as_names("secondary_targets", self.secondary_targets),
+        )
+        _check_number(
+            "secondary_probability", self.secondary_probability, 0.0, 1.0
+        )
+        _check_number("pile_probability", self.pile_probability, 0.0, 1.0)
+        object.__setattr__(
+            self, "pile_size", _as_interval("pile_size", self.pile_size, 0.0, 1.0)
+        )
+        _check_number("pile_height_scale", self.pile_height_scale, 1.0)
 
 
 @dataclasses.dataclass(frozen=True)

@@ -125,9 +125,13 @@ def volume_sampler(
     volume_center: np.ndarray | None = None,
     inplane_rot_min: float = -60.0,
     inplane_rot_max: float = 60.0,
+    up_hint: tuple[float, float, float] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Sample a camera location in a volume and orient it towards a POI.
+
+    ``up_hint`` is the world direction that appears up in the image before
+    the in-plane rotation; it keeps the yaw of top-down views well defined.
     """
     if volume_size and not all(dimension > 0 for dimension in volume_size):
         raise ValueError("volume_size must contain only positive values.")
@@ -228,12 +232,40 @@ def volume_sampler(
     inplane_rot = np.deg2rad(
         np.random.uniform(inplane_rot_min, inplane_rot_max)
     )
-    rotation_matrix = camera_settings.rotation_from_forward_vec(
-        forward_vec, inplane_rot=inplane_rot
-    )
+    if up_hint is None:
+        rotation_matrix = camera_settings.rotation_from_forward_vec(
+            forward_vec, inplane_rot=inplane_rot
+        )
+    else:
+        rotation_matrix = _look_at_with_up(forward_vec, up_hint, inplane_rot)
     rotation_euler = Matrix(rotation_matrix.tolist()).to_euler("XYZ")
 
     return location, np.array(rotation_euler)
+
+
+def _look_at_with_up(
+    forward_vec: np.ndarray, up_hint, inplane_rot: float
+) -> np.ndarray:
+    """Camera rotation looking along ``forward_vec`` with image-up near ``up_hint``.
+
+    Blender cameras look along -Z with +Y up. The up hint is projected onto
+    the image plane; when it is parallel to the viewing direction, world X
+    is used instead.
+    """
+    forward = np.asarray(forward_vec, dtype=float)
+    forward /= np.linalg.norm(forward)
+    up = np.asarray(up_hint, dtype=float)
+    up = up - forward * (up @ forward)
+    if np.linalg.norm(up) < 1e-6:
+        up = np.array([1.0, 0.0, 0.0]) - forward * forward[0]
+    up /= np.linalg.norm(up)
+    right = np.cross(forward, up)
+    # Columns are the camera's X (right), Y (up) and Z (backwards) axes.
+    rotation = np.stack([right, up, -forward], axis=1)
+    cos, sin = np.cos(inplane_rot), np.sin(inplane_rot)
+    return rotation @ np.array(
+        [[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]]
+    )
 
 
 def compute_axis_aligned_bbox(
@@ -290,7 +322,54 @@ def autocompute_distance(
 
 # Keep the keys equal to config.POSE_SAMPLER_CONFIGS, which validates the
 # sampler names and parameters without importing Blender.
+def mounted_sampler(
+    environment: Environment = None,
+    tcp_center=(0.0, 0.0, 0.0),
+    tcp_volume_size=(0.0, 0.0),
+    tcp_height_range=(0.3, 0.3),
+    tcp_yaw_min: float = 0.0,
+    tcp_yaw_max: float = 0.0,
+    tcp_tilt_max: float = 0.0,
+    camera_in_tcp=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Sample a wrist-camera pose: a downward TCP pose, then the hand-eye offset.
+
+    The TCP points down (its +Z along world -Z, +X along world +X at zero
+    yaw), is yawed about world Z and tilted by up to ``tcp_tilt_max``. The
+    camera optical frame (OpenCV) is placed at ``camera_in_tcp`` in the TCP
+    frame and converted to Blender's camera convention (-Z forward, +Y up).
+    """
+    from mathutils import Euler
+
+    x = np.random.uniform(-tcp_volume_size[0] / 2, tcp_volume_size[0] / 2)
+    y = np.random.uniform(-tcp_volume_size[1] / 2, tcp_volume_size[1] / 2)
+    z = np.random.uniform(*tcp_height_range)
+    tcp_location = np.asarray(tcp_center, dtype=float) + np.array([x, y, z])
+
+    tcp_down = np.diag([1.0, -1.0, -1.0])
+    yaw = np.deg2rad(np.random.uniform(tcp_yaw_min, tcp_yaw_max))
+    tilt_axis = np.random.uniform(0, 2 * np.pi)
+    tilt = np.deg2rad(np.random.uniform(0, tcp_tilt_max))
+    world_yaw = np.array(Euler((0.0, 0.0, yaw), "XYZ").to_matrix())
+    world_tilt = np.array(
+        Matrix.Rotation(tilt, 3, (np.cos(tilt_axis), np.sin(tilt_axis), 0.0))
+    )
+    world_tcp = world_tilt @ world_yaw @ tcp_down
+
+    tx, ty, tz, rx, ry, rz = camera_in_tcp
+    tcp_camera = np.array(
+        Euler(np.deg2rad([rx, ry, rz]).tolist(), "XYZ").to_matrix()
+    )
+    camera_location = tcp_location + world_tcp @ np.array([tx, ty, tz])
+    opencv_to_blender = np.diag([1.0, -1.0, -1.0])
+    world_camera = world_tcp @ tcp_camera @ opencv_to_blender
+    rotation_euler = Matrix(world_camera.tolist()).to_euler("XYZ")
+    return camera_location, np.array(rotation_euler)
+
+
 CAMERA_POSE_SAMPLERS = {
     "volume_sampler": volume_sampler,
     "shell_sampler": shell_sampler,
+    "mounted_sampler": mounted_sampler,
 }

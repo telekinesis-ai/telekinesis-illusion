@@ -5,8 +5,10 @@ annotation format.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Callable, Dict, List, Any, Optional
 from datetime import datetime
+
+import numpy as np
 from uuid import uuid4
 from loguru import logger
 
@@ -153,8 +155,17 @@ class CocoWriter(Writer):
         include_camera_metadata: bool = False,
         color_file_format: str = "JPEG",
         jpg_quality: int = 90,
+        color_transform: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+        metadata_provider: Optional[Callable[[], Dict[str, Any]]] = None,
     ) -> None:
-        """Add info, licenses and supercategory info from the config if present"""
+        """Add info, licenses and supercategory info from the config if present.
+
+        ``color_transform`` maps each rendered RGB image to the image that is
+        written, such as a camera sensor simulation. It must not move pixels,
+        because the annotations come from the unchanged instance maps.
+        ``metadata_provider`` is called once per write; its result is stored
+        on every image of that batch (e.g. sampled scene parameters).
+        """
         super().__init__(create_output_dir_on_init, output_dir)
         if not isinstance(color_file_format, str):
             raise TypeError(
@@ -173,6 +184,8 @@ class CocoWriter(Writer):
             raise ValueError("jpg_quality must be an integer from 0 to 100.")
         self._color_file_format = color_file_format
         self._jpg_quality = jpg_quality
+        self._color_transform = color_transform
+        self._metadata_provider = metadata_provider
         if info:
             self._info = info
         else:
@@ -236,18 +249,30 @@ class CocoWriter(Writer):
             raise ValueError(
                 "Render passes and capture metadata must have equal lengths."
             )
+        provided = self._metadata_provider() if self._metadata_provider else {}
         image_metadata = []
         for capture in result.captures:
-            metadata = dict(self._next_image_metadata)
+            metadata = {**self._next_image_metadata, **provided}
             if self._include_camera_metadata:
                 metadata.update(capture)
             image_metadata.append(metadata)
+        colors = data["colors"]
+        if self._color_transform is not None:
+            colors = []
+            for index, color in enumerate(data["colors"]):
+                colors.append(self._color_transform(color))
+                sampled = getattr(self._color_transform, "last", None)
+                if sampled is not None:
+                    image_metadata[index].setdefault("illusion", {})
+                    image_metadata[index]["illusion"] = {
+                        **image_metadata[index]["illusion"], "sensor": sampled
+                    }
 
         write_coco_annotations(
             output_dir=str(self._output_dir),
             instance_segmaps=data["instance_segmaps"],
             instance_attribute_maps=data["instance_attribute_maps"],
-            colors=data["colors"],
+            colors=colors,
             color_file_format=self._color_file_format,
             mask_encoding_format="rle",
             supercategory=None,

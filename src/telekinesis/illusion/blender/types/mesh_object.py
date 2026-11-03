@@ -27,6 +27,10 @@ if platform != "win32":
         convex_decomposition,
     )
 
+# Vertex budget of collision stand-ins (0: collide with the full mesh); set from
+# PhysicsConfig.collision_max_vertices. See MeshObject.get_collision_mesh.
+COLLISION_MAX_VERTICES = 0
+
 
 class MeshObject(Entity):
     """
@@ -420,11 +424,38 @@ class MeshObject(Entity):
         :return: The new bvh tree
         """
         bm = bmesh.new()
-        bm.from_mesh(self.get_mesh())
+        bm.from_mesh(self.get_collision_mesh())
         bm.transform(Matrix(self.get_local2world_mat()))
         bvh_tree = mathutils.bvhtree.BVHTree.FromBMesh(bm)
         bm.free()
         return bvh_tree
+
+    def get_collision_mesh(self) -> bpy.types.Mesh:
+        """The mesh used for collision: a cached decimated stand-in for convex-hull
+        rigid bodies when COLLISION_MAX_VERTICES is set, otherwise the mesh itself.
+
+        Bullet builds convex hulls from every vertex; ~100k-vertex CAD parts made
+        the bake ~30x slower than a 2% decimation, and placement rebuilt a
+        full-mesh BVH on every try. The stand-in is in the mesh's unshifted local frame.
+        """
+        mesh = self.get_mesh()
+        rigid_body = self.blender_obj.rigid_body
+        if (not COLLISION_MAX_VERTICES or len(mesh.vertices) <= COLLISION_MAX_VERTICES
+                or rigid_body is None or rigid_body.collision_shape != "CONVEX_HULL"):
+            return mesh
+        # Looked up by name: the physics undo reloads ID blocks, invalidating Python references.
+        proxy = bpy.data.meshes.get(f"{mesh.name}_collision")
+        if proxy is not None:
+            return proxy
+        holder = bpy.data.objects.new("_collision_proxy", mesh)
+        bpy.context.scene.collection.objects.link(holder)
+        modifier = holder.modifiers.new("decimate", "DECIMATE")
+        modifier.ratio = COLLISION_MAX_VERTICES / len(mesh.vertices)
+        proxy = bpy.data.meshes.new_from_object(holder.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+        bpy.data.objects.remove(holder)
+        proxy.name = f"{mesh.name}_collision"
+        proxy.use_fake_user = True
+        return proxy
 
     def position_is_above_object(
         self,

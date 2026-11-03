@@ -54,6 +54,10 @@ def simulate_physics_and_fix_final_poses(
              object. Nothing is left that could catch them, so they have left the scene. Empty if the scene has no
              passive objects.
     """
+    # Build collision stand-ins before the undo block, so the undo does not free them.
+    for obj in get_all_mesh_objects():
+        if obj.has_rigidbody_enabled():
+            obj.get_collision_mesh()
     # Undo changes made in the simulation like origin adjustment and persisting the object's scale
     with UndoAfterExecution():
         # Run simulation and remember poses before and after
@@ -288,15 +292,35 @@ def simulate_physics(
     bpy.context.scene.rigidbody_world.substeps_per_frame = substeps_per_frame
     bpy.context.scene.rigidbody_world.solver_iterations = solver_iters
 
-    # Perform simulation
-    _PhysicsSimulation.do_simulation(
-        min_simulation_time,
-        max_simulation_time,
-        check_object_interval,
-        object_stopped_location_threshold,
-        object_stopped_rotation_threshold,
-        verbose,
-    )
+    # Simulate with the decimated collision stand-ins (MeshObject.get_collision_mesh),
+    # moved like the full mesh was when its origin went to the centre of mass.
+    swapped = []
+    for obj in get_all_mesh_objects():
+        if not obj.has_rigidbody_enabled():
+            continue
+        full = obj.get_mesh()
+        proxy = obj.get_collision_mesh()
+        if proxy is full:
+            continue
+        shift = mathutils.Vector(origin_shift.get(obj.get_name(), (0.0, 0.0, 0.0)))
+        local_shift = obj.blender_obj.matrix_world.to_3x3().inverted() @ shift
+        stand_in = proxy.copy()
+        stand_in.transform(mathutils.Matrix.Translation(-local_shift))
+        obj.blender_obj.data = stand_in
+        swapped.append((obj, full, stand_in))
+    try:
+        _PhysicsSimulation.do_simulation(
+            min_simulation_time,
+            max_simulation_time,
+            check_object_interval,
+            object_stopped_location_threshold,
+            object_stopped_rotation_threshold,
+            verbose,
+        )
+    finally:
+        for obj, full, stand_in in swapped:
+            obj.blender_obj.data = full
+            bpy.data.meshes.remove(stand_in)
 
     return origin_shift
 
