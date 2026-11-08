@@ -6,7 +6,7 @@ from typing import Union, Optional, Dict, Tuple, List, Callable
 import mathutils
 from loguru import logger
 import numpy as np
-from mathutils import Vector, Euler, Matrix
+from mathutils import Vector, Matrix
 
 from telekinesis.illusion.blender.types.mesh_object import MeshObject
 
@@ -252,7 +252,9 @@ class CollisionUtility:
         # Compute direction
         p2 = nearest - point
         # Compute dot product between direction and normal vector
-        a = p2.normalized().dot(
-            (Euler(obj.get_rotation_euler()).to_matrix() @ normal).normalized()
-        )
+        # The BVH is built from world-space polygons (MeshObject.create_bvh_tree), so find_nearest
+        # already returns a world-space normal. The bmesh tree it replaced in 789b668 kept the mesh's
+        # local normals through bm.transform(), which is what the rotation here used to correct;
+        # applied to a world normal it made the inside test fire on parts beside each other.
+        a = p2.normalized().dot(normal.normalized())
         return a >= 0.0
