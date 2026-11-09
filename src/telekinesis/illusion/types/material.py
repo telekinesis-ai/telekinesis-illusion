@@ -17,6 +17,7 @@ Color: TypeAlias = (
 )
 Parameter: TypeAlias = Scalar | Color | Uniform
 _BLENDER_FLOAT_MAX = 3.4028234663852886e38
+COLOR_SAMPLING = ("channel", "segment")
 
 # Public parameter -> Blender 4.5 socket, component count, valid bounds.
 PARAMETERS = MappingProxyType(
@@ -111,17 +112,36 @@ class MaterialPreset:
     def with_overrides(self, **parameters: Parameter) -> "MaterialPreset":
         return MaterialPreset(self.name, {**self.parameters, **parameters})
 
-    def sample(self, rng=None) -> dict[str, float | tuple[float, ...]]:
-        """Sample in canonical order; omitted RNG uses random.seed()."""
+    def sample(
+        self, rng=None, *, color_sampling: str = "channel"
+    ) -> dict[str, float | tuple[float, ...]]:
+        """Sample in canonical order; omitted RNG uses random.seed().
+
+        ``color_sampling`` says how a vector range (a colour) is drawn.
+        ``"channel"`` draws every component on its own, so a dark-grey to
+        light-grey range also yields tinted colours. ``"segment"`` draws one
+        position along the line between the two end colours, so the sample
+        keeps their hue and only its brightness varies.
+        """
+        if color_sampling not in COLOR_SAMPLING:
+            raise ValueError(
+                f"color_sampling must be one of {COLOR_SAMPLING}, "
+                f"got {color_sampling!r}."
+            )
         rng = random if rng is None else rng
         result = {}
         for name in PARAMETERS:
             if name not in self.parameters:
                 continue
             low, high = _bounds(name, self.parameters[name])
-            values = tuple(
-                a if a == b else rng.uniform(a, b) for a, b in zip(low, high)
-            )
+            if len(low) > 1 and color_sampling == "segment":
+                t = rng.uniform(0.0, 1.0)
+                values = tuple(a + t * (b - a) for a, b in zip(low, high))
+            else:
+                values = tuple(
+                    a if a == b else rng.uniform(a, b)
+                    for a, b in zip(low, high)
+                )
             result[name] = values[0] if len(values) == 1 else values
         return result
 
@@ -231,14 +251,21 @@ class PrincipledMaterial:
 
     preset: MaterialPreset
     surface_imperfections: SurfaceImperfections
+    color_sampling: str
 
     def __init__(
         self,
         preset: str | MaterialPreset | None = None,
         *,
         surface_imperfections: bool | SurfaceImperfections | Mapping = False,
+        color_sampling: str = "channel",
         **parameters: Parameter,
     ):
+        if color_sampling not in COLOR_SAMPLING:
+            raise ValueError(
+                f"color_sampling must be one of {COLOR_SAMPLING}, "
+                f"got {color_sampling!r}."
+            )
         if isinstance(preset, str):
             if preset not in MATERIAL_PRESETS:
                 raise ValueError(
@@ -264,6 +291,7 @@ class PrincipledMaterial:
             )
         object.__setattr__(self, "preset", preset.with_overrides(**parameters))
         object.__setattr__(self, "surface_imperfections", surface_imperfections)
+        object.__setattr__(self, "color_sampling", color_sampling)
 
     def sample(self, rng=None) -> dict[str, float | tuple[float, ...]]:
-        return self.preset.sample(rng)
+        return self.preset.sample(rng, color_sampling=self.color_sampling)

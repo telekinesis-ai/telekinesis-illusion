@@ -1623,6 +1623,10 @@ class PrincipledMaterialConfig(BaseConfig):
             Colors are RGB or RGBA in linear space.
         surface_imperfections: Whether to add surface imperfections, or a
             mapping of imperfection settings.
+        color_sampling: How a colour range is drawn. ``"channel"`` (default)
+            samples every component on its own, so a grey-to-grey range also
+            gives tinted colours; ``"segment"`` samples one point on the line
+            between the two end colours, keeping their hue.
 
     Example:
         material_config = PrincipledMaterialConfig(
@@ -1633,6 +1637,7 @@ class PrincipledMaterialConfig(BaseConfig):
     preset: str | None = None
     parameters: dict[str, Any] = dataclasses.field(default_factory=dict)
     surface_imperfections: bool | dict[str, Any] = False
+    color_sampling: str = "channel"
 
     def __post_init__(self) -> None:
         """Validate the recipe by building the material it describes.
@@ -1665,6 +1670,7 @@ class PrincipledMaterialConfig(BaseConfig):
         return material.PrincipledMaterial(
             self.preset,
             surface_imperfections=self.surface_imperfections,
+            color_sampling=self.color_sampling,
             **self.parameters,
         )
 
