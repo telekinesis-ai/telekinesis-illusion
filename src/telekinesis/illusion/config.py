@@ -1312,6 +1312,9 @@ class SensorConfig(BaseConfig):
             mean of 1, so only the tint changes.
         gain: Brightness multiplier.
         blur_sigma: Gaussian optical blur in pixels.
+        motion_blur: Length in pixels of a straight motion-blur streak over
+            the whole image (a camera moving during the exposure), in a
+            direction drawn per image. Lengths under 1 leave the image.
         contrast: Contrast around mid-grey (1 keeps the image).
         gamma: Tone gamma (>1 brightens mid-tones).
         saturation: Colour saturation multiplier.
@@ -1331,6 +1334,7 @@ class SensorConfig(BaseConfig):
     RANGE_FIELDS = (
         "gain",
         "blur_sigma",
+        "motion_blur",
         "contrast",
         "gamma",
         "saturation",
@@ -1344,6 +1348,7 @@ class SensorConfig(BaseConfig):
     _RANGE_LIMITS = {
         "gain": (0.0, 10.0),
         "blur_sigma": (0.0, 20.0),
+        "motion_blur": (0.0, 200.0),
         "contrast": (0.0, 5.0),
         "gamma": (0.05, 10.0),
         "saturation": (0.0, 5.0),
@@ -1359,6 +1364,7 @@ class SensorConfig(BaseConfig):
     white_balance: tuple[float, float] | None = None
     gain: tuple[float, float] | None = None
     blur_sigma: tuple[float, float] | None = None
+    motion_blur: tuple[float, float] | None = None
     contrast: tuple[float, float] | None = None
     gamma: tuple[float, float] | None = None
     saturation: tuple[float, float] | None = None

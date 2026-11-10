@@ -48,10 +48,40 @@ def sample_sensor_parameters(
         values["white_balance"] = rng.uniform(
             *sensor_config.white_balance, size=3
         )
+    if "motion_blur" in values:
+        # Direction of the camera motion in the image plane; the length is
+        # the sampled range field. Half a turn covers every line direction.
+        values["motion_blur_angle"] = float(rng.uniform(0.0, 180.0))
     if sensor_config.jpeg_quality is not None:
         low, high = sensor_config.jpeg_quality
         values["jpeg_quality"] = int(rng.integers(low, high + 1))
     return values
+
+
+def motion_blur_kernel(length: float, angle_deg: float) -> np.ndarray:
+    """Normalised line kernel of ``length`` pixels at ``angle_deg``.
+
+    Models a camera that moves during the exposure, as a wrist camera does
+    while the arm is in motion: every pixel is smeared along one direction.
+    """
+    size = int(np.ceil(length)) | 1  # odd, so the line is centred
+    kernel = np.zeros((size, size), np.float32)
+    centre = size // 2
+    half = length / 2.0
+    x0, x1 = centre - half, centre + half
+    cv2.line(
+        kernel,
+        (int(round(x0)), centre),
+        (int(round(x1)), centre),
+        1.0,
+        thickness=1,
+    )
+    rotation = cv2.getRotationMatrix2D((centre, centre), angle_deg, 1.0)
+    kernel = cv2.warpAffine(
+        kernel, rotation, (size, size), flags=cv2.INTER_LINEAR
+    )
+    total = kernel.sum()
+    return kernel / total if total > 0 else kernel
 
 
 def apply_sensor_parameters(
@@ -80,6 +110,15 @@ def apply_sensor_parameters(
         rgb *= values["gain"]
     if values.get("blur_sigma", 0) > 0:
         rgb = cv2.GaussianBlur(rgb, (0, 0), values["blur_sigma"])
+    if values.get("motion_blur", 0) >= 1.0:
+        rgb = cv2.filter2D(
+            rgb,
+            -1,
+            motion_blur_kernel(
+                values["motion_blur"], values.get("motion_blur_angle", 0.0)
+            ),
+            borderType=cv2.BORDER_REPLICATE,
+        )
     if "contrast" in values:
         # Contrast around mid-grey through a smooth S/anti-S curve.
         rgb = 0.5 + (rgb - 0.5) * values["contrast"]
