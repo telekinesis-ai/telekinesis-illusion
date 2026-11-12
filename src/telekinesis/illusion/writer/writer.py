@@ -3,6 +3,7 @@ Defines the Writer class that is responsible for writing scenes into the desired
 annotation format.
 """
 
+import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Callable, Dict, List, Any, Optional
@@ -14,6 +15,7 @@ from loguru import logger
 
 from telekinesis.illusion.blender.labels import LabelIdMapping
 
+from telekinesis.illusion.writer.bop_writer import write_bop_frames
 from telekinesis.illusion.writer.coco_writer import write_coco_annotations
 from telekinesis.illusion.types.render_result import RenderResult
 
@@ -157,6 +159,7 @@ class CocoWriter(Writer):
         jpg_quality: int = 90,
         color_transform: Optional[Callable[[np.ndarray], np.ndarray]] = None,
         metadata_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+        bop: bool = False,
     ) -> None:
         """Add info, licenses and supercategory info from the config if present.
 
@@ -165,6 +168,9 @@ class CocoWriter(Writer):
         because the annotations come from the unchanged instance maps.
         ``metadata_provider`` is called once per write; its result is stored
         on every image of that batch (e.g. sampled scene parameters).
+        ``bop`` also writes each batch as a BOP scene (6D poses, camera
+        intrinsics, visible masks, depth) under ``<output_dir>/bop``, with the
+        same image ids as the COCO file; see writer.bop_writer.
         """
         super().__init__(create_output_dir_on_init, output_dir)
         if not isinstance(color_file_format, str):
@@ -186,6 +192,7 @@ class CocoWriter(Writer):
         self._jpg_quality = jpg_quality
         self._color_transform = color_transform
         self._metadata_provider = metadata_provider
+        self._bop = bool(bop)
         if info:
             self._info = info
         else:
@@ -268,6 +275,7 @@ class CocoWriter(Writer):
                         **image_metadata[index]["illusion"], "sensor": sampled
                     }
 
+        image_offset = self._next_coco_image_id()
         write_coco_annotations(
             output_dir=str(self._output_dir),
             instance_segmaps=data["instance_segmaps"],
@@ -288,6 +296,23 @@ class CocoWriter(Writer):
             image_metadata=image_metadata,
         )
         self._next_image_metadata = {}
+        if self._bop:
+            ext = "png" if self._color_file_format == "PNG" else "jpg"
+            ids = [image_offset + i for i in range(len(colors))]
+            write_bop_frames(
+                self._output_dir,
+                result,
+                [Path(self._output_dir) / "images" / f"{i:06d}.{ext}" for i in ids],
+                ids,
+            )
 
         self._has_written_output = True
         return len(data["colors"])
+
+    def _next_coco_image_id(self) -> int:
+        """The id (and file number) the COCO writer gives the next image."""
+        path = Path(self._output_dir) / "coco_annotations.json"
+        if not path.exists():
+            return 0
+        images = json.loads(path.read_text(encoding="utf-8"))["images"]
+        return max((image["id"] for image in images), default=-1) + 1

@@ -212,6 +212,7 @@ class BinPickingWorker:
             color_transform=sensor.make_color_transform(self._sensor_config),
             metadata_provider=self._scene_provenance,
             include_camera_metadata=True,
+            bop=self._dataset_config.writer.bop,
         )
 
         # TODO: For RGB-D datasets, enable RenderConfig.depth and reuse

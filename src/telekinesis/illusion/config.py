@@ -2546,6 +2546,10 @@ class WriterConfig(BaseConfig):
         stratify: Whether the export split keeps the category distribution
             in every subset.
         coco: Info and licenses of the written COCO annotations.
+        bop: Whether each shard is also written as a BOP scene under
+            ``<shard>/bop`` (6D model-to-camera poses, camera intrinsics,
+            visible masks, and depth when ``render.depth`` is on), with the
+            same image ids as the COCO file. See writer.bop_writer.
 
     Example:
         writer_config = WriterConfig(image_format="PNG", dataset_format="yolo")
@@ -2559,6 +2563,7 @@ class WriterConfig(BaseConfig):
     split_seed: int = 42
     stratify: bool = True
     coco: CocoConfig = dataclasses.field(default_factory=CocoConfig)
+    bop: bool = False
 
     def __post_init__(self) -> None:
         """Validate the writer settings and coerce the COCO section.
@@ -2599,6 +2604,8 @@ class WriterConfig(BaseConfig):
             self, "split_ratios", tuple(map(float, self.split_ratios))
         )
         _check_int("split_seed", self.split_seed, 0)
+        if not isinstance(self.bop, bool):
+            raise TypeError(f"bop: must be true or false, got {self.bop!r}.")
         object.__setattr__(
             self, "coco", build_config("coco", CocoConfig, self.coco)
         )

@@ -8,7 +8,9 @@ from telekinesis.illusion.blender.types import mesh_object
 from telekinesis.illusion.blender import physics
 from telekinesis.illusion.blender.rendering import renderer
 from telekinesis.illusion.types.render_result import RenderResult
+from telekinesis.illusion.blender.camera.settings import get_intrinsics_as_K_matrix
 import bpy
+import numpy as np
 
 
 class BlenderEngine:
@@ -176,6 +178,31 @@ class BlenderEngine:
                 f"all static models: {fallen_names}"
             )
 
+    @staticmethod
+    def _object_poses(scene) -> tuple[dict, ...]:
+        """Poses of the active, categorised models (after physics), for pose writers."""
+        models = scene.get_models()
+        out = []
+        for name in scene.get_visible_model_names():
+            model = models.get(name)
+            if model is None or model.is_hidden():
+                continue
+            category_id = model.get_category_id() or 0
+            if category_id <= 0:
+                continue
+            scale = model.get_scale()
+            out.append(
+                {
+                    "name": name,
+                    "category_id": int(category_id),
+                    "matrix_world": np.asarray(
+                        model.get_local2world_mat(), dtype=float
+                    ).tolist(),
+                    "scale": np.asarray(scale, dtype=float).tolist(),
+                }
+            )
+        return tuple(out)
+
     def render(self, scene, max_views: int | None = None) -> RenderResult:
         """Capture pass arrays and metadata before undo or scene cleanup."""
         blender_scene = bpy.context.scene
@@ -199,6 +226,7 @@ class BlenderEngine:
                             list(row) for row in camera.matrix_world
                         ],
                         "camera_lens_mm": camera.data.lens,
+                        "camera_K": get_intrinsics_as_K_matrix().tolist(),
                     }
                 )
             if not captures:
@@ -219,7 +247,9 @@ class BlenderEngine:
                     "Rendered views and capture metadata are not aligned."
                 )
             categories = dict(scene.get_categories()._id_label_map)
-            return RenderResult(data, categories, tuple(captures))
+            return RenderResult(
+                data, categories, tuple(captures), self._object_poses(scene)
+            )
         finally:
             blender_scene.frame_end = original_end
             blender_scene.frame_set(original_frame)
