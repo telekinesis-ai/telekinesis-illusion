@@ -1235,6 +1235,10 @@ class RenderConfig(BaseConfig):
         bevel_models: Model-name prefixes whose materials get the bevel.
             ``None`` bevels every material; the Bevel node traces extra
             rays, so limiting it to small parts keeps rendering fast.
+        denoiser: ``"OPENIMAGEDENOISE"`` (default), ``"OPTIX"``, or ``None``
+            for no denoising. A denoiser smooths fine texture (weave, grain)
+            into a waxy look; without one, raise ``samples`` and let the
+            sensor model's noise stand in for the camera's.
 
     Example:
         render_config = RenderConfig(device="CPU", samples=16)
@@ -1254,6 +1258,7 @@ class RenderConfig(BaseConfig):
     background_rotation: tuple[float, float] | None = None
     bevel_radius: tuple[float, float] | None = None
     bevel_models: tuple[str, ...] | None = None
+    denoiser: str | None = "OPENIMAGEDENOISE"
 
     def __post_init__(self) -> None:
         """Validate the render settings.
@@ -1262,6 +1267,8 @@ class RenderConfig(BaseConfig):
             ValueError: If a setting is invalid.
         """
         _check_choice("device", self.device, RENDER_DEVICES)
+        if self.denoiser is not None:
+            _check_choice("denoiser", self.denoiser, ("OPENIMAGEDENOISE", "OPTIX"))
         if self.view_transform is not None:
             _check_choice(
                 "view_transform", self.view_transform, VIEW_TRANSFORMS
@@ -1326,6 +1333,27 @@ class SensorConfig(BaseConfig):
         sharpen_amount: In-camera unsharp-mask amount.
         sharpen_sigma: Unsharp-mask radius in pixels.
         jpeg_quality: In-camera JPEG quality range, as integers.
+        mode: ``"display"`` (default) applies every effect to the
+            display-referred 8-bit image. ``"raw"`` runs a camera pipeline:
+            undo the sRGB curve to approximate linear light, optical and
+            motion blur, a Bayer mosaic, shot and read noise on the mosaic in
+            linear 8-bit units, demosaicing, in-camera denoising, white
+            balance and gain, the sRGB curve with gamma, contrast and
+            saturation, vignetting, then sharpening. Noise then grows with
+            brightness in linear light, is coloured by the demosaic and
+            softened by the ISP, as in a real camera; ``chroma_noise`` is
+            ignored.
+        bayer_pattern: Colour-filter layout for ``"raw"``: ``"RGGB"``,
+            ``"BGGR"``, ``"GRBG"`` or ``"GBRG"``.
+        demosaic: Demosaicing for ``"raw"``: ``"bilinear"``, ``"vng"``
+            (gradient-based) or ``"ea"`` (edge-aware).
+        isp_denoise: In-camera denoising strength for ``"raw"``, the
+            ``h`` of OpenCV's non-local means in 8-bit levels (0 = off).
+        noise_blur: Size (Gaussian sigma, px) of the blotchy part of the
+            noise. Real camera noise is spatially correlated by the ISP; see
+            :func:`telekinesis.illusion.sensor.noise_field`.
+        noise_blur_mix: Share of the noise variance that is blotchy
+            (0 = independent per pixel, the old behaviour).
 
     Example:
         sensor_config = SensorConfig(read_noise=(1.0, 3.0))
@@ -1344,6 +1372,9 @@ class SensorConfig(BaseConfig):
         "chroma_noise",
         "sharpen_amount",
         "sharpen_sigma",
+        "isp_denoise",
+        "noise_blur",
+        "noise_blur_mix",
     )
     _RANGE_LIMITS = {
         "gain": (0.0, 10.0),
@@ -1358,7 +1389,13 @@ class SensorConfig(BaseConfig):
         "chroma_noise": (0.0, 1.0),
         "sharpen_amount": (0.0, 10.0),
         "sharpen_sigma": (0.1, 20.0),
+        "isp_denoise": (0.0, 50.0),
+        "noise_blur": (0.0, 20.0),
+        "noise_blur_mix": (0.0, 1.0),
     }
+    SENSOR_MODES = ("display", "raw")
+    BAYER_PATTERNS = ("RGGB", "BGGR", "GRBG", "GBRG")
+    DEMOSAIC_METHODS = ("bilinear", "vng", "ea")
 
     probability: float = 1.0
     white_balance: tuple[float, float] | None = None
@@ -1375,6 +1412,12 @@ class SensorConfig(BaseConfig):
     sharpen_amount: tuple[float, float] | None = None
     sharpen_sigma: tuple[float, float] | None = None
     jpeg_quality: tuple[int, int] | None = None
+    mode: str = "display"
+    bayer_pattern: str = "RGGB"
+    demosaic: str = "ea"
+    isp_denoise: tuple[float, float] | None = None
+    noise_blur: tuple[float, float] | None = None
+    noise_blur_mix: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
         """Validate the effect ranges.
@@ -1383,6 +1426,9 @@ class SensorConfig(BaseConfig):
             ValueError: If a range is invalid.
         """
         _check_number("probability", self.probability, 0.0, 1.0)
+        _check_choice("mode", self.mode, self.SENSOR_MODES)
+        _check_choice("bayer_pattern", self.bayer_pattern, self.BAYER_PATTERNS)
+        _check_choice("demosaic", self.demosaic, self.DEMOSAIC_METHODS)
         for name, (minimum, maximum) in self._RANGE_LIMITS.items():
             value = getattr(self, name)
             if value is not None:

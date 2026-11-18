@@ -3,7 +3,9 @@
 Blender renders an ideal, noise-free image. Real cameras add white-balance
 drift, a tone curve, colour gain, lens shading, blur, sensor noise, in-camera
 sharpening and compression. ``apply_sensor`` models these steps in camera
-order on the display-referred image. Every effect is geometry-preserving, so
+order, either on the display-referred image (``mode="display"``) or through a
+raw pipeline: linear light, Bayer mosaic, photosite noise, demosaic, in-camera
+denoise, tone curve (``mode="raw"``). Every effect is geometry-preserving, so
 masks and boxes stay valid.
 
 This module depends only on NumPy and OpenCV, so it can also be applied
@@ -84,10 +86,120 @@ def motion_blur_kernel(length: float, angle_deg: float) -> np.ndarray:
     return kernel / total if total > 0 else kernel
 
 
+def noise_field(shape: tuple, values: dict[str, Any], rng: np.random.Generator) -> np.ndarray:
+    """Unit-variance noise; with ``noise_blur`` / ``noise_blur_mix`` a share of its variance is spatially smooth.
+
+    Camera processing (denoising, resampling, chroma subsampling) leaves real sensor noise in blotches a few
+    pixels wide rather than independent per pixel; the RealSense D405 measured on a static scene correlates
+    ~0.47 / 0.23 / 0.17 at 1 / 2 / 3 px (after removing frame-to-frame flicker). The smooth part is white noise
+    blurred with sigma ``noise_blur`` and renormalised, mixed in at variance fraction ``noise_blur_mix``.
+    """
+    noise = rng.standard_normal(shape, dtype=np.float32)
+    sigma, mix = values.get("noise_blur", 0.0), values.get("noise_blur_mix", 0.0)
+    if sigma > 0 and mix > 0:
+        smooth = cv2.GaussianBlur(rng.standard_normal(shape, dtype=np.float32), (0, 0), sigma)
+        smooth /= max(float(smooth.std()), 1e-6)
+        noise = np.sqrt(1.0 - mix) * noise + np.sqrt(mix) * smooth
+    return noise
+
+
+def srgb_to_linear(x: np.ndarray) -> np.ndarray:
+    return np.where(x <= 0.04045, x / 12.92, ((x + 0.055) / 1.055) ** 2.4)
+
+
+def linear_to_srgb(x: np.ndarray) -> np.ndarray:
+    x = np.clip(x, 0.0, 1.0)
+    return np.where(x <= 0.0031308, x * 12.92, 1.055 * np.power(x, 1 / 2.4) - 0.055)
+
+
+# Channel (R=0, G=1, B=2) of each 2x2 Bayer cell position, and OpenCV's matching demosaic codes. OpenCV names a
+# pattern by the second row's first two pixels, so an RGGB sensor is its "BayerBG".
+_BAYER = {"RGGB": ((0, 1), (1, 2)), "BGGR": ((2, 1), (1, 0)), "GRBG": ((1, 0), (2, 1)), "GBRG": ((1, 2), (0, 1))}
+_DEMOSAIC = {
+    ("RGGB", "bilinear"): cv2.COLOR_BayerBG2RGB, ("RGGB", "vng"): cv2.COLOR_BayerBG2RGB_VNG,
+    ("RGGB", "ea"): cv2.COLOR_BayerBG2RGB_EA,
+    ("BGGR", "bilinear"): cv2.COLOR_BayerRG2RGB, ("BGGR", "vng"): cv2.COLOR_BayerRG2RGB_VNG,
+    ("BGGR", "ea"): cv2.COLOR_BayerRG2RGB_EA,
+    ("GRBG", "bilinear"): cv2.COLOR_BayerGB2RGB, ("GRBG", "vng"): cv2.COLOR_BayerGB2RGB_VNG,
+    ("GRBG", "ea"): cv2.COLOR_BayerGB2RGB_EA,
+    ("GBRG", "bilinear"): cv2.COLOR_BayerGR2RGB, ("GBRG", "vng"): cv2.COLOR_BayerGR2RGB_VNG,
+    ("GBRG", "ea"): cv2.COLOR_BayerGR2RGB_EA,
+}
+
+
+def mosaic(rgb: np.ndarray, pattern: str) -> np.ndarray:
+    """One colour sample per pixel, as behind a Bayer colour-filter array: (H, W) from (H, W, 3)."""
+    out = np.empty(rgb.shape[:2], rgb.dtype)
+    for dy in (0, 1):
+        for dx in (0, 1):
+            out[dy::2, dx::2] = rgb[dy::2, dx::2, _BAYER[pattern][dy][dx]]
+    return out
+
+
+def demosaic(raw: np.ndarray, pattern: str, method: str) -> np.ndarray:
+    """Reconstruct RGB from a Bayer mosaic in [0, 1] (16-bit through OpenCV; VNG needs 8-bit)."""
+    code = _DEMOSAIC[pattern, method]
+    if method == "vng":
+        return cv2.cvtColor(np.clip(np.rint(raw * 255), 0, 255).astype(np.uint8), code).astype(np.float32) / 255.0
+    return cv2.cvtColor(np.clip(np.rint(raw * 65535), 0, 65535).astype(np.uint16), code).astype(np.float32) / 65535.0
+
+
+def _apply_raw(
+    rgb: np.ndarray, values: dict[str, Any], rng: np.random.Generator, pattern: str, method: str
+) -> np.ndarray:
+    """The ``"raw"`` sensor mode on a display-referred RGB image in [0, 1]; see SensorConfig.mode."""
+    height, width = rgb.shape[:2]
+    lin = srgb_to_linear(rgb)
+    if values.get("blur_sigma", 0) > 0:
+        lin = cv2.GaussianBlur(lin, (0, 0), values["blur_sigma"])
+    if values.get("motion_blur", 0) >= 1.0:
+        lin = cv2.filter2D(
+            lin, -1, motion_blur_kernel(values["motion_blur"], values.get("motion_blur_angle", 0.0)),
+            borderType=cv2.BORDER_REPLICATE,
+        )
+    if "gain" in values:
+        lin = lin * values["gain"]
+    raw = np.clip(mosaic(lin, pattern), 0.0, 1.0)
+    shot, read = values.get("shot_noise", 0.0), values.get("read_noise", 0.0)
+    if shot > 0 or read > 0:
+        # Linear 8-bit units: variance = shot * signal + read^2, per photosite.
+        sigma = np.sqrt(shot * raw * 255.0 + read**2) / 255.0
+        raw = np.clip(raw + sigma * noise_field(raw.shape, values, rng), 0.0, 1.0)
+    lin = demosaic(raw, pattern, method)
+    if values.get("isp_denoise", 0) > 0:
+        h = float(values["isp_denoise"])
+        enc = np.clip(np.rint(linear_to_srgb(lin) * 255), 0, 255).astype(np.uint8)
+        enc = cv2.fastNlMeansDenoisingColored(enc, None, h, h, 5, 15)
+        lin = srgb_to_linear(enc.astype(np.float32) / 255.0)
+    if "white_balance" in values:
+        gains = np.asarray(values["white_balance"], np.float32)
+        lin = lin * (gains / gains.mean())
+    out = linear_to_srgb(lin)
+    if "contrast" in values:
+        out = 0.5 + (out - 0.5) * values["contrast"]
+    out = np.clip(out, 0.0, 1.0)
+    if "gamma" in values:
+        out = np.power(out, 1.0 / values["gamma"])
+    if "saturation" in values:
+        luma = out @ np.array([0.299, 0.587, 0.114], np.float32)
+        out = luma[..., None] + (out - luma[..., None]) * values["saturation"]
+    if values.get("vignetting", 0) > 0:
+        yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
+        radius2 = ((xx - width / 2) / (width / 2)) ** 2 + ((yy - height / 2) / (height / 2)) ** 2
+        out = out * (1.0 - values["vignetting"] * radius2 / 2.0)[..., None]
+    if values.get("sharpen_amount", 0) > 0:
+        blurred = cv2.GaussianBlur(out, (0, 0), values.get("sharpen_sigma", 1.0))
+        out = out + values["sharpen_amount"] * (out - blurred)
+    return out
+
+
 def apply_sensor_parameters(
     image: np.ndarray,
     values: dict[str, Any],
     rng: np.random.Generator | None = None,
+    mode: str = "display",
+    bayer_pattern: str = "RGGB",
+    demosaic_method: str = "ea",
 ) -> np.ndarray:
     """Apply sampled sensor effects to one RGB image.
 
@@ -95,11 +207,17 @@ def apply_sensor_parameters(
         image: RGB or RGBA image, uint8, shape (H, W, 3|4). Alpha is kept.
         values: Output of :func:`sample_sensor_parameters`.
         rng: Random generator for the noise. None uses a fresh generator.
+        mode: ``"display"`` or ``"raw"``, see :class:`config.SensorConfig`.
+        bayer_pattern: Colour-filter layout for ``"raw"``.
+        demosaic_method: Demosaicing for ``"raw"``.
 
     Returns:
         The processed image with the input's shape and dtype.
     """
     rng = rng or np.random.default_rng()
+    if mode == "raw":
+        out = _apply_raw(image[..., :3].astype(np.float32) / 255.0, values, rng, bayer_pattern, demosaic_method)
+        return _finish(image, out, values)
     rgb = image[..., :3].astype(np.float32) / 255.0
     height, width = rgb.shape[:2]
 
@@ -140,7 +258,7 @@ def apply_sensor_parameters(
     if shot > 0 or read > 0:
         # Noise in 8-bit units: variance = shot * intensity + read^2.
         sigma = np.sqrt(shot * rgb * 255.0 + read**2) / 255.0
-        noise = rng.standard_normal(rgb.shape, dtype=np.float32)
+        noise = noise_field(rgb.shape, values, rng)
         chroma = values.get("chroma_noise", 1.0)
         if chroma < 1.0:
             luma_noise = noise.mean(axis=2, keepdims=True)
@@ -150,7 +268,11 @@ def apply_sensor_parameters(
         sigma = values.get("sharpen_sigma", 1.0)
         blurred = cv2.GaussianBlur(rgb, (0, 0), sigma)
         rgb = rgb + values["sharpen_amount"] * (rgb - blurred)
+    return _finish(image, rgb, values)
 
+
+def _finish(image: np.ndarray, rgb: np.ndarray, values: dict[str, Any]) -> np.ndarray:
+    """Quantise to 8 bits, apply the in-camera JPEG if sampled, and restore alpha."""
     result = np.clip(np.rint(rgb * 255.0), 0, 255).astype(np.uint8)
     if "jpeg_quality" in values:
         ok, encoded = cv2.imencode(
@@ -184,7 +306,8 @@ def apply_sensor(
     if rng.random() >= sensor_config.probability:
         return image
     return apply_sensor_parameters(
-        image, sample_sensor_parameters(sensor_config, rng), rng
+        image, sample_sensor_parameters(sensor_config, rng), rng,
+        sensor_config.mode, sensor_config.bayer_pattern, sensor_config.demosaic,
     )
 
 
@@ -226,4 +349,5 @@ class SensorTransform:
             k: (v.tolist() if isinstance(v, np.ndarray) else v)
             for k, v in values.items()
         }
-        return apply_sensor_parameters(image, values, self.rng)
+        cfg = self.sensor_config
+        return apply_sensor_parameters(image, values, self.rng, cfg.mode, cfg.bayer_pattern, cfg.demosaic)

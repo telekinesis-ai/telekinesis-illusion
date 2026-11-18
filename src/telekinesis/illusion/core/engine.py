@@ -56,6 +56,8 @@ class BlenderEngine:
             renderer.set_max_amount_of_samples(render_config.samples)
         if render_config.noise_threshold is not None:
             renderer.set_noise_threshold(render_config.noise_threshold)
+        if render_config.denoiser != "OPENIMAGEDENOISE":  # the initialisation default
+            renderer.set_denoiser(render_config.denoiser)
         if render_config.depth:
             renderer.enable_depth_output(activate_antialiasing=False)
         if render_config.normals:
