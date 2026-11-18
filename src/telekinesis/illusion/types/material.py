@@ -335,6 +335,11 @@ class TexturedMaterial:
     ``(low, high)`` range sampled per material; ``color_sampling`` draws a tint
     range as for PrincipledMaterial. ``displacement=False`` disconnects the
     set's displacement map, which otherwise moves real geometry.
+    ``roughness_scale`` multiplies the roughness (map or value), e.g. to make
+    a scanned plastic glossier. ``parameters`` sets Principled inputs as for
+    PrincipledMaterial (fixed or ranges), e.g. ``coat_weight`` or
+    ``specular_ior_level``, which the PBR loader fixes at 0.333 for every set;
+    an input with a map connected loses the map.
     """
 
     texture: str
@@ -342,6 +347,8 @@ class TexturedMaterial:
     tint: tuple[tuple[float, ...], tuple[float, ...]] | None
     color_sampling: str
     displacement: bool
+    roughness_scale: tuple[float, float]
+    parameters: "MaterialPreset"
 
     def __init__(
         self,
@@ -351,6 +358,8 @@ class TexturedMaterial:
         tint: Color | None = None,
         color_sampling: str = "channel",
         displacement: bool = True,
+        roughness_scale: Scalar = 1.0,
+        parameters: Mapping[str, Parameter] | None = None,
     ):
         if not isinstance(texture, str) or not texture.strip():
             raise ValueError("texture must be a non-empty material group name.")
@@ -369,12 +378,19 @@ class TexturedMaterial:
         object.__setattr__(self, "tint", None if tint is None else _range("tint", tint, 3, 0.0))
         object.__setattr__(self, "color_sampling", color_sampling)
         object.__setattr__(self, "displacement", displacement)
+        rlow, rhigh = _range("roughness_scale", roughness_scale, 1, 0.0)
+        object.__setattr__(self, "roughness_scale", (rlow[0], rhigh[0]))
+        if parameters is not None and not isinstance(parameters, Mapping):
+            raise TypeError("parameters must be a mapping.")
+        object.__setattr__(self, "parameters", MaterialPreset("textured", dict(parameters or {})))
 
-    def sample(self, rng=None) -> dict[str, float | tuple[float, ...] | None]:
-        """Draw ``uv_scale`` and ``tint`` (None when no tint is set)."""
+    def sample(self, rng=None) -> dict:
+        """Draw ``uv_scale``, ``tint`` (None when no tint is set), ``roughness_scale`` and ``parameters``."""
         rng = random if rng is None else rng
         low, high = self.uv_scale
         scale = low if low == high else rng.uniform(low, high)
+        rlow, rhigh = self.roughness_scale
+        roughness_scale = rlow if rlow == rhigh else rng.uniform(rlow, rhigh)
         tint = None
         if self.tint is not None:
             lo, hi = self.tint
@@ -383,4 +399,5 @@ class TexturedMaterial:
                 tint = tuple(a + t * (b - a) for a, b in zip(lo, hi))
             else:
                 tint = tuple(a if a == b else rng.uniform(a, b) for a, b in zip(lo, hi))
-        return {"uv_scale": scale, "tint": tint}
+        parameters = self.parameters.sample(rng, color_sampling=self.color_sampling)
+        return {"uv_scale": scale, "tint": tint, "roughness_scale": roughness_scale, "parameters": parameters}

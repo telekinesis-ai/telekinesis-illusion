@@ -1699,6 +1699,12 @@ class TexturedMaterialConfig(BaseConfig):
             ``"segment"``, as for Principled recipes.
         displacement: ``False`` disconnects the set's displacement map, which
             otherwise displaces real geometry.
+        roughness_scale: Factor on the roughness map (or value), fixed or
+            ``[min, max]``; below 1 makes the set glossier.
+        parameters: Principled inputs set on top of the set, as in a
+            Principled recipe (fixed or ``[min, max]``), e.g. ``coat_weight``
+            or ``specular_ior_level`` (the PBR loader fixes it at 0.333). An
+            input with a map connected loses the map.
 
     Example:
         material_config = TexturedMaterialConfig(
@@ -1711,15 +1717,21 @@ class TexturedMaterialConfig(BaseConfig):
     tint: Any = None
     color_sampling: str = "channel"
     displacement: bool = True
+    roughness_scale: Any = 1.0
+    parameters: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Validate the settings by building the material they describe.
 
         Raises:
-            TypeError: If displacement is not a boolean.
-            ValueError: If the texture group, uv_scale, tint or color_sampling
-                is invalid.
+            TypeError: If displacement is not a boolean or parameters is not a
+                mapping.
+            ValueError: If the texture group, uv_scale, tint, color_sampling,
+                roughness_scale or a parameter is invalid.
         """
+        if not isinstance(self.parameters, Mapping):
+            raise TypeError("parameters: must be a mapping.")
+        object.__setattr__(self, "parameters", dict(self.parameters))
         self.to_textured_material()
 
     def to_textured_material(self) -> material.TexturedMaterial:
@@ -1730,6 +1742,8 @@ class TexturedMaterialConfig(BaseConfig):
             tint=self.tint,
             color_sampling=self.color_sampling,
             displacement=self.displacement,
+            roughness_scale=self.roughness_scale,
+            parameters=self.parameters,
         )
 
 

@@ -211,6 +211,23 @@ class _TexturedSource:
                     if node.bl_idname == "ShaderNodeOutputMaterial":
                         for link in list(node.inputs["Displacement"].links):
                             links.remove(link)
+            factor = values["roughness_scale"]
+            if factor != 1.0:
+                socket = shader.inputs["Roughness"]
+                if socket.links:
+                    scale_node = nodes.new("ShaderNodeMath")
+                    scale_node.operation = "MULTIPLY"
+                    scale_node.use_clamp = True
+                    scale_node.inputs[1].default_value = factor
+                    links.new(socket.links[0].from_socket, scale_node.inputs[0])
+                    links.new(scale_node.outputs["Value"], socket)
+                else:
+                    socket.default_value = min(1.0, socket.default_value * factor)
+            for name, value in values["parameters"].items():
+                socket = shader.inputs[PARAMETERS[name][0]]
+                for link in list(socket.links):  # an explicit value replaces the set's map
+                    links.remove(link)
+                socket.default_value = value
             blender_material["illusion_generated_material"] = True
             return Material(blender_material)
         except Exception:
