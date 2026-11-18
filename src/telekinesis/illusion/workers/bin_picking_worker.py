@@ -209,7 +209,10 @@ class BinPickingWorker:
             supercategory_map=supercategory_map,
             color_file_format=self._dataset_config.writer.image_format,
             jpg_quality=self._dataset_config.writer.jpg_quality,
-            color_transform=sensor.make_color_transform(self._sensor_config),
+            color_transform=sensor.make_color_transform(
+                self._sensor_config,
+                linear=self._render_config.color_output == "linear",
+            ),
             metadata_provider=self._scene_provenance,
             include_camera_metadata=True,
             bop=self._dataset_config.writer.bop,

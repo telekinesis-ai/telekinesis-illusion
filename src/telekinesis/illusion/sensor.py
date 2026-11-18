@@ -86,6 +86,22 @@ def motion_blur_kernel(length: float, angle_deg: float) -> np.ndarray:
     return kernel / total if total > 0 else kernel
 
 
+def encode_linear(lin: np.ndarray, values: dict[str, Any]) -> tuple[np.ndarray, dict[str, Any]]:
+    """Linear radiance -> display-referred [0, 1]: exposure, white balance, gain, sensor clipping, sRGB curve.
+
+    Returns the encoded image and ``values`` without the stages already applied (white balance, gain), so the
+    display pipeline does not apply them twice.
+    """
+    lin = lin * np.float32(2.0 ** values.get("exposure_ev", 0.0))
+    if "white_balance" in values:
+        gains = np.asarray(values["white_balance"], np.float32)
+        lin = lin * (gains / gains.mean())
+    if "gain" in values:
+        lin = lin * values["gain"]
+    rest = {k: v for k, v in values.items() if k not in ("white_balance", "gain")}
+    return linear_to_srgb(np.clip(lin, 0.0, 1.0)).astype(np.float32), rest
+
+
 def noise_field(shape: tuple, values: dict[str, Any], rng: np.random.Generator) -> np.ndarray:
     """Unit-variance noise; with ``noise_blur`` / ``noise_blur_mix`` a share of its variance is spatially smooth.
 
@@ -215,10 +231,19 @@ def apply_sensor_parameters(
         The processed image with the input's shape and dtype.
     """
     rng = rng or np.random.default_rng()
+    if np.issubdtype(image.dtype, np.floating):
+        # Scene-linear radiance (RenderConfig.color_output="linear"): exposure, white balance and gain act on
+        # light, the sensor clips at saturation, then the camera's tone curve; the remaining stages run on
+        # the encoded image without an 8-bit round trip, so shadows keep their precision.
+        rgb, values = encode_linear(image[..., :3].astype(np.float32), values)
+        alpha = None if image.shape[-1] != 4 else np.clip(np.rint(image[..., 3:] * 255.0), 0, 255).astype(np.uint8)
+        image = np.zeros(image.shape[:2] + (3,), np.uint8) if alpha is None else np.concatenate(
+            [np.zeros(image.shape[:2] + (3,), np.uint8), alpha], axis=-1)
+    else:
+        rgb = image[..., :3].astype(np.float32) / 255.0
     if mode == "raw":
-        out = _apply_raw(image[..., :3].astype(np.float32) / 255.0, values, rng, bayer_pattern, demosaic_method)
+        out = _apply_raw(rgb, values, rng, bayer_pattern, demosaic_method)
         return _finish(image, out, values)
-    rgb = image[..., :3].astype(np.float32) / 255.0
     height, width = rgb.shape[:2]
 
     if "white_balance" in values:
@@ -312,20 +337,27 @@ def apply_sensor(
 
 
 def make_color_transform(
-    sensor_config: config.SensorConfig | None, seed: int | None = None
+    sensor_config: config.SensorConfig | None, seed: int | None = None, linear: bool = False
 ) -> Callable[[np.ndarray], np.ndarray] | None:
     """Build a per-image transform for writers, or None when disabled.
 
     Args:
         sensor_config: Effect ranges, or None for no sensor simulation.
         seed: Seed of the transform's random generator.
+        linear: The renders are scene-linear float images; without a sensor
+            they are still clipped and sRGB-encoded to 8 bits.
 
     Returns:
         A callable mapping an RGB image to its processed copy, or None.
     """
     if sensor_config is None:
-        return None
+        return encode_srgb8 if linear else None
     return SensorTransform(sensor_config, seed)
+
+
+def encode_srgb8(image: np.ndarray) -> np.ndarray:
+    """Linear float RGB(A) -> 8-bit sRGB, with no other effect."""
+    return apply_sensor_parameters(image, {})
 
 
 class SensorTransform:
@@ -343,7 +375,7 @@ class SensorTransform:
     def __call__(self, image: np.ndarray) -> np.ndarray:
         if self.rng.random() >= self.sensor_config.probability:
             self.last = {}
-            return image
+            return encode_srgb8(image) if np.issubdtype(image.dtype, np.floating) else image
         values = sample_sensor_parameters(self.sensor_config, self.rng)
         self.last = {
             k: (v.tolist() if isinstance(v, np.ndarray) else v)

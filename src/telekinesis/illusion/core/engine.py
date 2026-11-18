@@ -66,6 +66,9 @@ class BlenderEngine:
             view_transform=render_config.view_transform,
             look=render_config.look,
         )
+        if render_config.color_output == "linear":
+            # Scene-linear float radiance; the sensor model applies exposure, clipping and the tone curve.
+            renderer.set_output_format(file_format="OPEN_EXR", color_depth=32)
         self._prepared = True
 
     def randomize_look(self) -> None:

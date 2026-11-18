@@ -1239,6 +1239,13 @@ class RenderConfig(BaseConfig):
             for no denoising. A denoiser smooths fine texture (weave, grain)
             into a waxy look; without one, raise ``samples`` and let the
             sensor model's noise stand in for the camera's.
+        color_output: ``"display"`` (default) renders through the view
+            transform to an 8-bit image. ``"linear"`` writes scene-linear
+            32-bit EXR radiance and leaves exposure, sensor clipping and the
+            tone curve to the sensor model (``SensorConfig.exposure_ev``), so
+            highlights clip where a sensor would and shadows keep their
+            precision; ``view_transform``, ``look`` and ``exposure`` then do
+            not affect the colour image.
 
     Example:
         render_config = RenderConfig(device="CPU", samples=16)
@@ -1259,6 +1266,7 @@ class RenderConfig(BaseConfig):
     bevel_radius: tuple[float, float] | None = None
     bevel_models: tuple[str, ...] | None = None
     denoiser: str | None = "OPENIMAGEDENOISE"
+    color_output: str = "display"
 
     def __post_init__(self) -> None:
         """Validate the render settings.
@@ -1267,6 +1275,7 @@ class RenderConfig(BaseConfig):
             ValueError: If a setting is invalid.
         """
         _check_choice("device", self.device, RENDER_DEVICES)
+        _check_choice("color_output", self.color_output, ("display", "linear"))
         if self.denoiser is not None:
             _check_choice("denoiser", self.denoiser, ("OPENIMAGEDENOISE", "OPTIX"))
         if self.view_transform is not None:
@@ -1354,6 +1363,10 @@ class SensorConfig(BaseConfig):
             :func:`telekinesis.illusion.sensor.noise_field`.
         noise_blur_mix: Share of the noise variance that is blotchy
             (0 = independent per pixel, the old behaviour).
+        exposure_ev: Exposure in stops applied to linear renders
+            (``RenderConfig.color_output="linear"``) before white balance,
+            gain, sensor clipping at 1.0 and the sRGB tone curve. Ignored for
+            8-bit renders.
 
     Example:
         sensor_config = SensorConfig(read_noise=(1.0, 3.0))
@@ -1375,6 +1388,7 @@ class SensorConfig(BaseConfig):
         "isp_denoise",
         "noise_blur",
         "noise_blur_mix",
+        "exposure_ev",
     )
     _RANGE_LIMITS = {
         "gain": (0.0, 10.0),
@@ -1392,6 +1406,7 @@ class SensorConfig(BaseConfig):
         "isp_denoise": (0.0, 50.0),
         "noise_blur": (0.0, 20.0),
         "noise_blur_mix": (0.0, 1.0),
+        "exposure_ev": (-20.0, 20.0),
     }
     SENSOR_MODES = ("display", "raw")
     BAYER_PATTERNS = ("RGGB", "BGGR", "GRBG", "GBRG")
@@ -1418,6 +1433,7 @@ class SensorConfig(BaseConfig):
     isp_denoise: tuple[float, float] | None = None
     noise_blur: tuple[float, float] | None = None
     noise_blur_mix: tuple[float, float] | None = None
+    exposure_ev: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
         """Validate the effect ranges.
