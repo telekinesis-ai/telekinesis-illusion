@@ -295,3 +295,92 @@ class PrincipledMaterial:
 
     def sample(self, rng=None) -> dict[str, float | tuple[float, ...]]:
         return self.preset.sample(rng, color_sampling=self.color_sampling)
+
+
+def _range(name: str, value, size: int, minimum: float) -> tuple[tuple, tuple]:
+    """A fixed value or a [low, high] pair, each a number (size 1) or a size-vector."""
+    def vec(v):
+        if size == 1 and isinstance(v, Real) and not isinstance(v, bool):
+            return (float(v),)
+        if size > 1 and isinstance(v, (tuple, list)) and len(v) == size and all(
+            isinstance(x, Real) and not isinstance(x, bool) for x in v
+        ):
+            return tuple(float(x) for x in v)
+        return None
+
+    fixed = vec(value)
+    if fixed is not None:
+        low = high = fixed
+    elif isinstance(value, (tuple, list)) and len(value) == 2 and vec(value[0]) and vec(value[1]):
+        low, high = vec(value[0]), vec(value[1])
+    else:
+        shape = "a number" if size == 1 else f"{size} numbers"
+        raise ValueError(f"{name}: expected {shape} or a [low, high] pair of them, got {value!r}.")
+    if any(not math.isfinite(x) or x < minimum for x in low + high):
+        raise ValueError(f"{name}: values must be finite and >= {minimum}, got {value!r}.")
+    if any(a > b for a, b in zip(low, high)):
+        raise ValueError(f"{name}: low must not exceed high, got {value!r}.")
+    return low, high
+
+
+@dataclass(frozen=True, init=False)
+class TexturedMaterial:
+    """A registered PBR texture set, re-tiled and tinted per sample.
+
+    ``texture`` is a material group (as for a plain PBR choice). ``uv_scale``
+    multiplies the texture coordinates of every map, so 2 tiles the set twice
+    per UV unit and makes its grain half as large. ``tint`` multiplies the
+    colour map by an RGB factor in linear space, e.g. to bring a scanned wood
+    to the colour of a measured table. Both take a fixed value or a
+    ``(low, high)`` range sampled per material; ``color_sampling`` draws a tint
+    range as for PrincipledMaterial. ``displacement=False`` disconnects the
+    set's displacement map, which otherwise moves real geometry.
+    """
+
+    texture: str
+    uv_scale: tuple[float, float]
+    tint: tuple[tuple[float, ...], tuple[float, ...]] | None
+    color_sampling: str
+    displacement: bool
+
+    def __init__(
+        self,
+        texture: str,
+        *,
+        uv_scale: Scalar = 1.0,
+        tint: Color | None = None,
+        color_sampling: str = "channel",
+        displacement: bool = True,
+    ):
+        if not isinstance(texture, str) or not texture.strip():
+            raise ValueError("texture must be a non-empty material group name.")
+        if color_sampling not in COLOR_SAMPLING:
+            raise ValueError(
+                f"color_sampling must be one of {COLOR_SAMPLING}, "
+                f"got {color_sampling!r}."
+            )
+        if not isinstance(displacement, bool):
+            raise TypeError("displacement must be a boolean.")
+        low, high = _range("uv_scale", uv_scale, 1, 0.0)
+        if low[0] <= 0.0:
+            raise ValueError(f"uv_scale: must be > 0, got {uv_scale!r}.")
+        object.__setattr__(self, "texture", texture)
+        object.__setattr__(self, "uv_scale", (low[0], high[0]))
+        object.__setattr__(self, "tint", None if tint is None else _range("tint", tint, 3, 0.0))
+        object.__setattr__(self, "color_sampling", color_sampling)
+        object.__setattr__(self, "displacement", displacement)
+
+    def sample(self, rng=None) -> dict[str, float | tuple[float, ...] | None]:
+        """Draw ``uv_scale`` and ``tint`` (None when no tint is set)."""
+        rng = random if rng is None else rng
+        low, high = self.uv_scale
+        scale = low if low == high else rng.uniform(low, high)
+        tint = None
+        if self.tint is not None:
+            lo, hi = self.tint
+            if self.color_sampling == "segment":
+                t = rng.uniform(0.0, 1.0)
+                tint = tuple(a + t * (b - a) for a, b in zip(lo, hi))
+            else:
+                tint = tuple(a if a == b else rng.uniform(a, b) for a, b in zip(lo, hi))
+        return {"uv_scale": scale, "tint": tint}

@@ -20,6 +20,7 @@ from telekinesis.illusion.randomizer.surface_imperfections import (
 from telekinesis.illusion.types.material import (
     PARAMETERS,
     PrincipledMaterial,
+    TexturedMaterial,
 )
 
 if TYPE_CHECKING:
@@ -170,6 +171,54 @@ class _PrincipledSource:
 
 
 @dataclass(frozen=True)
+class _TexturedSource:
+    """A registered PBR set, copied per sample with its own tiling and tint.
+
+    The copy shares the set's images and leaves the cached material untouched;
+    it is flagged as generated so clean_generated_materials reclaims it.
+    """
+
+    recipe: TexturedMaterial
+
+    def prepare(self, manager):
+        manager.update_materials((self.recipe.texture,), None)
+
+    def generate(self, manager, rng) -> Material:
+        base = manager.get_random_material((self.recipe.texture,), None, rng=rng)
+        values = self.recipe.sample(rng)
+        blender_material = base.blender_obj.copy()
+        try:
+            nodes = blender_material.node_tree.nodes
+            links = blender_material.node_tree.links
+            scale = values["uv_scale"]
+            for node in nodes:
+                if node.bl_idname == "ShaderNodeMapping":
+                    node.inputs["Scale"].default_value = (scale, scale, 1.0)
+            shader = next(n for n in nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+            if values["tint"] is not None:
+                socket = shader.inputs["Base Color"]
+                tint = nodes.new("ShaderNodeMixRGB")
+                tint.blend_type = "MULTIPLY"
+                tint.inputs["Fac"].default_value = 1.0
+                tint.inputs[2].default_value = (*values["tint"], 1.0)
+                if socket.links:
+                    links.new(socket.links[0].from_socket, tint.inputs[1])
+                else:
+                    tint.inputs[1].default_value = socket.default_value
+                links.new(tint.outputs["Color"], socket)
+            if not self.recipe.displacement:
+                for node in nodes:
+                    if node.bl_idname == "ShaderNodeOutputMaterial":
+                        for link in list(node.inputs["Displacement"].links):
+                            links.remove(link)
+            blender_material["illusion_generated_material"] = True
+            return Material(blender_material)
+        except Exception:
+            bpy.data.materials.remove(blender_material)
+            raise
+
+
+@dataclass(frozen=True)
 class _ExistingSource:
     material: Material
 
@@ -180,7 +229,9 @@ class _ExistingSource:
         return self.material
 
 
-MaterialChoice: TypeAlias = str | PrincipledMaterial | Material | MaterialSource
+MaterialChoice: TypeAlias = (
+    str | PrincipledMaterial | TexturedMaterial | Material | MaterialSource
+)
 MaterialSlots: TypeAlias = (
     Mapping[str | int, Sequence[MaterialChoice]] | Literal["all"]
 )
@@ -205,6 +256,8 @@ class MaterialPool:
             return PBRMaterial((choice,))
         if isinstance(choice, PrincipledMaterial):
             return _PrincipledSource(choice)
+        if isinstance(choice, TexturedMaterial):
+            return _TexturedSource(choice)
         if isinstance(choice, Material):
             return _ExistingSource(choice)
         if callable(getattr(choice, "prepare", None)) and callable(

@@ -1682,6 +1682,61 @@ class PrincipledMaterialConfig(BaseConfig):
 
 
 @dataclasses.dataclass(frozen=True)
+class TexturedMaterialConfig(BaseConfig):
+    """A registered PBR texture set with per-sample tiling and tint.
+
+    A mapping material choice with a ``texture`` key is read as this config;
+    one without it is a Principled recipe.
+
+    Attributes:
+        texture: PBR material group to sample a texture set from, as for a
+            plain group-name choice (e.g. ``"wood/WoodFloor051_1K-PNG"``).
+        uv_scale: Texture-coordinate multiplier, fixed or ``[min, max]``.
+            2 tiles the set twice per UV unit (grain half as large).
+        tint: RGB factor applied to the colour map in linear space, fixed or
+            ``[[r, g, b], [r, g, b]]``. ``None`` leaves the colour map as is.
+        color_sampling: How a tint range is drawn: ``"channel"`` (default) or
+            ``"segment"``, as for Principled recipes.
+        displacement: ``False`` disconnects the set's displacement map, which
+            otherwise displaces real geometry.
+
+    Example:
+        material_config = TexturedMaterialConfig(
+            "wood", uv_scale=(1.5, 2.5), tint=((0.9, 0.8, 0.7), (1.0, 0.9, 0.8))
+        )
+    """
+
+    texture: str
+    uv_scale: Any = 1.0
+    tint: Any = None
+    color_sampling: str = "channel"
+    displacement: bool = True
+
+    def __post_init__(self) -> None:
+        """Validate the settings by building the material they describe.
+
+        Raises:
+            TypeError: If displacement is not a boolean.
+            ValueError: If the texture group, uv_scale, tint or color_sampling
+                is invalid.
+        """
+        self.to_textured_material()
+
+    def to_textured_material(self) -> material.TexturedMaterial:
+        """Return the textured material described by this config."""
+        return material.TexturedMaterial(
+            self.texture,
+            uv_scale=self.uv_scale,
+            tint=self.tint,
+            color_sampling=self.color_sampling,
+            displacement=self.displacement,
+        )
+
+
+MaterialChoiceConfig = str | PrincipledMaterialConfig | TexturedMaterialConfig
+
+
+@dataclasses.dataclass(frozen=True)
 class MaterialRandomizerConfig(BaseConfig):
     """Configuration for ``MaterialRandomizer``.
 
@@ -1696,9 +1751,10 @@ class MaterialRandomizerConfig(BaseConfig):
         target_groups: Model groups whose models receive materials.
         groups: Material groups to sample registered PBR materials from.
         names: Names of registered PBR materials to sample from.
-        materials: Explicit material choices: PBR material group names or
-            procedural Principled recipes. Cannot be combined with groups or
-            names.
+        materials: Explicit material choices: PBR material group names,
+            procedural Principled recipes, or textured choices (a mapping with
+            a ``texture`` key, see :class:`TexturedMaterialConfig`). Cannot be
+            combined with groups or names.
         material_slots: ``"all"`` samples every material slot independently;
             a mapping assigns separate choices to slot names or zero-based
             slot indices. Requires mode ``"slots"`` or no mode.
@@ -1719,9 +1775,9 @@ class MaterialRandomizerConfig(BaseConfig):
     target_groups: tuple[str, ...] | None = None
     groups: tuple[str, ...] | None = None
     names: tuple[str, ...] | None = None
-    materials: tuple[str | PrincipledMaterialConfig, ...] | None = None
+    materials: tuple[MaterialChoiceConfig, ...] | None = None
     material_slots: (
-        str | dict[str | int, tuple[str | PrincipledMaterialConfig, ...]] | None
+        str | dict[str | int, tuple[MaterialChoiceConfig, ...]] | None
     ) = None
     mode: str | None = None
     seed: int | None = None
@@ -1784,13 +1840,14 @@ class MaterialRandomizerConfig(BaseConfig):
     @staticmethod
     def _as_material_choices(
         name: str, choices: Any
-    ) -> tuple[str | PrincipledMaterialConfig, ...]:
+    ) -> tuple[MaterialChoiceConfig, ...]:
         """Validate material choices and coerce recipes into configs.
 
         Args:
             name: Field name, used in error messages.
-            choices: Non-empty sequence of PBR group names and Principled
-                recipe mappings or configs.
+            choices: Non-empty sequence of PBR group names, Principled recipe
+                mappings or configs, and textured choices (mappings with a
+                ``texture`` key, or TexturedMaterialConfig).
 
         Returns:
             The choices as a tuple.
@@ -1811,6 +1868,14 @@ class MaterialRandomizerConfig(BaseConfig):
         for index, choice in enumerate(choices):
             if isinstance(choice, str) and choice.strip():
                 result.append(choice)
+            elif isinstance(choice, TexturedMaterialConfig) or (
+                isinstance(choice, Mapping) and "texture" in choice
+            ):
+                result.append(
+                    build_config(
+                        f"{name}[{index}]", TexturedMaterialConfig, choice
+                    )
+                )
             elif isinstance(choice, (Mapping, PrincipledMaterialConfig)):
                 result.append(
                     build_config(
@@ -1819,8 +1884,8 @@ class MaterialRandomizerConfig(BaseConfig):
                 )
             else:
                 raise TypeError(
-                    f"{name}[{index}]: must be a material group name or a "
-                    f"Principled recipe, got {choice!r}."
+                    f"{name}[{index}]: must be a material group name, a "
+                    f"Principled recipe or a textured choice, got {choice!r}."
                 )
         return tuple(result)
 
