@@ -17,6 +17,7 @@ from telekinesis.illusion.randomizer.surface_imperfections import (
     clean_imperfection_images,
     discover_imperfections,
 )
+from telekinesis.illusion.randomizer.wear import apply_wear
 from telekinesis.illusion.types.material import (
     PARAMETERS,
     PrincipledMaterial,
@@ -161,6 +162,8 @@ class _PrincipledSource:
                     self._imperfection_maps,
                     rng,
                 )
+            if self.recipe.wear is not None:
+                apply_wear(material.blender_obj, shader, self.recipe.wear.sample(rng), rng)
             # Only materials owned by this generator may be reclaimed.
             material.blender_obj["illusion_generated_material"] = True
             return material
@@ -194,6 +197,10 @@ class _TexturedSource:
             for node in nodes:
                 if node.bl_idname == "ShaderNodeMapping":
                     node.inputs["Scale"].default_value = (scale, scale, 1.0)
+                    if values["uv_rotation"] is not None:
+                        node.inputs["Rotation"].default_value = (0.0, 0.0, values["uv_rotation"])
+                    if values["uv_offset"] is not None:
+                        node.inputs["Location"].default_value = (*values["uv_offset"], 0.0)
             shader = next(n for n in nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
             if values["tint"] is not None:
                 socket = shader.inputs["Base Color"]
@@ -228,6 +235,8 @@ class _TexturedSource:
                 for link in list(socket.links):  # an explicit value replaces the set's map
                     links.remove(link)
                 socket.default_value = value
+            if values["wear"] is not None:
+                apply_wear(blender_material, shader, values["wear"], rng)
             blender_material["illusion_generated_material"] = True
             return Material(blender_material)
         except Exception:

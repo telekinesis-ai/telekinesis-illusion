@@ -247,11 +247,14 @@ class PrincipledMaterial:
 
     Colors accept RGB/RGBA or a pair of lower/upper colors in linear space.
     Presets are names from MATERIAL_PRESETS or user-defined MaterialPresets.
+    ``wear`` (a MaterialWear or its settings) layers dust, edge wear and
+    scratches over the sampled colour and roughness; None (default) adds none.
     """
 
     preset: MaterialPreset
     surface_imperfections: SurfaceImperfections
     color_sampling: str
+    wear: "MaterialWear | None"
 
     def __init__(
         self,
@@ -259,6 +262,7 @@ class PrincipledMaterial:
         *,
         surface_imperfections: bool | SurfaceImperfections | Mapping = False,
         color_sampling: str = "channel",
+        wear: "MaterialWear | Mapping | None" = None,
         **parameters: Parameter,
     ):
         if color_sampling not in COLOR_SAMPLING:
@@ -292,6 +296,7 @@ class PrincipledMaterial:
         object.__setattr__(self, "preset", preset.with_overrides(**parameters))
         object.__setattr__(self, "surface_imperfections", surface_imperfections)
         object.__setattr__(self, "color_sampling", color_sampling)
+        object.__setattr__(self, "wear", _wear(wear))
 
     def sample(self, rng=None) -> dict[str, float | tuple[float, ...]]:
         return self.preset.sample(rng, color_sampling=self.color_sampling)
@@ -323,6 +328,100 @@ def _range(name: str, value, size: int, minimum: float) -> tuple[tuple, tuple]:
     return low, high
 
 
+_WEAR_FIELDS = MappingProxyType(
+    {
+        # name: (default, size, minimum, maximum)
+        "dust": (0.0, 1, 0.0, 1.0),
+        "dust_color": ((0.30, 0.29, 0.27), 3, 0.0, 1.0),
+        "dust_roughness": (0.9, 1, 0.0, 1.0),
+        "dust_cavity": (1.0, 1, 0.0, 100.0),
+        "dust_up": (0.3, 1, 0.0, 100.0),
+        "edge_wear": (0.0, 1, 0.0, 1.0),
+        "edge_color": ((0.6, 0.6, 0.6), 3, 0.0, 1.0),
+        "edge_roughness": (0.3, 1, 0.0, 1.0),
+        "edge_width": (0.002, 1, 1e-5, 1.0),
+        "scratches": (0.0, 1, 0.0, 1.0),
+        "scratch_scale": (0.004, 1, 1e-5, 10.0),
+        "grime_scale": (0.03, 1, 1e-5, 10.0),
+        "ao_distance": (0.03, 1, 1e-5, 10.0),
+    }
+)
+
+
+@dataclass(frozen=True, init=False)
+class MaterialWear:
+    """Procedural dust, edge wear and scratches layered over a material.
+
+    Every setting is fixed or a ``(low, high)`` range drawn per material;
+    colours are linear RGB (a range is drawn per channel). Lengths are in
+    object-space metres.
+
+    * ``dust`` (0-1): strength of a darker, rougher ``dust_color`` /
+      ``dust_roughness`` layer. Its mask is a noise of feature size
+      ``grime_scale`` times ``dust_cavity`` x cavity (one minus ambient
+      occlusion within ``ao_distance``: corners and creases) plus ``dust_up``
+      x the up-facing part of the normal (top faces).
+    * ``edge_wear`` (0-1): strength of an ``edge_color`` / ``edge_roughness``
+      layer on convex edges, found by comparing a Bevel normal of radius
+      ``edge_width`` with the surface normal (works on low-poly meshes,
+      needs Cycles), kept off concave creases by the ambient occlusion and
+      broken up by noise.
+    * ``scratches`` (0-1): fine streaks of added roughness, ``scratch_scale``
+      wide and 30 times as long, in a random direction.
+
+    Example:
+        MaterialWear(dust=(0.2, 0.4), edge_wear=0.3)
+    """
+
+    dust: tuple[float, float]
+    dust_color: tuple[tuple[float, ...], tuple[float, ...]]
+    dust_roughness: tuple[float, float]
+    dust_cavity: tuple[float, float]
+    dust_up: tuple[float, float]
+    edge_wear: tuple[float, float]
+    edge_color: tuple[tuple[float, ...], tuple[float, ...]]
+    edge_roughness: tuple[float, float]
+    edge_width: tuple[float, float]
+    scratches: tuple[float, float]
+    scratch_scale: tuple[float, float]
+    grime_scale: tuple[float, float]
+    ao_distance: tuple[float, float]
+
+    def __init__(self, **settings):
+        unknown = sorted(set(settings) - set(_WEAR_FIELDS))
+        if unknown:
+            raise ValueError(
+                f"wear: unknown setting(s) {unknown}; choose from {sorted(_WEAR_FIELDS)}."
+            )
+        for name, (default, size, minimum, maximum) in _WEAR_FIELDS.items():
+            low, high = _range(f"wear.{name}", settings.get(name, default), size, minimum)
+            if any(x > maximum for x in low + high):
+                raise ValueError(
+                    f"wear.{name}: values must be <= {maximum}, got {settings[name]!r}."
+                )
+            object.__setattr__(self, name, (low[0], high[0]) if size == 1 else (low, high))
+
+    def sample(self, rng) -> dict:
+        """Draw every setting (colours per channel)."""
+        result = {}
+        for name, (_, size, _, _) in _WEAR_FIELDS.items():
+            low, high = getattr(self, name)
+            if size == 1:
+                low, high = (low,), (high,)
+            values = tuple(a if a == b else rng.uniform(a, b) for a, b in zip(low, high))
+            result[name] = values[0] if size == 1 else values
+        return result
+
+
+def _wear(value) -> "MaterialWear | None":
+    """None, a MaterialWear or a mapping of its settings."""
+    if value is None or isinstance(value, MaterialWear):
+        return value
+    if isinstance(value, Mapping):
+        return MaterialWear(**value)
+    raise TypeError(f"wear must be a mapping of wear settings, got {value!r}.")
+
+
 @dataclass(frozen=True, init=False)
 class TexturedMaterial:
     """A registered PBR texture set, re-tiled and tinted per sample.
@@ -340,6 +439,12 @@ class TexturedMaterial:
     PrincipledMaterial (fixed or ranges), e.g. ``coat_weight`` or
     ``specular_ior_level``, which the PBR loader fixes at 0.333 for every set;
     an input with a map connected loses the map.
+    ``uv_rotation`` (degrees) rotates and ``uv_offset`` shifts the texture
+    coordinates per sample, so a tiled set neither repeats identically on
+    every object nor keeps one grain direction: ``uv_offset=True`` draws a
+    shift in [0, 1) per axis, a ``(u, v)`` pair is fixed and a pair of pairs a
+    range. ``wear`` (a MaterialWear or its settings) layers dust, edge wear
+    and scratches over the colour and roughness. All three default to off.
     """
 
     texture: str
@@ -349,6 +454,9 @@ class TexturedMaterial:
     displacement: bool
     roughness_scale: tuple[float, float]
     parameters: "MaterialPreset"
+    uv_rotation: tuple[float, float] | None
+    uv_offset: tuple[tuple[float, ...], tuple[float, ...]] | None
+    wear: "MaterialWear | None"
 
     def __init__(
         self,
@@ -360,6 +468,9 @@ class TexturedMaterial:
         displacement: bool = True,
         roughness_scale: Scalar = 1.0,
         parameters: Mapping[str, Parameter] | None = None,
+        uv_rotation: Scalar | None = None,
+        uv_offset: bool | tuple | None = None,
+        wear: "MaterialWear | Mapping | None" = None,
     ):
         if not isinstance(texture, str) or not texture.strip():
             raise ValueError("texture must be a non-empty material group name.")
@@ -383,9 +494,26 @@ class TexturedMaterial:
         if parameters is not None and not isinstance(parameters, Mapping):
             raise TypeError("parameters must be a mapping.")
         object.__setattr__(self, "parameters", MaterialPreset("textured", dict(parameters or {})))
+        if uv_rotation is not None:
+            alow, ahigh = _range("uv_rotation", uv_rotation, 1, -math.inf)
+            uv_rotation = (alow[0], ahigh[0])
+        object.__setattr__(self, "uv_rotation", uv_rotation)
+        if uv_offset is False:
+            uv_offset = None
+        elif uv_offset is True:
+            uv_offset = ((0.0, 0.0), (1.0, 1.0))
+        elif uv_offset is not None:
+            uv_offset = _range("uv_offset", uv_offset, 2, -math.inf)
+        object.__setattr__(self, "uv_offset", uv_offset)
+        object.__setattr__(self, "wear", _wear(wear))
 
     def sample(self, rng=None) -> dict:
-        """Draw ``uv_scale``, ``tint`` (None when no tint is set), ``roughness_scale`` and ``parameters``."""
+        """Draw ``uv_scale``, ``tint`` (None when no tint is set), ``roughness_scale`` and ``parameters``.
+
+        ``uv_rotation`` (radians), ``uv_offset`` and ``wear`` are drawn after
+        them and only when set (None otherwise), so a choice without them
+        draws exactly what it drew before they existed.
+        """
         rng = random if rng is None else rng
         low, high = self.uv_scale
         scale = low if low == high else rng.uniform(low, high)
@@ -400,4 +528,21 @@ class TexturedMaterial:
             else:
                 tint = tuple(a if a == b else rng.uniform(a, b) for a, b in zip(lo, hi))
         parameters = self.parameters.sample(rng, color_sampling=self.color_sampling)
-        return {"uv_scale": scale, "tint": tint, "roughness_scale": roughness_scale, "parameters": parameters}
+        rotation = offset = wear = None
+        if self.uv_rotation is not None:
+            alow, ahigh = self.uv_rotation
+            rotation = math.radians(alow if alow == ahigh else rng.uniform(alow, ahigh))
+        if self.uv_offset is not None:
+            lo, hi = self.uv_offset
+            offset = tuple(a if a == b else rng.uniform(a, b) for a, b in zip(lo, hi))
+        if self.wear is not None:
+            wear = self.wear.sample(rng)
+        return {
+            "uv_scale": scale,
+            "tint": tint,
+            "roughness_scale": roughness_scale,
+            "parameters": parameters,
+            "uv_rotation": rotation,
+            "uv_offset": offset,
+            "wear": wear,
+        }

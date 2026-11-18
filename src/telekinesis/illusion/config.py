@@ -1679,6 +1679,22 @@ class ModelPoseRandomizerConfig(BaseConfig):
             )
 
 
+def _check_wear(config: Any) -> None:
+    """Check that a material config's wear is None or a mapping; copy it.
+
+    Raises:
+        TypeError: If wear is neither None nor a mapping.
+    """
+    if config.wear is None:
+        return
+    if not isinstance(config.wear, Mapping):
+        raise TypeError(
+            "wear: must be a mapping of wear settings (dust, edge_wear, "
+            f"scratches, ...), got {config.wear!r}."
+        )
+    object.__setattr__(config, "wear", dict(config.wear))
+
+
 @dataclasses.dataclass(frozen=True)
 class PrincipledMaterialConfig(BaseConfig):
     """Procedural Principled BSDF material recipe.
@@ -1695,6 +1711,9 @@ class PrincipledMaterialConfig(BaseConfig):
             samples every component on its own, so a grey-to-grey range also
             gives tinted colours; ``"segment"`` samples one point on the line
             between the two end colours, keeping their hue.
+        wear: Optional mapping of wear settings (dust, edge wear, scratches)
+            layered over the sampled colour and roughness; see
+            :class:`TexturedMaterialConfig`. ``None`` (default) adds none.
 
     Example:
         material_config = PrincipledMaterialConfig(
@@ -1706,6 +1725,7 @@ class PrincipledMaterialConfig(BaseConfig):
     parameters: dict[str, Any] = dataclasses.field(default_factory=dict)
     surface_imperfections: bool | dict[str, Any] = False
     color_sampling: str = "channel"
+    wear: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Validate the recipe by building the material it describes.
@@ -1723,6 +1743,7 @@ class PrincipledMaterialConfig(BaseConfig):
                 "surface_imperfections: must be a boolean or a mapping."
             )
         object.__setattr__(self, "parameters", dict(self.parameters))
+        _check_wear(self)
         if isinstance(self.surface_imperfections, Mapping):
             object.__setattr__(
                 self, "surface_imperfections", dict(self.surface_imperfections)
@@ -1739,6 +1760,7 @@ class PrincipledMaterialConfig(BaseConfig):
             self.preset,
             surface_imperfections=self.surface_imperfections,
             color_sampling=self.color_sampling,
+            wear=self.wear,
             **self.parameters,
         )
 
@@ -1767,6 +1789,23 @@ class TexturedMaterialConfig(BaseConfig):
             Principled recipe (fixed or ``[min, max]``), e.g. ``coat_weight``
             or ``specular_ior_level`` (the PBR loader fixes it at 0.333). An
             input with a map connected loses the map.
+        uv_rotation: Rotation of the texture coordinates in degrees, fixed
+            or ``[min, max]`` (e.g. ``[-180, 180]`` varies the grain
+            direction). ``None`` (default) leaves the set's mapping.
+        uv_offset: Shift of the texture coordinates in tiles: ``true`` draws
+            one in [0, 1) per axis, ``[u, v]`` is fixed and ``[[u, v], [u, v]]``
+            a range. ``None``/``false`` (default) leaves the set's mapping.
+        wear: Optional mapping of wear layers mixed into the colour and
+            roughness after the tint; every value is fixed or ``[min, max]``
+            and lengths are object-space metres. ``dust`` (0-1) with
+            ``dust_color`` (linear RGB), ``dust_roughness``, ``dust_cavity``
+            (weight of corners/creases, from ambient occlusion within
+            ``ao_distance``) and ``dust_up`` (weight of up-facing faces);
+            ``edge_wear`` (0-1) with ``edge_color``, ``edge_roughness`` and
+            ``edge_width`` (Bevel radius; convex edges only); ``scratches``
+            (0-1 added roughness) with ``scratch_scale``; ``grime_scale`` is
+            the dust/edge noise feature size. Cycles only. ``None`` (default)
+            adds none.
 
     Example:
         material_config = TexturedMaterialConfig(
@@ -1781,6 +1820,9 @@ class TexturedMaterialConfig(BaseConfig):
     displacement: bool = True
     roughness_scale: Any = 1.0
     parameters: dict[str, Any] = dataclasses.field(default_factory=dict)
+    uv_rotation: Any = None
+    uv_offset: Any = None
+    wear: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Validate the settings by building the material they describe.
@@ -1794,6 +1836,7 @@ class TexturedMaterialConfig(BaseConfig):
         if not isinstance(self.parameters, Mapping):
             raise TypeError("parameters: must be a mapping.")
         object.__setattr__(self, "parameters", dict(self.parameters))
+        _check_wear(self)
         self.to_textured_material()
 
     def to_textured_material(self) -> material.TexturedMaterial:
@@ -1806,6 +1849,9 @@ class TexturedMaterialConfig(BaseConfig):
             displacement=self.displacement,
             roughness_scale=self.roughness_scale,
             parameters=self.parameters,
+            uv_rotation=self.uv_rotation,
+            uv_offset=self.uv_offset,
+            wear=self.wear,
         )
 
 
