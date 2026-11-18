@@ -326,10 +326,11 @@ def apply_sensor(
         rng: Random generator.
 
     Returns:
-        The processed image, or the input when the image is skipped.
+        The processed image, or the input when the image is skipped (a
+        linear float image is still exposed, clipped and encoded).
     """
     if rng.random() >= sensor_config.probability:
-        return image
+        return skip_encode(image, sensor_config, rng)
     return apply_sensor_parameters(
         image, sample_sensor_parameters(sensor_config, rng), rng,
         sensor_config.mode, sensor_config.bayer_pattern, sensor_config.demosaic,
@@ -360,6 +361,20 @@ def encode_srgb8(image: np.ndarray) -> np.ndarray:
     return apply_sensor_parameters(image, {})
 
 
+def skip_encode(
+    image: np.ndarray, sensor_config: config.SensorConfig, rng: np.random.Generator
+) -> np.ndarray:
+    """An image the sensor model skips: 8-bit input unchanged; a linear float render still gets an exposure
+    drawn from ``exposure_ev``, sensor clipping and the sRGB curve (its exposure is part of the scene's
+    brightness, not an optional effect), and no other stage."""
+    if not np.issubdtype(image.dtype, np.floating):
+        return image
+    values = {}
+    if sensor_config.exposure_ev is not None:
+        values["exposure_ev"] = float(rng.uniform(*sensor_config.exposure_ev))
+    return apply_sensor_parameters(image, values)
+
+
 class SensorTransform:
     """Callable sensor simulation that records each image's sampled values.
 
@@ -375,7 +390,7 @@ class SensorTransform:
     def __call__(self, image: np.ndarray) -> np.ndarray:
         if self.rng.random() >= self.sensor_config.probability:
             self.last = {}
-            return encode_srgb8(image) if np.issubdtype(image.dtype, np.floating) else image
+            return skip_encode(image, self.sensor_config, self.rng)
         values = sample_sensor_parameters(self.sensor_config, self.rng)
         self.last = {
             k: (v.tolist() if isinstance(v, np.ndarray) else v)
