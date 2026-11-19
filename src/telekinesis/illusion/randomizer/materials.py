@@ -235,6 +235,11 @@ class _TexturedSource:
                 for link in list(socket.links):  # an explicit value replaces the set's map
                     links.remove(link)
                 socket.default_value = value
+            if values["normal_scale"] is not None:
+                for node in nodes:
+                    if node.bl_idname in ("ShaderNodeNormalMap", "ShaderNodeBump"):
+                        socket = node.inputs["Strength"]
+                        socket.default_value = socket.default_value * values["normal_scale"]
             if values["wear"] is not None:
                 apply_wear(blender_material, shader, values["wear"], rng)
             blender_material["illusion_generated_material"] = True

@@ -1806,6 +1806,9 @@ class TexturedMaterialConfig(BaseConfig):
             (0-1 added roughness) with ``scratch_scale``; ``grime_scale`` is
             the dust/edge noise feature size. Cycles only. ``None`` (default)
             adds none.
+        normal_scale: Factor on the set's normal-map strength, fixed or
+            ``[min, max]`` (e.g. 0.2 keeps a fine weave from breaking into
+            specks). ``None`` (default) leaves the set's strength.
 
     Example:
         material_config = TexturedMaterialConfig(
@@ -1823,6 +1826,7 @@ class TexturedMaterialConfig(BaseConfig):
     uv_rotation: Any = None
     uv_offset: Any = None
     wear: dict[str, Any] | None = None
+    normal_scale: Any = None
 
     def __post_init__(self) -> None:
         """Validate the settings by building the material they describe.
@@ -1852,6 +1856,7 @@ class TexturedMaterialConfig(BaseConfig):
             uv_rotation=self.uv_rotation,
             uv_offset=self.uv_offset,
             wear=self.wear,
+            normal_scale=self.normal_scale,
         )
 
 

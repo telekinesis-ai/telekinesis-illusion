@@ -445,6 +445,9 @@ class TexturedMaterial:
     shift in [0, 1) per axis, a ``(u, v)`` pair is fixed and a pair of pairs a
     range. ``wear`` (a MaterialWear or its settings) layers dust, edge wear
     and scratches over the colour and roughness. All three default to off.
+    ``normal_scale`` multiplies the strength of the set's normal map, fixed
+    or a ``(low, high)`` range, e.g. 0.2 to keep a fine weave from breaking
+    into specks; ``None`` (default) leaves the set's strength.
     """
 
     texture: str
@@ -457,6 +460,7 @@ class TexturedMaterial:
     uv_rotation: tuple[float, float] | None
     uv_offset: tuple[tuple[float, ...], tuple[float, ...]] | None
     wear: "MaterialWear | None"
+    normal_scale: tuple[float, float] | None
 
     def __init__(
         self,
@@ -471,6 +475,7 @@ class TexturedMaterial:
         uv_rotation: Scalar | None = None,
         uv_offset: bool | tuple | None = None,
         wear: "MaterialWear | Mapping | None" = None,
+        normal_scale: Scalar | None = None,
     ):
         if not isinstance(texture, str) or not texture.strip():
             raise ValueError("texture must be a non-empty material group name.")
@@ -506,12 +511,16 @@ class TexturedMaterial:
             uv_offset = _range("uv_offset", uv_offset, 2, -math.inf)
         object.__setattr__(self, "uv_offset", uv_offset)
         object.__setattr__(self, "wear", _wear(wear))
+        if normal_scale is not None:
+            nlow, nhigh = _range("normal_scale", normal_scale, 1, 0.0)
+            normal_scale = (nlow[0], nhigh[0])
+        object.__setattr__(self, "normal_scale", normal_scale)
 
     def sample(self, rng=None) -> dict:
         """Draw ``uv_scale``, ``tint`` (None when no tint is set), ``roughness_scale`` and ``parameters``.
 
-        ``uv_rotation`` (radians), ``uv_offset`` and ``wear`` are drawn after
-        them and only when set (None otherwise), so a choice without them
+        ``uv_rotation`` (radians), ``uv_offset``, ``wear`` and
+        ``normal_scale`` are drawn after them and only when set (None otherwise), so a choice without them
         draws exactly what it drew before they existed.
         """
         rng = random if rng is None else rng
@@ -537,6 +546,10 @@ class TexturedMaterial:
             offset = tuple(a if a == b else rng.uniform(a, b) for a, b in zip(lo, hi))
         if self.wear is not None:
             wear = self.wear.sample(rng)
+        normal_scale = None
+        if self.normal_scale is not None:
+            nlow, nhigh = self.normal_scale
+            normal_scale = nlow if nlow == nhigh else rng.uniform(nlow, nhigh)
         return {
             "uv_scale": scale,
             "tint": tint,
@@ -545,4 +558,5 @@ class TexturedMaterial:
             "uv_rotation": rotation,
             "uv_offset": offset,
             "wear": wear,
+            "normal_scale": normal_scale,
         }
