@@ -84,6 +84,17 @@ class Camera:
         self._cam2world_matrix = self.set_camera_pose(
             location=self._location, rotation=self._rotation, frame=0
         )
+        if camera_config.intrinsics is not None:
+            from telekinesis.illusion.blender.camera import settings
+
+            fx, fy, cx, cy = camera_config.intrinsics
+            settings.set_intrinsics_from_K_matrix(
+                [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+                self.image_width,
+                self.image_height,
+                camera_config.clip_start,
+                camera_config.clip_end,
+            )
 
     @property
     def image_width(self) -> int:

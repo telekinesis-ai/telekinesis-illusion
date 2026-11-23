@@ -10,6 +10,7 @@ isolate_user_extensions()
 
 import bpy
 from mathutils import Vector, Matrix
+from scipy import spatial
 
 from telekinesis.illusion.blender.types.mesh_object import MeshObject
 
@@ -43,6 +44,7 @@ class Model:
         shading: str = "FLAT",
         material_preprocessing: str = "replace",
         uv_mapping: str = "smart",
+        collision_max_vertices: int | None = 2000,
     ):
         """
         Initialize the internal parameters.
@@ -87,6 +89,15 @@ class Model:
             uv_mapping: str
                 UV projection used during preprocessing. One of "smart",
                 "cube", "cylinder", or "sphere". Defaults to "smart".
+            collision_max_vertices: int or None
+                Largest number of vertices of the convex hull that a
+                "CONVEX_HULL" model loaded from 'model_path', and its linked
+                duplicates, collide with in physics and in collision-free
+                placement. The hull of the mesh vertices is reduced to this
+                many evenly spread hull vertices and lies inside the exact
+                hull. Fewer vertices simulate faster. 'None' keeps every hull
+                vertex. A mesh without volume, such as a plane, collides with
+                its mesh vertices. Defaults to 2000.
         """
         if material_preprocessing not in ("replace", "preserve"):
             raise ValueError(
@@ -109,6 +120,8 @@ class Model:
         self._instance_number = 0
         self._active_in_simulation = active_in_simulation
         self._collision_shape = collision_shape
+        self._collision_max_vertices = collision_max_vertices
+        self._collision_object: MeshObject | None = None
         self._scale = scale
 
         # If model_path is provided, load the model. Else assign the provided
@@ -133,6 +146,23 @@ class Model:
             scale_matrix = Matrix.Diagonal(obj.scale).to_4x4()
             obj.data.transform(scale_matrix)
             obj.scale = (1.0, 1.0, 1.0)
+
+            # Bullet simulates a CONVEX_HULL body with every point it is given,
+            # so collide with the (capped) hull instead of all mesh vertices.
+            if collision_shape == "CONVEX_HULL" and len(obj.data.vertices):
+                try:
+                    hull_mesh = self._mesh_object.create_convex_hull_mesh(
+                        collision_max_vertices
+                    )
+                except spatial.QhullError:
+                    logger.warning(
+                        f"{self._model_name} has no volume, so it collides "
+                        "with its mesh vertices."
+                    )
+                else:
+                    self._collision_object = self._create_collision_object(
+                        hull_mesh
+                    )
 
             # Clear custom split normals and apply the requested shading
             if self._preprocess_model:
@@ -186,6 +216,43 @@ class Model:
 
     def get_mesh_object(self) -> MeshObject:
         return self._mesh_object
+
+    def get_collision_mesh_object(self) -> MeshObject:
+        """
+        Return the mesh object the model collides with.
+
+        For a "CONVEX_HULL" model this is a hidden mesh object that holds the
+        model's convex hull, reduced to at most collision_max_vertices
+        vertices, and follows the model's pose. Other models collide with
+        their own mesh object.
+        """
+        if self._collision_object is None:
+            return self._mesh_object
+        return self._collision_object
+
+    def _create_collision_object(self, hull_mesh: bpy.types.Mesh) -> MeshObject:
+        """
+        Create the hidden child object that carries the model's collision hull.
+
+        The child follows the model's pose, is never rendered and is hidden in
+        the viewport, so ray casts against the scene do not hit it.
+
+        Args:
+            hull_mesh: bpy.types.Mesh
+                Convex hull in the model's local coordinates. Linked duplicates
+                share it.
+
+        Returns:
+            The child mesh object.
+        """
+        parent = self._mesh_object.blender_obj
+        child = bpy.data.objects.new(f"{self._model_name}_collision", hull_mesh)
+        parent.users_collection[0].objects.link(child)
+        child.parent = parent
+        child.matrix_parent_inverse.identity()
+        child.hide_render = True
+        child.hide_set(True)
+        return MeshObject(child)
 
     def ensure_uv_mapping(self) -> None:
         """Smart-project only meshes without UVs, preserving existing layouts.
@@ -421,10 +488,22 @@ class Model:
         """
         Enable rigid body properties of the model to participate in collision
         checking and physics simulation.
+
+        A "CONVEX_HULL" model collides with its convex hull of at most
+        collision_max_vertices vertices.
         """
+        if self._collision_object is None:
+            self._mesh_object.enable_rigidbody(
+                active=self._active_in_simulation,
+                collision_shape=self._collision_shape,
+            )
+            return
+        # The model's body takes its collision shape from the hull child.
         self._mesh_object.enable_rigidbody(
-            active=self._active_in_simulation,
-            collision_shape=self._collision_shape,
+            active=self._active_in_simulation, collision_shape="COMPOUND"
+        )
+        self._collision_object.enable_rigidbody(
+            active=self._active_in_simulation, collision_shape="CONVEX_HULL"
         )
 
     def disable_rigid_body(self) -> None:
@@ -434,6 +513,11 @@ class Model:
         """
         if self._mesh_object.has_rigidbody_enabled():
             self._mesh_object.disable_rigidbody()
+        if (
+            self._collision_object is not None
+            and self._collision_object.has_rigidbody_enabled()
+        ):
+            self._collision_object.disable_rigidbody()
 
     def get_bound_box(self, local_coords: bool = False) -> np.ndarray:
         """
@@ -523,8 +607,13 @@ class Model:
             scale=self.get_scale(),
             material_preprocessing=self._material_preprocessing,
             uv_mapping=self._uv_mapping,
+            collision_max_vertices=self._collision_max_vertices,
         )
 
+        if self._collision_object is not None:
+            new_model._collision_object = new_model._create_collision_object(
+                self._collision_object.get_mesh()
+            )
         new_model._model_path = self._model_path
         new_model._material_slot_names = self._material_slot_names
         new_model._material_slots_collapsed = (

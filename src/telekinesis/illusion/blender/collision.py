@@ -6,7 +6,7 @@ from typing import Union, Optional, Dict, Tuple, List, Callable
 import mathutils
 from loguru import logger
 import numpy as np
-from mathutils import Vector, Euler, Matrix
+from mathutils import Vector, Matrix
 
 from telekinesis.illusion.blender.types.mesh_object import MeshObject
 
@@ -247,12 +247,11 @@ class CollisionUtility:
         :return: True, if the point is inside the object
         """
         point = Vector(point)
-        # Look for closest point on object
+        # Look for closest point on object. The tree is built in world coordinates
+        # (MeshObject.create_bvh_tree), so the normal is a world normal.
         nearest, normal, _, _ = obj_bvh_tree.find_nearest(point)
         # Compute direction
         p2 = nearest - point
         # Compute dot product between direction and normal vector
-        a = p2.normalized().dot(
-            (Euler(obj.get_rotation_euler()).to_matrix() @ normal).normalized()
-        )
+        a = p2.normalized().dot(normal.normalized())
         return a >= 0.0

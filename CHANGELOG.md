@@ -14,6 +14,30 @@ This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) f
   be used to rerun the generation as-is.
 - `Randomizer.add()` appends a randomizer node, matching `Environment.add()`.
   `add_randomizer()` remains as an alias, so existing code keeps working.
+- `ModelConfig.collision_max_vertices` (default `2000`) and the matching
+  `Model` argument set the largest number of convex-hull vertices that a
+  `CONVEX_HULL` model collides with. `None` keeps every hull vertex.
+- `Model.get_collision_mesh_object()` returns the mesh object a model collides
+  with.
+
+### Changed
+
+- `CONVEX_HULL` models collide with the convex hull of their mesh vertices,
+  reduced to at most `collision_max_vertices` evenly spread hull vertices, in
+  the physics simulation and in collision-free placement. Bullet's cost grows
+  with the number of points of a convex-hull shape, so dense CAD meshes
+  simulate much faster: on a bin-picking scene with 12-24 parts of up to 143k
+  vertices, generation took 12.6 s instead of 31.9 s per scene. The reduced
+  hull lies inside the exact hull (at least 99.95% of its volume in that
+  test), so settled poses match the previous behaviour. A mesh without volume
+  collides with its mesh vertices as before.
+- Adding and removing rigid bodies no longer updates the view layer before and
+  after each operation, which saves about 0.2 s per scene.
+
+### Fixed
+
+- The "completely inside" collision check uses world-space normals, so it is
+  also correct for objects with a parent.
 
 ## 0.3.0 - 2026-10-27
 

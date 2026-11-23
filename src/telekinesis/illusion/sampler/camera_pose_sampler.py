@@ -125,9 +125,81 @@ def volume_sampler(
     volume_center: np.ndarray | None = None,
     inplane_rot_min: float = -60.0,
     inplane_rot_max: float = 60.0,
+    up_hint: tuple[float, float, float] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Sample a camera location in a volume and orient it towards a POI.
+    r"""
+    Sample a camera pose above a point of interest (POI).
+
+    The camera location is drawn uniformly from a box around
+    ``volume_center`` and raised along world Z by a height drawn from
+    ``distance_range``. The camera then looks at the POI and is rolled about
+    its viewing axis by an angle drawn from ``inplane_rot_min`` to
+    ``inplane_rot_max``.
+
+    Side view of one sample::
+
+                C          C: camera, S raised along world Z by a height
+                |\            drawn from distance_range
+                | \
+         height |  \       viewing direction from C to P
+                |   \
+        +-------S----P--+  S: location drawn from the sampling box
+        +---------------+  P: POI
+
+    Any horizontal offset between S and P tilts the camera away from
+    vertical.
+
+    The roll is measured from a reference orientation in which a chosen
+    world direction points up in the image. By default this direction is
+    world Z, which gives a level horizon for cameras that view the scene
+    from the side. For a camera that looks almost straight down, world Z is
+    nearly parallel to the viewing direction. Its projection onto the image
+    is then a short vector that points wherever the camera tilts, so the
+    reference orientation, and with it the image orientation, changes over
+    the full circle from sample to sample, and the in-plane rotation limits
+    have no effect. ``up_hint`` replaces world Z with a direction that stays
+    well defined for top-down cameras::
+
+        up_hint=None                    up_hint along world Y
+        +------------------------+      +------------------------+
+        |          /\            |      |   +----------------+   |
+        |        /    \          |      |   |                |   |
+        |      /  bin   \        |      |   |      bin       |   |
+        |      \        /        |      |   |                |   |
+        |        \    /          |      |   +----------------+   |
+        |          \/            |      |                        |
+        +------------------------+      +------------------------+
+        image orientation varies        bin level, then rolled within
+        with every sample               the in-plane rotation limits
+
+    Args:
+        environment: Environment used to resolve the POI, the sampling box
+            and the default distance from scene models.
+        point_of_interst: Point the camera looks at. None uses the center of
+            the visible models, a list of strings uses the models whose names
+            start with these prefixes, and three numbers are used as world
+            coordinates in meters.
+        volume_size: Size of the sampling box along world X, Y and Z in
+            meters. Every value must be positive. None uses the
+            axis-aligned bounding box of the target models.
+        distance_range: Minimum and maximum height in meters added along
+            world Z to the sampled location. None computes a fixed height at
+            which the target models fill the view.
+        volume_center: Center of the sampling box in world coordinates. None
+            uses the center of the target models' bounding box.
+        inplane_rot_min: Minimum roll about the viewing axis in degrees,
+            measured from the reference orientation.
+        inplane_rot_max: Maximum roll about the viewing axis in degrees,
+            measured from the reference orientation.
+        up_hint: World direction that points up in the image before the
+            in-plane rotation is applied. Use a direction roughly
+            perpendicular to the viewing direction, such as a horizontal
+            axis for top-down cameras. If it is parallel to the viewing
+            direction, world X is used instead. None uses world Z.
+
+    Returns:
+        The camera location in world coordinates and its rotation as XYZ
+        Euler angles in radians.
     """
     if volume_size and not all(dimension > 0 for dimension in volume_size):
         raise ValueError("volume_size must contain only positive values.")
@@ -228,12 +300,40 @@ def volume_sampler(
     inplane_rot = np.deg2rad(
         np.random.uniform(inplane_rot_min, inplane_rot_max)
     )
-    rotation_matrix = camera_settings.rotation_from_forward_vec(
-        forward_vec, inplane_rot=inplane_rot
-    )
+    if up_hint is None:
+        rotation_matrix = camera_settings.rotation_from_forward_vec(
+            forward_vec, inplane_rot=inplane_rot
+        )
+    else:
+        rotation_matrix = _look_at_with_up(forward_vec, up_hint, inplane_rot)
     rotation_euler = Matrix(rotation_matrix.tolist()).to_euler("XYZ")
 
     return location, np.array(rotation_euler)
+
+
+def _look_at_with_up(
+    forward_vec: np.ndarray, up_hint, inplane_rot: float
+) -> np.ndarray:
+    """Camera rotation looking along ``forward_vec`` with image-up near ``up_hint``.
+
+    Blender cameras look along -Z with +Y up. The up hint is projected onto
+    the image plane; when it is parallel to the viewing direction, world X
+    is used instead.
+    """
+    forward = np.asarray(forward_vec, dtype=float)
+    forward /= np.linalg.norm(forward)
+    up = np.asarray(up_hint, dtype=float)
+    up = up - forward * (up @ forward)
+    if np.linalg.norm(up) < 1e-6:
+        up = np.array([1.0, 0.0, 0.0]) - forward * forward[0]
+    up /= np.linalg.norm(up)
+    right = np.cross(forward, up)
+    # Columns are the camera's X (right), Y (up) and Z (backwards) axes.
+    rotation = np.stack([right, up, -forward], axis=1)
+    cos, sin = np.cos(inplane_rot), np.sin(inplane_rot)
+    return rotation @ np.array(
+        [[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]]
+    )
 
 
 def compute_axis_aligned_bbox(

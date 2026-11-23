@@ -7,10 +7,12 @@ from pathlib import Path
 
 import warnings
 import bpy
+import _bpy
 import numpy as np
 import bmesh
 import mathutils
 from mathutils import Vector, Matrix
+from scipy import spatial
 from trimesh import Trimesh
 
 from telekinesis.illusion.blender.types.entity import Entity
@@ -240,9 +242,10 @@ class MeshObject(Entity):
         :param angular_damping: Amount of angular velocity that is lost over time.
         :param linear_damping: Amount of linear velocity that is lost over time.
         """
-        # Enable rigid body component
+        # Enable rigid body component. The operator is called directly: the bpy.ops wrapper updates
+        # the view layer before and after every call, which dominated the rigid body setup per scene.
         with bpy.context.temp_override(object=self.blender_obj):
-            bpy.ops.rigidbody.object_add()
+            _bpy.ops.call("rigidbody.object_add", {})
         # Sett attributes
         rigid_body = self.blender_obj.rigid_body
         rigid_body.type = "ACTIVE" if active else "PASSIVE"
@@ -297,8 +300,9 @@ class MeshObject(Entity):
     def disable_rigidbody(self):
         """Disables the rigidbody element of the object"""
         if self.has_rigidbody_enabled():
+            # Called directly for the same reason as in enable_rigidbody.
             with bpy.context.temp_override(object=self.blender_obj):
-                bpy.ops.rigidbody.object_remove()
+                _bpy.ops.call("rigidbody.object_remove", {})
         else:
             warnings.warn(
                 f"MeshObject {self.get_name()} has no rigid_body component enabled"
@@ -415,16 +419,65 @@ class MeshObject(Entity):
         bpy.ops.object.mode_set(mode="OBJECT")
 
     def create_bvh_tree(self) -> mathutils.bvhtree.BVHTree:
-        """Builds a bvh tree based on the object's mesh.
+        """Builds a bvh tree based on the object's mesh in world coordinates.
+
+        Positions and face normals returned by the tree are in world coordinates.
 
         :return: The new bvh tree
         """
         bm = bmesh.new()
         bm.from_mesh(self.get_mesh())
         bm.transform(Matrix(self.get_local2world_mat()))
+        # bm.transform moves the vertices but keeps the local face normals.
+        bm.normal_update()
         bvh_tree = mathutils.bvhtree.BVHTree.FromBMesh(bm)
         bm.free()
         return bvh_tree
+
+    def create_convex_hull_mesh(
+        self, max_vertices: Optional[int] = None
+    ) -> bpy.types.Mesh:
+        """Creates a new mesh holding the convex hull of the object's mesh vertices.
+
+        The hull is in the mesh's local coordinates and its faces point outward. If the hull has more
+        than `max_vertices` vertices, that many hull vertices are chosen by farthest-point sampling and
+        the hull of this selection is returned. It lies inside the exact hull.
+
+        :param max_vertices: Largest number of vertices of the returned hull. None keeps every hull
+                             vertex.
+        :return: The new mesh, named after the object's mesh with the suffix "_collision".
+        :raises scipy.spatial.QhullError: If the vertices do not span a volume, e.g. for a flat mesh.
+        """
+        mesh = self.get_mesh()
+        vertices = np.empty(len(mesh.vertices) * 3)
+        mesh.vertices.foreach_get("co", vertices)
+        hull = spatial.ConvexHull(vertices.reshape(-1, 3))
+        if max_vertices is not None and len(hull.vertices) > max_vertices:
+            # Farthest-point sampling keeps the selected hull vertices evenly spread over the hull.
+            points = hull.points[hull.vertices]
+            chosen = [0]
+            distance = np.linalg.norm(points - points[0], axis=1)
+            for _ in range(max_vertices - 1):
+                index = int(np.argmax(distance))
+                chosen.append(index)
+                distance = np.minimum(
+                    distance, np.linalg.norm(points - points[index], axis=1)
+                )
+            hull = spatial.ConvexHull(points[chosen])
+        used, faces = np.unique(hull.simplices, return_inverse=True)
+        faces = faces.reshape(-1, 3)
+        points = hull.points[used]
+        # Qhull does not orient its facets; flip those whose normal points inward.
+        normals = np.cross(
+            points[faces[:, 1]] - points[faces[:, 0]],
+            points[faces[:, 2]] - points[faces[:, 0]],
+        )
+        inward = np.einsum("ij,ij->i", normals, hull.equations[:, :3]) < 0
+        faces[inward] = faces[inward][:, ::-1]
+        hull_mesh = bpy.data.meshes.new(f"{mesh.name}_collision")
+        hull_mesh.from_pydata(points.tolist(), [], faces.tolist())
+        hull_mesh.update()
+        return hull_mesh
 
     def position_is_above_object(
         self,

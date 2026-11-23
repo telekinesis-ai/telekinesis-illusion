@@ -698,13 +698,18 @@ class BinPickingWorker:
             scale_matrix = Matrix.Diagonal((factor, factor, factor)).to_4x4()
             transformed = set()
             for model in group:
-                mesh = model.get_mesh_object().blender_obj.data
-                # Linked duplicates share this datablock - transform once, but
+                # Linked duplicates share these datablocks - transform once, but
                 # update every Model's bookkeeping so the next call computes
-                # its factor from a fresh baseline.
-                if mesh.name not in transformed:
-                    mesh.transform(scale_matrix)
-                    transformed.add(mesh.name)
+                # its factor from a fresh baseline. A CONVEX_HULL model's
+                # collision hull is scaled with its mesh.
+                for mesh_object in (
+                    model.get_mesh_object(),
+                    model.get_collision_mesh_object(),
+                ):
+                    mesh = mesh_object.get_mesh()
+                    if mesh.name not in transformed:
+                        mesh.transform(scale_matrix)
+                        transformed.add(mesh.name)
                 model.set_scale(new_scale)
             logger.info(
                 f"Re-scaled '{name}' by {factor} to {new_scale} "

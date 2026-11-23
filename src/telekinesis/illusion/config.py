@@ -724,6 +724,12 @@ class ModelConfig(AssetConfig):
         groups: Selection groups, independent of annotation categories. A
             string or sequence is stored as a tuple including slash-separated
             ancestors.
+        collision_max_vertices: Largest number of vertices of the convex hull
+            that a ``"CONVEX_HULL"`` model collides with, in physics and in
+            collision-free placement. The hull of the mesh vertices is reduced
+            to this many evenly spread hull vertices; the reduced hull lies
+            inside the exact hull. Fewer vertices simulate faster. ``None``
+            keeps every hull vertex. Ignored for other collision shapes.
 
     Example:
         model = ModelConfig(
@@ -743,6 +749,7 @@ class ModelConfig(AssetConfig):
     material_preprocessing: str = "replace"
     uv_mapping: str = "smart"
     groups: str | Sequence[str] = ()
+    collision_max_vertices: int | None = 2000
 
     def __post_init__(self) -> None:
         """Validate the model settings and normalize scale and groups.
@@ -774,6 +781,9 @@ class ModelConfig(AssetConfig):
         if self.category_id is not None:
             _check_int("category_id", self.category_id, 0)
         _check_choice("collision_shape", self.collision_shape, COLLISION_SHAPES)
+        if self.collision_max_vertices is not None:
+            # A convex hull needs at least four points.
+            _check_int("collision_max_vertices", self.collision_max_vertices, 4)
         _check_choice("shading", self.shading, SHADING_MODES)
         _check_choice(
             "material_preprocessing",
@@ -831,6 +841,7 @@ class ModelConfig(AssetConfig):
         uv_mapping: str = "smart",
         *,
         groups: str | Sequence[str] = (),
+        collision_max_vertices: int | None = 2000,
     ) -> Self:
         """Create the config of one existing local model file.
 
@@ -856,6 +867,7 @@ class ModelConfig(AssetConfig):
             material_preprocessing,
             uv_mapping,
             groups,
+            collision_max_vertices,
         )
 
     @classmethod
@@ -1051,6 +1063,9 @@ class CameraConfig(BaseConfig):
             pose.
         rotation: Initial XYZ Euler rotation in degrees. ``None`` uses a
             default pose.
+        intrinsics: Calibrated pinhole intrinsics ``[fx, fy, cx, cy]`` in
+            pixels for image_width x image_height. Overrides focal_length,
+            field_of_view, pixel aspect and shift.
 
     Example:
         camera_config = CameraConfig(image_width=640, image_height=480)
@@ -1068,6 +1083,7 @@ class CameraConfig(BaseConfig):
     shift_y: float | None = 0.0
     location: tuple[float, float, float] | None = None
     rotation: tuple[float, float, float] | None = None
+    intrinsics: tuple[float, float, float, float] | None = None
 
     def __post_init__(self) -> None:
         """Validate the camera settings.
@@ -1120,6 +1136,21 @@ class CameraConfig(BaseConfig):
                     name,
                     tuple(as_vector3(getattr(self, name), name).tolist()),
                 )
+        if self.intrinsics is not None:
+            values = self.intrinsics
+            if (
+                isinstance(values, (str, bytes))
+                or not isinstance(values, Sequence)
+                or len(values) != 4
+            ):
+                raise ValueError(
+                    f"intrinsics: must be [fx, fy, cx, cy], got {values!r}."
+                )
+            for value in values:
+                _check_number("intrinsics", value, 0.0, exclusive_minimum=True)
+            object.__setattr__(
+                self, "intrinsics", tuple(float(v) for v in values)
+            )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1835,6 +1866,10 @@ class VolumeSamplerConfig(BaseConfig):
         volume_center: Center of the box in meters.
         inplane_rot_min: Smallest rotation about the viewing axis in degrees.
         inplane_rot_max: Largest rotation about the viewing axis in degrees.
+        up_hint: World direction that points up in the image before the
+            in-plane rotation, such as ``[0, 1, 0]``. Keeps the yaw of
+            top-down views well defined. ``None`` derives the yaw from the
+            viewing direction alone, which is arbitrary for top-down views.
 
     Example:
         volume_config = VolumeSamplerConfig(distance_range=(0.5, 1.0))
@@ -1846,6 +1881,7 @@ class VolumeSamplerConfig(BaseConfig):
     volume_center: tuple[float, float, float] | None = None
     inplane_rot_min: float = -60.0
     inplane_rot_max: float = 60.0
+    up_hint: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
         """Validate the volume parameters.
@@ -1882,6 +1918,12 @@ class VolumeSamplerConfig(BaseConfig):
         _check_ordered(
             "inplane_rot", self.inplane_rot_min, self.inplane_rot_max
         )
+        if self.up_hint is not None:
+            up = as_vector3(self.up_hint, "up_hint")
+            if not np.linalg.norm(up) > 0:
+                raise ValueError("up_hint: must not be the zero vector.")
+            object.__setattr__(self, "up_hint", tuple(up.tolist()))
+
 
 
 POSE_SAMPLER_CONFIGS = {

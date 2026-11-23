@@ -272,10 +272,10 @@ class ModelPoseRandomizer(RandomizerNode):
             set(models_to_check_collisions) - set(models_to_sample)
         )
 
-        # Collision checks require mesh wrappers.
+        # Collision checks use each model's collision mesh.
         if current_models_to_check_collisions:
             current_models_to_check_collisions = [
-                model.get_mesh_object()
+                model.get_collision_mesh_object()
                 for model in current_models_to_check_collisions
             ]
 
@@ -312,14 +312,17 @@ class ModelPoseRandomizer(RandomizerNode):
                 # Put the next model at the sampled point in space.
                 sample_pose_func(model)
 
-                # Remove the BVH cache because the model moved.
-                if model.get_name() in bvh_cache:
-                    del bvh_cache[model.get_name()]
+                collision_obj = model.get_collision_mesh_object()
 
-                mesh_obj = model.get_mesh_object()
+                # Remove the BVH cache because the model moved.
+                if collision_obj.get_name() in bvh_cache:
+                    del bvh_cache[collision_obj.get_name()]
 
                 no_collision = CollisionUtility.check_intersections(
-                    mesh_obj, bvh_cache, current_models_to_check_collisions, []
+                    collision_obj,
+                    bvh_cache,
+                    current_models_to_check_collisions,
+                    [],
                 )
 
                 # If no collision then keep the position
@@ -329,7 +332,7 @@ class ModelPoseRandomizer(RandomizerNode):
 
             # After placing a model, check collisions with it.
             if no_collision:
-                current_models_to_check_collisions.append(mesh_obj)
+                current_models_to_check_collisions.append(collision_obj)
 
             if no_collision:
                 logger.info(
@@ -423,6 +426,8 @@ class ModelPoseRandomizer(RandomizerNode):
         bvh_cache: Dict[str, mathutils.bvhtree.BVHTree] = {}
 
         placed_models: List[MeshObject] = []
+        # Collision meshes of placed_models, used for the intersection checks.
+        placed_collision_objects: List[MeshObject] = []
 
         for model in models_to_sample:
             logger.info(f"Trying to put {model.get_name()}")
@@ -431,15 +436,16 @@ class ModelPoseRandomizer(RandomizerNode):
 
             for i in range(max_tries):
                 sample_pose_func(model)
-                # Remove bvh cache, as model has changed
-                if model.get_name() in bvh_cache:
-                    del bvh_cache[model.get_name()]
-
                 mesh_obj = model.get_mesh_object()
+                collision_obj = model.get_collision_mesh_object()
                 surface_obj = surface_model.get_mesh_object()
 
+                # Remove bvh cache, as model has changed
+                if collision_obj.get_name() in bvh_cache:
+                    del bvh_cache[collision_obj.get_name()]
+
                 no_collision = CollisionUtility.check_intersections(
-                    mesh_obj, bvh_cache, placed_models, []
+                    collision_obj, bvh_cache, placed_collision_objects, []
                 )
 
                 if not no_collision:
@@ -447,8 +453,8 @@ class ModelPoseRandomizer(RandomizerNode):
                     continue
 
                 # Remove bvh cache, as model has changed
-                if model.get_name() in bvh_cache:
-                    del bvh_cache[model.get_name()]
+                if collision_obj.get_name() in bvh_cache:
+                    del bvh_cache[collision_obj.get_name()]
 
                 # Select the current object
                 bpy.ops.object.select_all(action="DESELECT")
@@ -522,7 +528,7 @@ class ModelPoseRandomizer(RandomizerNode):
                     continue
 
                 no_collision = CollisionUtility.check_intersections(
-                    mesh_obj, bvh_cache, placed_models, []
+                    collision_obj, bvh_cache, placed_collision_objects, []
                 )
 
                 if not no_collision:
@@ -530,6 +536,7 @@ class ModelPoseRandomizer(RandomizerNode):
                     continue
 
                 placed_models.append(mesh_obj)
+                placed_collision_objects.append(collision_obj)
                 placed_successfully = True
                 break
 
