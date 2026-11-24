@@ -28,6 +28,7 @@ Attributes:
     POSE_SAMPLING_STRATEGIES: Strategies for placing parts in a container.
     RENDER_DEVICES: Render devices. GPU devices fall back to the CPU when they
         are unavailable.
+    VIEW_TRANSFORMS: Colour management view transforms of Blender 4.x.
     IMAGE_FORMATS: File formats of written color images.
     DATASET_FORMATS: Formats a merged dataset can be exported to.
     POSE_SAMPLER_CONFIGS: Camera and light pose sampler names mapped to the
@@ -79,6 +80,9 @@ MATERIAL_PREPROCESSING_MODES = frozenset({"replace", "preserve"})
 MATERIAL_MODES = frozenset({"active", "model", "slots"})
 POSE_SAMPLING_STRATEGIES = frozenset({"random", "grid"})
 RENDER_DEVICES = frozenset({"CPU", "CUDA", "OPTIX", "HIP", "METAL"})
+VIEW_TRANSFORMS = frozenset(
+    {"Standard", "Filmic", "AgX", "Khronos PBR Neutral", "Raw"}
+)
 IMAGE_FORMATS = frozenset({"JPEG", "PNG"})
 DATASET_FORMATS = frozenset({"coco", "yolo"})
 
@@ -1224,6 +1228,34 @@ class RenderConfig(BaseConfig):
         verbose: Whether to print the Blender render output.
         depth: Whether to render a depth pass.
         normals: Whether to render a surface normal pass.
+        view_transform: Colour management view transform, one of
+            :data:`VIEW_TRANSFORMS`. ``None`` keeps the default (Filmic).
+            ``Standard`` clips highlights like most camera sensors.
+        look: Colour management look, such as ``"Medium High Contrast"``.
+            ``None`` keeps the default.
+        exposure: ``[min, max]`` exposure in stops, sampled per render.
+            ``None`` keeps the default of 0.
+        background_strength: ``[min, max]`` HDRI strength, sampled per
+            render. ``None`` keeps 1.0.
+        background_rotation: ``[min, max]`` HDRI rotation about Z in
+            degrees, sampled per render. ``None`` keeps 0.
+        bevel_radius: ``[min, max]`` render-time edge rounding in meters,
+            sampled per render. Real parts have small fillets that catch a
+            highlight line; CAD edges are perfectly sharp. ``None`` disables.
+        bevel_models: Model-name prefixes whose materials get the bevel.
+            ``None`` bevels every material; the Bevel node traces extra
+            rays, so limiting it to small parts keeps rendering fast.
+        denoiser: ``"OPENIMAGEDENOISE"`` (default), ``"OPTIX"``, or ``None``
+            for no denoising. A denoiser smooths fine texture (weave, grain)
+            into a waxy look; without one, raise ``samples`` and let the
+            sensor model's noise stand in for the camera's.
+        color_output: ``"display"`` (default) renders through the view
+            transform to an 8-bit image. ``"linear"`` writes scene-linear
+            32-bit EXR radiance and leaves exposure, sensor clipping and the
+            tone curve to the sensor model (``SensorConfig.exposure_ev``), so
+            highlights clip where a sensor would and shadows keep their
+            precision; ``view_transform``, ``look`` and ``exposure`` then do
+            not affect the colour image.
 
     Example:
         render_config = RenderConfig(device="CPU", samples=16)
@@ -1236,6 +1268,15 @@ class RenderConfig(BaseConfig):
     verbose: bool = False
     depth: bool = False
     normals: bool = False
+    view_transform: str | None = None
+    look: str | None = None
+    exposure: tuple[float, float] | None = None
+    background_strength: tuple[float, float] | None = None
+    background_rotation: tuple[float, float] | None = None
+    bevel_radius: tuple[float, float] | None = None
+    bevel_models: tuple[str, ...] | None = None
+    denoiser: str | None = "OPENIMAGEDENOISE"
+    color_output: str = "display"
 
     def __post_init__(self) -> None:
         """Validate the render settings.
@@ -1244,6 +1285,32 @@ class RenderConfig(BaseConfig):
             ValueError: If a setting is invalid.
         """
         _check_choice("device", self.device, RENDER_DEVICES)
+        _check_choice("color_output", self.color_output, ("display", "linear"))
+        if self.denoiser is not None:
+            _check_choice("denoiser", self.denoiser, ("OPENIMAGEDENOISE", "OPTIX"))
+        if self.view_transform is not None:
+            _check_choice(
+                "view_transform", self.view_transform, VIEW_TRANSFORMS
+            )
+        if self.bevel_models is not None:
+            object.__setattr__(
+                self, "bevel_models", _as_names("bevel_models", self.bevel_models)
+            )
+        if self.look is not None and (
+            not isinstance(self.look, str) or not self.look.strip()
+        ):
+            raise ValueError(f"look: must be a look name, got {self.look!r}.")
+        for name, minimum in (
+            ("exposure", -10.0),
+            ("background_strength", 0.0),
+            ("background_rotation", -360.0),
+            ("bevel_radius", 0.0),
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(
+                    self, name, _as_interval(name, value, minimum)
+                )
         if self.samples is not None:
             _check_int("samples", self.samples, 1)
         if self.noise_threshold is not None:
@@ -1254,6 +1321,157 @@ class RenderConfig(BaseConfig):
                 exclusive_minimum=True,
             )
         _check_int("max_retries", self.max_retries, 0)
+
+
+@dataclasses.dataclass(frozen=True)
+class SensorConfig(BaseConfig):
+    """Camera sensor and ISP effects applied to every rendered image.
+
+    Each effect is a ``[min, max]`` range sampled independently per image,
+    or ``None`` to disable it. The effects run in camera order; see
+    :mod:`telekinesis.illusion.sensor`. Values are in display-referred
+    8-bit space unless noted.
+
+    Attributes:
+        probability: Chance that an image is processed at all.
+        white_balance: Per-channel gain range; gains are normalised to a
+            mean of 1, so only the tint changes.
+        gain: Brightness multiplier.
+        blur_sigma: Gaussian optical blur in pixels.
+        motion_blur: Length in pixels of a straight motion-blur streak over
+            the whole image (a camera moving during the exposure), in a
+            direction drawn per image. Lengths under 1 leave the image.
+        contrast: Contrast around mid-grey (1 keeps the image).
+        gamma: Tone gamma (>1 brightens mid-tones).
+        saturation: Colour saturation multiplier.
+        vignetting: Corner darkening fraction.
+        shot_noise: Signal-dependent noise variance per intensity level.
+        read_noise: Signal-independent noise sigma in 8-bit levels.
+        chroma_noise: Fraction of noise that differs between channels
+            (0 is luminance-only noise).
+        sharpen_amount: In-camera unsharp-mask amount.
+        sharpen_sigma: Unsharp-mask radius in pixels.
+        jpeg_quality: In-camera JPEG quality range, as integers.
+        mode: ``"display"`` (default) applies every effect to the
+            display-referred 8-bit image. ``"raw"`` runs a camera pipeline:
+            undo the sRGB curve to approximate linear light, optical and
+            motion blur, a Bayer mosaic, shot and read noise on the mosaic in
+            linear 8-bit units, demosaicing, in-camera denoising, white
+            balance and gain, the sRGB curve with gamma, contrast and
+            saturation, vignetting, then sharpening. Noise then grows with
+            brightness in linear light, is coloured by the demosaic and
+            softened by the ISP, as in a real camera; ``chroma_noise`` is
+            ignored.
+        bayer_pattern: Colour-filter layout for ``"raw"``: ``"RGGB"``,
+            ``"BGGR"``, ``"GRBG"`` or ``"GBRG"``.
+        demosaic: Demosaicing for ``"raw"``: ``"bilinear"``, ``"vng"``
+            (gradient-based) or ``"ea"`` (edge-aware).
+        isp_denoise: In-camera denoising strength for ``"raw"``, the
+            ``h`` of OpenCV's non-local means in 8-bit levels (0 = off).
+        noise_blur: Size (Gaussian sigma, px) of the blotchy part of the
+            noise. Real camera noise is spatially correlated by the ISP; see
+            :func:`telekinesis.illusion.sensor.noise_field`.
+        noise_blur_mix: Share of the noise variance that is blotchy
+            (0 = independent per pixel, the old behaviour).
+        exposure_ev: Exposure in stops applied to linear renders
+            (``RenderConfig.color_output="linear"``) before white balance,
+            gain, sensor clipping at 1.0 and the sRGB tone curve. Ignored for
+            8-bit renders.
+
+    Example:
+        sensor_config = SensorConfig(read_noise=(1.0, 3.0))
+    """
+
+    RANGE_FIELDS = (
+        "gain",
+        "blur_sigma",
+        "motion_blur",
+        "contrast",
+        "gamma",
+        "saturation",
+        "vignetting",
+        "shot_noise",
+        "read_noise",
+        "chroma_noise",
+        "sharpen_amount",
+        "sharpen_sigma",
+        "isp_denoise",
+        "noise_blur",
+        "noise_blur_mix",
+        "exposure_ev",
+    )
+    _RANGE_LIMITS = {
+        "gain": (0.0, 10.0),
+        "blur_sigma": (0.0, 20.0),
+        "motion_blur": (0.0, 200.0),
+        "contrast": (0.0, 5.0),
+        "gamma": (0.05, 10.0),
+        "saturation": (0.0, 5.0),
+        "vignetting": (0.0, 1.0),
+        "shot_noise": (0.0, 100.0),
+        "read_noise": (0.0, 100.0),
+        "chroma_noise": (0.0, 1.0),
+        "sharpen_amount": (0.0, 10.0),
+        "sharpen_sigma": (0.1, 20.0),
+        "isp_denoise": (0.0, 50.0),
+        "noise_blur": (0.0, 20.0),
+        "noise_blur_mix": (0.0, 1.0),
+        "exposure_ev": (-20.0, 20.0),
+    }
+    SENSOR_MODES = ("display", "raw")
+    BAYER_PATTERNS = ("RGGB", "BGGR", "GRBG", "GBRG")
+    DEMOSAIC_METHODS = ("bilinear", "vng", "ea")
+
+    probability: float = 1.0
+    white_balance: tuple[float, float] | None = None
+    gain: tuple[float, float] | None = None
+    blur_sigma: tuple[float, float] | None = None
+    motion_blur: tuple[float, float] | None = None
+    contrast: tuple[float, float] | None = None
+    gamma: tuple[float, float] | None = None
+    saturation: tuple[float, float] | None = None
+    vignetting: tuple[float, float] | None = None
+    shot_noise: tuple[float, float] | None = None
+    read_noise: tuple[float, float] | None = None
+    chroma_noise: tuple[float, float] | None = None
+    sharpen_amount: tuple[float, float] | None = None
+    sharpen_sigma: tuple[float, float] | None = None
+    jpeg_quality: tuple[int, int] | None = None
+    mode: str = "display"
+    bayer_pattern: str = "RGGB"
+    demosaic: str = "ea"
+    isp_denoise: tuple[float, float] | None = None
+    noise_blur: tuple[float, float] | None = None
+    noise_blur_mix: tuple[float, float] | None = None
+    exposure_ev: tuple[float, float] | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the effect ranges.
+
+        Raises:
+            ValueError: If a range is invalid.
+        """
+        _check_number("probability", self.probability, 0.0, 1.0)
+        _check_choice("mode", self.mode, self.SENSOR_MODES)
+        _check_choice("bayer_pattern", self.bayer_pattern, self.BAYER_PATTERNS)
+        _check_choice("demosaic", self.demosaic, self.DEMOSAIC_METHODS)
+        for name, (minimum, maximum) in self._RANGE_LIMITS.items():
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(
+                    self, name, _as_interval(name, value, minimum, maximum)
+                )
+        if self.white_balance is not None:
+            object.__setattr__(
+                self,
+                "white_balance",
+                _as_interval("white_balance", self.white_balance, 0.1, 10.0),
+            )
+        if self.jpeg_quality is not None:
+            low, high = _as_interval(
+                "jpeg_quality", self.jpeg_quality, 1, 100
+            )
+            object.__setattr__(self, "jpeg_quality", (int(low), int(high)))
 
 
 @dataclasses.dataclass(frozen=True)

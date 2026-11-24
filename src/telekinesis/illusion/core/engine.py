@@ -1,11 +1,12 @@
 """Simulation and capture using the local bpy algorithms."""
-
+import math
 import random
 from loguru import logger
 from telekinesis.illusion import config
 from telekinesis.illusion.blender import physics
 from telekinesis.illusion.blender.rendering import renderer
 from telekinesis.illusion.types.render_result import RenderResult
+from telekinesis.illusion.blender.camera.settings import get_intrinsics_as_K_matrix
 import bpy
 
 
@@ -52,11 +53,92 @@ class BlenderEngine:
             renderer.set_max_amount_of_samples(render_config.samples)
         if render_config.noise_threshold is not None:
             renderer.set_noise_threshold(render_config.noise_threshold)
+        if render_config.denoiser != "OPENIMAGEDENOISE":  # the initialisation default
+            renderer.set_denoiser(render_config.denoiser)
         if render_config.depth:
             renderer.enable_depth_output(activate_antialiasing=False)
         if render_config.normals:
             renderer.enable_normals_output()
+        renderer.set_output_format(
+            view_transform=render_config.view_transform,
+            look=render_config.look,
+        )
+        if render_config.color_output == "linear":
+            # Scene-linear float radiance; the sensor model applies exposure, clipping and the tone curve.
+            renderer.set_output_format(file_format="OPEN_EXR", color_depth=32)
         self._prepared = True
+
+    def randomize_look(self) -> None:
+        """Sample per-render exposure, HDRI strength/rotation and bevel."""
+        render_config = self.render_config
+        if render_config.bevel_radius is not None:
+            self._apply_bevel(
+                random.uniform(*render_config.bevel_radius),
+                render_config.bevel_models,
+            )
+        if render_config.exposure is not None:
+            renderer.set_output_format(
+                exposure=random.uniform(*render_config.exposure)
+            )
+        world = bpy.context.scene.world
+        if world is None or not world.use_nodes:
+            return
+        for node in world.node_tree.nodes:
+            if (
+                node.type == "BACKGROUND"
+                and render_config.background_strength is not None
+            ):
+                node.inputs["Strength"].default_value = random.uniform(
+                    *render_config.background_strength
+                )
+            elif (
+                node.type == "MAPPING"
+                and render_config.background_rotation is not None
+            ):
+                node.inputs["Rotation"].default_value[2] = math.radians(
+                    random.uniform(*render_config.background_rotation)
+                )
+
+    @staticmethod
+    def _apply_bevel(radius: float, model_prefixes=None) -> None:
+        """Round shading edges of Principled materials by ``radius``.
+
+        A Bevel node feeds the BSDF normal; when a Bump node already drives
+        the normal (surface imperfections), the bevel feeds the bump instead.
+        With ``model_prefixes``, only materials on matching objects are
+        bevelled (the node is costly: it traces extra rays per sample).
+        """
+        if model_prefixes is None:
+            materials = list(bpy.data.materials)
+        else:
+            materials = {
+                slot.material
+                for obj in bpy.context.scene.objects
+                if obj.type == "MESH" and obj.name.startswith(tuple(model_prefixes))
+                for slot in obj.material_slots
+                if slot.material is not None
+            }
+        for material in materials:
+            if not material.use_nodes:
+                continue
+            tree = material.node_tree
+            shaders = [n for n in tree.nodes if n.type == "BSDF_PRINCIPLED"]
+            if not shaders:
+                continue
+            bevel = tree.nodes.get("illusion_bevel")
+            if bevel is None:
+                bevel = tree.nodes.new("ShaderNodeBevel")
+                bevel.name = "illusion_bevel"
+                bevel.samples = 4
+                for shader in shaders:
+                    normal = shader.inputs["Normal"]
+                    if normal.is_linked:
+                        source = normal.links[0].from_node
+                        if source.type == "BUMP" and not source.inputs["Normal"].is_linked:
+                            tree.links.new(bevel.outputs["Normal"], source.inputs["Normal"])
+                    else:
+                        tree.links.new(bevel.outputs["Normal"], normal)
+            bevel.inputs["Radius"].default_value = radius
 
     def simulate(
         self, scene, physics_config: config.PhysicsConfig | None = None
@@ -120,12 +202,14 @@ class BlenderEngine:
                             list(row) for row in camera.matrix_world
                         ],
                         "camera_lens_mm": camera.data.lens,
+                        "camera_K": get_intrinsics_as_K_matrix().tolist(),
                     }
                 )
             if not captures:
                 raise ValueError(
                     "Configure at least one camera pose before rendering."
                 )
+            self.randomize_look()
             for attempt in range(self.render_config.max_retries + 1):
                 try:
                     data = renderer.render(verbose=self.render_config.verbose)

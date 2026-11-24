@@ -1112,3 +1112,39 @@ class CameraPoseRandomizer(RandomizerNode):
             camera.set_camera_pose(
                 location=location, rotation=rotation_matrix, frame=frame
             )
+
+
+class CameraMountRandomizer(RandomizerNode):
+    """Attach visible props to the camera, like hardware on a wrist camera.
+
+    Each mounted model's import transform is read as an offset in camera
+    space (Blender cameras look along -Z with +Y up), so the prop stays at
+    the same place in every view, e.g. a gripper at the bottom of the image.
+    Mounted props are excluded from physics.
+    """
+
+    def __init__(self, model_names: Sequence[str]) -> None:
+        """
+        Args:
+            model_names: Names of the models to mount on the camera.
+        """
+        self._model_names = tuple(model_names)
+        self._offsets: dict[str, mathutils.Matrix] = {}
+
+    def randomize(self, environment: Environment) -> None:
+        camera = bpy.context.scene.camera
+        if camera is None:
+            raise RuntimeError("No camera to mount models on.")
+        models = environment.get_models()
+        for instance_name in environment.get_visible_model_names():
+            if not instance_name.startswith(self._model_names):
+                continue
+            model = models[instance_name]
+            blender_obj = model.get_mesh_object().blender_obj
+            offset = self._offsets.setdefault(
+                blender_obj.name, blender_obj.matrix_basis.copy()
+            )
+            model.disable_rigid_body()
+            blender_obj.parent = camera
+            blender_obj.matrix_parent_inverse = mathutils.Matrix.Identity(4)
+            blender_obj.matrix_basis = offset

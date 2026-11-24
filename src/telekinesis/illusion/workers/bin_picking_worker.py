@@ -12,7 +12,7 @@ from typing import Any, Callable
 from uuid import uuid4
 import yaml
 
-from telekinesis.illusion import config
+from telekinesis.illusion import config, sensor
 from telekinesis.illusion.utils.blender_env import isolate_user_extensions
 
 # Must run before bpy is imported. See blender_env.py for why.
@@ -40,6 +40,7 @@ from telekinesis.illusion.randomizer.randomizer_node import (
     BackgroundRandomizer,
     MaterialRandomizer,
     CameraPoseRandomizer,
+    CameraMountRandomizer,
     LightRandomizer,
     LightPoseRandomizer,
     NodeConfig,
@@ -198,6 +199,10 @@ class BinPickingWorker:
             supercategory_map=supercategory_map,
             color_file_format=self._dataset_config.writer.image_format,
             jpg_quality=self._dataset_config.writer.jpg_quality,
+            color_transform=sensor.make_color_transform(
+                self._sensor_config,
+                linear=self._render_config.color_output == "linear",
+            ),
         )
 
         # TODO: For RGB-D datasets, enable RenderConfig.depth and reuse
@@ -240,6 +245,7 @@ class BinPickingWorker:
             "lights",
             "pose_sampling",
             "randomizers",
+            "sensor",
         }
         if not isinstance(raw_config, Mapping):
             raise TypeError("The configuration must be a mapping of sections.")
@@ -275,6 +281,13 @@ class BinPickingWorker:
             "pose_sampling",
             config.PoseSamplingConfig,
             raw_config.get("pose_sampling", {}),
+        )
+        sensor_config = (
+            config.build_config(
+                "sensor", config.SensorConfig, raw_config["sensor"]
+            )
+            if raw_config.get("sensor") is not None
+            else None
         )
         if (
             not isinstance(raw_config["models"], list)
@@ -489,6 +502,8 @@ class BinPickingWorker:
         self._light_randomizer_configs = light_randomizer_configs
         self._light_pose_configs = light_pose_configs
         self._camera_pose_config = camera_pose_config
+        self._sensor_config = sensor_config
+
 
     def get_output_base_directory(self) -> Path:
         """
