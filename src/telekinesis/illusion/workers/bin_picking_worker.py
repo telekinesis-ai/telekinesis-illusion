@@ -203,6 +203,8 @@ class BinPickingWorker:
                 self._sensor_config,
                 linear=self._render_config.color_output == "linear",
             ),
+            metadata_provider=self._scene_provenance,
+            include_camera_metadata=True,
         )
 
         # TODO: For RGB-D datasets, enable RenderConfig.depth and reuse
@@ -978,6 +980,57 @@ class BinPickingWorker:
             )
         )
         return nodes
+
+    def _scene_provenance(self) -> dict:
+        """Sampled scene parameters of the current sample, for each image."""
+        scene = bpy.context.scene
+        provenance: dict[str, Any] = {
+            "view_transform": scene.view_settings.view_transform,
+            "exposure": float(scene.view_settings.exposure),
+        }
+        world = scene.world
+        if world is not None and world.use_nodes:
+            for node in world.node_tree.nodes:
+                if node.type == "BACKGROUND":
+                    provenance["background_strength"] = float(
+                        node.inputs["Strength"].default_value
+                    )
+                elif node.type == "TEX_ENVIRONMENT" and node.image is not None:
+                    provenance["background"] = node.image.name
+                elif node.type == "MAPPING":
+                    provenance["background_rotation_z"] = float(
+                        node.inputs["Rotation"].default_value[2]
+                    )
+        provenance["lights"] = [
+            {
+                "name": obj.name,
+                "type": obj.data.type,
+                "power": float(obj.data.energy),
+                "color": [float(c) for c in obj.data.color],
+                "location": [float(v) for v in obj.matrix_world.translation],
+            }
+            for obj in scene.objects
+            if obj.type == "LIGHT"
+        ]
+        visible = self._environment.get_visible_model_names()
+        models = self._environment.get_models()
+        by_role: dict[str, list] = {}
+        materials: dict[str, list] = {}
+        for name in visible:
+            base = name.split("_INSTANCE_")[0]
+            role = next(
+                (r for r, names in self._model_names_by_role.items() if base in names),
+                "unknown",
+            )
+            by_role.setdefault(role, []).append(base)
+            blender_obj = models[name].get_mesh_object().blender_obj
+            materials[name] = [
+                slot.material.name if slot.material else None
+                for slot in blender_obj.material_slots
+            ]
+        provenance["models"] = {role: sorted(v) for role, v in by_role.items()}
+        provenance["materials"] = materials
+        return {"illusion": provenance}
 
     def generate(self) -> None:
         """
