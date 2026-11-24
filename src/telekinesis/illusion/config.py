@@ -62,7 +62,7 @@ LIGHT_PROPERTIES = {
     "spot_blend": ("spot_blend", ("SPOT",), 0.0, 1.0),
 }
 UV_MAPPING_METHODS = ("smart", "cube", "cylinder", "sphere")
-MODEL_ROLES = frozenset({"part", "container", "distractor"})
+MODEL_ROLES = frozenset({"part", "container", "distractor", "environment"})
 COLLISION_SHAPES = frozenset(
     {
         "BOX",

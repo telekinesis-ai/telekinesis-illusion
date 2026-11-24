@@ -834,18 +834,29 @@ class BinPickingWorker:
         Returns:
             A list of (node name, node, stage) tuples.
         """
-        nodes = [
-            (
-                "instance_randomizer_models",
-                ModelInstanceRandomizer(self._instance_configs["part"]),
-                STAGE_COMPOSITION,
-            ),
+        # Nodes run in insertion order, not grouped by stage: every instance
+        # node (props included) must come before the pose nodes, or parts
+        # cannot be dropped onto props such as neighbour bins.
+        role_nodes = {
+            role: ModelInstanceRandomizer(self._instance_configs[role])
+            for role in ("part", "container", "environment")
+            if role in self._instance_configs
+        }
+        nodes = []
+        self._scene_family_node = None
+        nodes += [
+            ("instance_randomizer_models", role_nodes["part"], STAGE_COMPOSITION),
             (
                 "instance_randomizer_containers",
-                ModelInstanceRandomizer(self._instance_configs["container"]),
+                role_nodes["container"],
                 STAGE_COMPOSITION,
             ),
         ]
+        if "environment" in role_nodes:
+            nodes.append(
+                ("instance_randomizer_props", role_nodes["environment"], STAGE_COMPOSITION)
+            )
+
 
         sample_pose = self._make_sample_pose()
         if self._pose_sampling_config.strategy == "grid":
@@ -979,6 +990,21 @@ class BinPickingWorker:
                 STAGE_CAMERA,
             )
         )
+        # Props in the "camera_mount" group ride along with the camera, such
+        # as a gripper below a wrist camera.
+        mounted = [
+            model_config.model_name
+            for model_config in self._model_configs
+            if "camera_mount" in model_config.groups
+        ]
+        if mounted:
+            nodes.append(
+                (
+                    "camera_mount_randomizer",
+                    CameraMountRandomizer(mounted),
+                    STAGE_CAMERA,
+                )
+            )
         return nodes
 
     def _scene_provenance(self) -> dict:

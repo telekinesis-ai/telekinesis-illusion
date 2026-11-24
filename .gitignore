@@ -232,3 +232,6 @@ settings.json
 
 # Mac
 .DS_Store
+
+# Data
+assets/
