@@ -17,9 +17,11 @@ from telekinesis.illusion.randomizer.surface_imperfections import (
     clean_imperfection_images,
     discover_imperfections,
 )
+from telekinesis.illusion.randomizer.wear import apply_wear
 from telekinesis.illusion.types.material import (
     PARAMETERS,
     PrincipledMaterial,
+    TexturedMaterial,
 )
 
 if TYPE_CHECKING:
@@ -160,12 +162,90 @@ class _PrincipledSource:
                     self._imperfection_maps,
                     rng,
                 )
+            if self.recipe.wear is not None:
+                apply_wear(material.blender_obj, shader, self.recipe.wear.sample(rng), rng)
             # Only materials owned by this generator may be reclaimed.
             material.blender_obj["illusion_generated_material"] = True
             return material
         except Exception:
             bpy.data.materials.remove(material.blender_obj)
             clean_imperfection_images()
+            raise
+
+
+@dataclass(frozen=True)
+class _TexturedSource:
+    """A registered PBR set, copied per sample with its own tiling and tint.
+
+    The copy shares the set's images and leaves the cached material untouched;
+    it is flagged as generated so clean_generated_materials reclaims it.
+    """
+
+    recipe: TexturedMaterial
+
+    def prepare(self, manager):
+        manager.update_materials((self.recipe.texture,), None)
+
+    def generate(self, manager, rng) -> Material:
+        base = manager.get_random_material((self.recipe.texture,), None, rng=rng)
+        values = self.recipe.sample(rng)
+        blender_material = base.blender_obj.copy()
+        try:
+            nodes = blender_material.node_tree.nodes
+            links = blender_material.node_tree.links
+            scale = values["uv_scale"]
+            for node in nodes:
+                if node.bl_idname == "ShaderNodeMapping":
+                    node.inputs["Scale"].default_value = (scale, scale, 1.0)
+                    if values["uv_rotation"] is not None:
+                        node.inputs["Rotation"].default_value = (0.0, 0.0, values["uv_rotation"])
+                    if values["uv_offset"] is not None:
+                        node.inputs["Location"].default_value = (*values["uv_offset"], 0.0)
+            shader = next(n for n in nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+            if values["tint"] is not None:
+                socket = shader.inputs["Base Color"]
+                tint = nodes.new("ShaderNodeMixRGB")
+                tint.blend_type = "MULTIPLY"
+                tint.inputs["Fac"].default_value = 1.0
+                tint.inputs[2].default_value = (*values["tint"], 1.0)
+                if socket.links:
+                    links.new(socket.links[0].from_socket, tint.inputs[1])
+                else:
+                    tint.inputs[1].default_value = socket.default_value
+                links.new(tint.outputs["Color"], socket)
+            if not self.recipe.displacement:
+                for node in nodes:
+                    if node.bl_idname == "ShaderNodeOutputMaterial":
+                        for link in list(node.inputs["Displacement"].links):
+                            links.remove(link)
+            factor = values["roughness_scale"]
+            if factor != 1.0:
+                socket = shader.inputs["Roughness"]
+                if socket.links:
+                    scale_node = nodes.new("ShaderNodeMath")
+                    scale_node.operation = "MULTIPLY"
+                    scale_node.use_clamp = True
+                    scale_node.inputs[1].default_value = factor
+                    links.new(socket.links[0].from_socket, scale_node.inputs[0])
+                    links.new(scale_node.outputs["Value"], socket)
+                else:
+                    socket.default_value = min(1.0, socket.default_value * factor)
+            for name, value in values["parameters"].items():
+                socket = shader.inputs[PARAMETERS[name][0]]
+                for link in list(socket.links):  # an explicit value replaces the set's map
+                    links.remove(link)
+                socket.default_value = value
+            if values["normal_scale"] is not None:
+                for node in nodes:
+                    if node.bl_idname in ("ShaderNodeNormalMap", "ShaderNodeBump"):
+                        socket = node.inputs["Strength"]
+                        socket.default_value = socket.default_value * values["normal_scale"]
+            if values["wear"] is not None:
+                apply_wear(blender_material, shader, values["wear"], rng)
+            blender_material["illusion_generated_material"] = True
+            return Material(blender_material)
+        except Exception:
+            bpy.data.materials.remove(blender_material)
             raise
 
 
@@ -180,7 +260,9 @@ class _ExistingSource:
         return self.material
 
 
-MaterialChoice: TypeAlias = str | PrincipledMaterial | Material | MaterialSource
+MaterialChoice: TypeAlias = (
+    str | PrincipledMaterial | TexturedMaterial | Material | MaterialSource
+)
 MaterialSlots: TypeAlias = (
     Mapping[str | int, Sequence[MaterialChoice]] | Literal["all"]
 )
@@ -205,6 +287,8 @@ class MaterialPool:
             return PBRMaterial((choice,))
         if isinstance(choice, PrincipledMaterial):
             return _PrincipledSource(choice)
+        if isinstance(choice, TexturedMaterial):
+            return _TexturedSource(choice)
         if isinstance(choice, Material):
             return _ExistingSource(choice)
         if callable(getattr(choice, "prepare", None)) and callable(

@@ -1634,6 +1634,22 @@ class ModelPoseRandomizerConfig(BaseConfig):
             )
 
 
+def _check_wear(config: Any) -> None:
+    """Check that a material config's wear is None or a mapping; copy it.
+
+    Raises:
+        TypeError: If wear is neither None nor a mapping.
+    """
+    if config.wear is None:
+        return
+    if not isinstance(config.wear, Mapping):
+        raise TypeError(
+            "wear: must be a mapping of wear settings (dust, edge_wear, "
+            f"scratches, ...), got {config.wear!r}."
+        )
+    object.__setattr__(config, "wear", dict(config.wear))
+
+
 @dataclasses.dataclass(frozen=True)
 class PrincipledMaterialConfig(BaseConfig):
     """Procedural Principled BSDF material recipe.
@@ -1646,6 +1662,13 @@ class PrincipledMaterialConfig(BaseConfig):
             Colors are RGB or RGBA in linear space.
         surface_imperfections: Whether to add surface imperfections, or a
             mapping of imperfection settings.
+        color_sampling: How a colour range is drawn. ``"channel"`` (default)
+            samples every component on its own, so a grey-to-grey range also
+            gives tinted colours; ``"segment"`` samples one point on the line
+            between the two end colours, keeping their hue.
+        wear: Optional mapping of wear settings (dust, edge wear, scratches)
+            layered over the sampled colour and roughness; see
+            :class:`TexturedMaterialConfig`. ``None`` (default) adds none.
 
     Example:
         material_config = PrincipledMaterialConfig(
@@ -1656,6 +1679,8 @@ class PrincipledMaterialConfig(BaseConfig):
     preset: str | None = None
     parameters: dict[str, Any] = dataclasses.field(default_factory=dict)
     surface_imperfections: bool | dict[str, Any] = False
+    color_sampling: str = "channel"
+    wear: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Validate the recipe by building the material it describes.
@@ -1673,6 +1698,7 @@ class PrincipledMaterialConfig(BaseConfig):
                 "surface_imperfections: must be a boolean or a mapping."
             )
         object.__setattr__(self, "parameters", dict(self.parameters))
+        _check_wear(self)
         if isinstance(self.surface_imperfections, Mapping):
             object.__setattr__(
                 self, "surface_imperfections", dict(self.surface_imperfections)
@@ -1688,9 +1714,108 @@ class PrincipledMaterialConfig(BaseConfig):
         return material.PrincipledMaterial(
             self.preset,
             surface_imperfections=self.surface_imperfections,
+            color_sampling=self.color_sampling,
+            wear=self.wear,
             **self.parameters,
         )
 
+
+@dataclasses.dataclass(frozen=True)
+class TexturedMaterialConfig(BaseConfig):
+    """A registered PBR texture set with per-sample tiling and tint.
+
+    A mapping material choice with a ``texture`` key is read as this config;
+    one without it is a Principled recipe.
+
+    Attributes:
+        texture: PBR material group to sample a texture set from, as for a
+            plain group-name choice (e.g. ``"wood/WoodFloor051_1K-PNG"``).
+        uv_scale: Texture-coordinate multiplier, fixed or ``[min, max]``.
+            2 tiles the set twice per UV unit (grain half as large).
+        tint: RGB factor applied to the colour map in linear space, fixed or
+            ``[[r, g, b], [r, g, b]]``. ``None`` leaves the colour map as is.
+        color_sampling: How a tint range is drawn: ``"channel"`` (default) or
+            ``"segment"``, as for Principled recipes.
+        displacement: ``False`` disconnects the set's displacement map, which
+            otherwise displaces real geometry.
+        roughness_scale: Factor on the roughness map (or value), fixed or
+            ``[min, max]``; below 1 makes the set glossier.
+        parameters: Principled inputs set on top of the set, as in a
+            Principled recipe (fixed or ``[min, max]``), e.g. ``coat_weight``
+            or ``specular_ior_level`` (the PBR loader fixes it at 0.333). An
+            input with a map connected loses the map.
+        uv_rotation: Rotation of the texture coordinates in degrees, fixed
+            or ``[min, max]`` (e.g. ``[-180, 180]`` varies the grain
+            direction). ``None`` (default) leaves the set's mapping.
+        uv_offset: Shift of the texture coordinates in tiles: ``true`` draws
+            one in [0, 1) per axis, ``[u, v]`` is fixed and ``[[u, v], [u, v]]``
+            a range. ``None``/``false`` (default) leaves the set's mapping.
+        wear: Optional mapping of wear layers mixed into the colour and
+            roughness after the tint; every value is fixed or ``[min, max]``
+            and lengths are object-space metres. ``dust`` (0-1) with
+            ``dust_color`` (linear RGB), ``dust_roughness``, ``dust_cavity``
+            (weight of corners/creases, from ambient occlusion within
+            ``ao_distance``) and ``dust_up`` (weight of up-facing faces);
+            ``edge_wear`` (0-1) with ``edge_color``, ``edge_roughness`` and
+            ``edge_width`` (Bevel radius; convex edges only); ``scratches``
+            (0-1 added roughness) with ``scratch_scale``; ``grime_scale`` is
+            the dust/edge noise feature size. Cycles only. ``None`` (default)
+            adds none.
+        normal_scale: Factor on the set's normal-map strength, fixed or
+            ``[min, max]`` (e.g. 0.2 keeps a fine weave from breaking into
+            specks). ``None`` (default) leaves the set's strength.
+
+    Example:
+        material_config = TexturedMaterialConfig(
+            "wood", uv_scale=(1.5, 2.5), tint=((0.9, 0.8, 0.7), (1.0, 0.9, 0.8))
+        )
+    """
+
+    texture: str
+    uv_scale: Any = 1.0
+    tint: Any = None
+    color_sampling: str = "channel"
+    displacement: bool = True
+    roughness_scale: Any = 1.0
+    parameters: dict[str, Any] = dataclasses.field(default_factory=dict)
+    uv_rotation: Any = None
+    uv_offset: Any = None
+    wear: dict[str, Any] | None = None
+    normal_scale: Any = None
+
+    def __post_init__(self) -> None:
+        """Validate the settings by building the material they describe.
+
+        Raises:
+            TypeError: If displacement is not a boolean or parameters is not a
+                mapping.
+            ValueError: If the texture group, uv_scale, tint, color_sampling,
+                roughness_scale or a parameter is invalid.
+        """
+        if not isinstance(self.parameters, Mapping):
+            raise TypeError("parameters: must be a mapping.")
+        object.__setattr__(self, "parameters", dict(self.parameters))
+        _check_wear(self)
+        self.to_textured_material()
+
+    def to_textured_material(self) -> material.TexturedMaterial:
+        """Return the textured material described by this config."""
+        return material.TexturedMaterial(
+            self.texture,
+            uv_scale=self.uv_scale,
+            tint=self.tint,
+            color_sampling=self.color_sampling,
+            displacement=self.displacement,
+            roughness_scale=self.roughness_scale,
+            parameters=self.parameters,
+            uv_rotation=self.uv_rotation,
+            uv_offset=self.uv_offset,
+            wear=self.wear,
+            normal_scale=self.normal_scale,
+        )
+
+
+MaterialChoiceConfig = str | PrincipledMaterialConfig | TexturedMaterialConfig
 
 @dataclasses.dataclass(frozen=True)
 class MaterialRandomizerConfig(BaseConfig):
@@ -1707,9 +1832,10 @@ class MaterialRandomizerConfig(BaseConfig):
         target_groups: Model groups whose models receive materials.
         groups: Material groups to sample registered PBR materials from.
         names: Names of registered PBR materials to sample from.
-        materials: Explicit material choices: PBR material group names or
-            procedural Principled recipes. Cannot be combined with groups or
-            names.
+        materials: Explicit material choices: PBR material group names,
+            procedural Principled recipes, or textured choices (a mapping with
+            a ``texture`` key, see :class:`TexturedMaterialConfig`). Cannot be
+            combined with groups or names.
         material_slots: ``"all"`` samples every material slot independently;
             a mapping assigns separate choices to slot names or zero-based
             slot indices. Requires mode ``"slots"`` or no mode.
@@ -1730,9 +1856,9 @@ class MaterialRandomizerConfig(BaseConfig):
     target_groups: tuple[str, ...] | None = None
     groups: tuple[str, ...] | None = None
     names: tuple[str, ...] | None = None
-    materials: tuple[str | PrincipledMaterialConfig, ...] | None = None
+    materials: tuple[MaterialChoiceConfig, ...] | None = None
     material_slots: (
-        str | dict[str | int, tuple[str | PrincipledMaterialConfig, ...]] | None
+        str | dict[str | int, tuple[MaterialChoiceConfig, ...]] | None
     ) = None
     mode: str | None = None
     seed: int | None = None
@@ -1795,13 +1921,14 @@ class MaterialRandomizerConfig(BaseConfig):
     @staticmethod
     def _as_material_choices(
         name: str, choices: Any
-    ) -> tuple[str | PrincipledMaterialConfig, ...]:
+    ) -> tuple[MaterialChoiceConfig, ...]:
         """Validate material choices and coerce recipes into configs.
 
         Args:
             name: Field name, used in error messages.
-            choices: Non-empty sequence of PBR group names and Principled
-                recipe mappings or configs.
+            choices: Non-empty sequence of PBR group names, Principled recipe
+                mappings or configs, and textured choices (mappings with a
+                ``texture`` key, or TexturedMaterialConfig).
 
         Returns:
             The choices as a tuple.
@@ -1822,6 +1949,14 @@ class MaterialRandomizerConfig(BaseConfig):
         for index, choice in enumerate(choices):
             if isinstance(choice, str) and choice.strip():
                 result.append(choice)
+            elif isinstance(choice, TexturedMaterialConfig) or (
+                isinstance(choice, Mapping) and "texture" in choice
+            ):
+                result.append(
+                    build_config(
+                        f"{name}[{index}]", TexturedMaterialConfig, choice
+                    )
+                )
             elif isinstance(choice, (Mapping, PrincipledMaterialConfig)):
                 result.append(
                     build_config(
@@ -1830,8 +1965,8 @@ class MaterialRandomizerConfig(BaseConfig):
                 )
             else:
                 raise TypeError(
-                    f"{name}[{index}]: must be a material group name or a "
-                    f"Principled recipe, got {choice!r}."
+                    f"{name}[{index}]: must be a material group name, a "
+                    f"Principled recipe or a textured choice, got {choice!r}."
                 )
         return tuple(result)
 
