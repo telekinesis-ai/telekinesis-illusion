@@ -829,14 +829,18 @@ class MaterialRandomizer(RandomizerNode):
         """Turn configured choices into material pool choices.
 
         Args:
-            choices: PBR group names and Principled recipe configs.
+            choices: PBR group names, Principled recipe configs and textured
+                material configs.
 
         Returns:
-            The group names unchanged and each recipe as a PrincipledMaterial.
+            The group names unchanged, each textured config as a
+            TexturedMaterial and each recipe as a PrincipledMaterial.
         """
         return [
             choice
             if isinstance(choice, str)
+            else choice.to_textured_material()
+            if isinstance(choice, config.TexturedMaterialConfig)
             else choice.to_principled_material()
             for choice in choices
         ]

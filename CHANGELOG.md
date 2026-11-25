@@ -38,6 +38,10 @@ This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) f
 
 - The "completely inside" collision check uses world-space normals, so it is
   also correct for objects with a parent.
+- `MaterialRandomizer` accepts textured material choices (mappings with a
+  `texture` key) in `materials` and `material_slots`. Previously a
+  configuration with such a choice failed with an `AttributeError` when the
+  randomizer was created.
 
 ## 0.3.0 - 2026-10-27
 

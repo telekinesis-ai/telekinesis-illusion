@@ -1,0 +1,804 @@
+# Bin picking dataset: four parts dropped into a tape-lined eurobox.
+
+# DatasetConfig
+dataset:
+  name: bin_picking_0.3.3_v2
+  num_images: 5
+  asset_directory: "../assets/assets-v2"
+  output_directory: output/_render
+  shard:
+    size: 100
+    name_template: "shard_{date}_{uuid}"
+  writer:
+    image_format: JPEG
+    jpg_quality: 98
+    max_size_gb: 50
+    dataset_format: null
+    split_ratios: [0.7, 0.2, 0.1]
+    split_seed: 42
+    stratify: true
+    coco:
+      description: "Bin picking sim-to-real with telekinesis-illusion."
+      url: "https://github.com/telekinesis-ai"
+      version: "1.0.0"
+      year: 2026
+      contributor: "Telekinesis AI"
+      licenses:
+        - id: 1
+          name: "Project asset license"
+          url: ""
+
+# RenderConfig
+renderer:
+  device: CUDA
+  samples: 256
+  view_transform: AgX
+  exposure:
+    - -1.6
+    - -0.6
+  background_strength:
+    - 0.585
+    - 0.715
+  background_rotation:
+    - -180
+    - 180
+  denoiser: null
+  color_output: linear
+
+# CameraConfig — calibrated RealSense intrinsics
+camera:
+  image_width: 848
+  image_height: 480
+  clip_start: 0.03
+  clip_end: 100.0
+  intrinsics:
+    - 435.46856689453125
+    - 434.5237731933594
+    - 420.7252502441406
+    - 244.55136108398438
+
+# PhysicsConfig
+physics:
+  active: true
+  min_simulation_time_range: [0.5, 0.8]
+  max_simulation_time_range: [1.5, 2.5]
+  check_model_interval: 0.5
+  model_stopped_location_threshold: 0.01
+  model_stopped_rotation_threshold: 1.0
+  substeps_per_frame: 8
+  solver_iters: 10
+  verbose: false
+  use_volume_com: false
+
+# ModelConfig per entry. Model paths are relative to asset_directory.
+models:
+  # --- Parts (non-beveled meshes) ---
+  - model_name: 50_pin_male_Centronics_connector
+    model_path: models/parts/production_parts/50_pin_male_Centronics_connector.glb
+    groups: [part]
+    category_name: 50_pin_male_Centronics_connector
+    category_id: 1
+    active_in_simulation: true
+    collision_shape: CONVEX_HULL
+    material_preprocessing: preserve
+    shading: AUTO_SMOOTH
+
+  - model_name: black_cable_gland
+    model_path:  models/parts/production_parts/black_cable_gland.glb
+    groups: [part]
+    category_name: black_cable_gland
+    category_id: 2
+    active_in_simulation: true
+    collision_shape: CONVEX_HULL
+    material_preprocessing: preserve
+    shading: AUTO_SMOOTH
+
+  - model_name: multi_pin_circular_connector
+    model_path:  models/parts/production_parts/multi_pin_circular_connector.glb
+    groups: [part]
+    category_name: multi_pin_circular_connector
+    category_id: 3
+    active_in_simulation: true
+    collision_shape: CONVEX_HULL
+    material_preprocessing: preserve
+    shading: AUTO_SMOOTH
+
+  - model_name: panel_mount_pilot_light
+    model_path:  models/parts/production_parts/panel_mount_pilot_light.glb
+    groups: [part]
+    category_name: panel_mount_pilot_light
+    category_id: 4
+    active_in_simulation: true
+    collision_shape: CONVEX_HULL
+    material_preprocessing: preserve
+    shading: AUTO_SMOOTH
+
+  # --- Containers: eurobox with a cloth-simulated tape liner, six variants ---
+  - model_name: bin_clothliner0
+    model_path: models/environment/bins/eurobox_40x30x12_clothliner0_w.glb
+    groups: [container]
+    category_name: distractor
+    collision_shape: MESH
+    material_preprocessing: preserve
+
+  - model_name: bin_clothliner1
+    model_path: models/environment/bins/eurobox_40x30x12_clothliner1_w.glb
+    groups: [container]
+    category_name: distractor
+    collision_shape: MESH
+    material_preprocessing: preserve
+
+  - model_name: bin_clothliner2
+    model_path: models/environment/bins/eurobox_40x30x12_clothliner2_w.glb
+    groups: [container]
+    category_name: distractor
+    collision_shape: MESH
+    material_preprocessing: preserve
+
+  - model_name: bin_clothliner3
+    model_path: models/environment/bins/eurobox_40x30x12_clothliner3_w.glb
+    groups: [container]
+    category_name: distractor
+    collision_shape: MESH
+    material_preprocessing: preserve
+
+  - model_name: bin_clothliner4
+    model_path: models/environment/bins/eurobox_40x30x12_clothliner4_w.glb
+    groups: [container]
+    category_name: distractor
+    collision_shape: MESH
+    material_preprocessing: preserve
+
+  - model_name: bin_clothliner5
+    model_path: models/environment/bins/eurobox_40x30x12_clothliner5_w.glb
+    groups: [container]
+    category_name: distractor
+    collision_shape: MESH
+    material_preprocessing: preserve
+
+  # --- Distractors ---
+  - model_name: gearwheel_1
+    model_path: models/parts/mechanical_parts/gearwheels/gearwheel_1.glb
+    groups: [distractor]
+    category_name: gearwheel_1
+    category_id: 5
+    active_in_simulation: true
+    collision_shape: CONVEX_HULL
+    shading: AUTO_SMOOTH
+
+  - model_name: gearwheel_2
+    model_path: models/parts/mechanical_parts/gearwheels/gearwheel_2.glb
+    groups: [distractor]
+    category_name: gearwheel_2
+    category_id: 6
+    active_in_simulation: true
+    collision_shape: CONVEX_HULL
+    shading: AUTO_SMOOTH
+
+  - model_name: pipe_fixture_1
+    model_path: models/parts/mechanical_parts/pipes/pipe_fixture_1.glb
+    groups: [distractor]
+    category_name: pipe_fixture_1
+    category_id: 7
+    active_in_simulation: true
+    collision_shape: CONVEX_HULL
+    shading: AUTO_SMOOTH
+
+  # --- Environment ---
+  # Two SSI Schaefer LF 211 bins on each long side of the main bin.
+  - model_name: neighbors_lleft
+    model_path: models/environment/bins/neighbors_lf211_lleft.glb
+    groups: [environment]
+    category_name: distractor
+    collision_shape: BOX
+    material_preprocessing: preserve
+
+  - model_name: neighbors_lright
+    model_path: models/environment/bins/neighbors_lf211_lright.glb
+    groups: [environment]
+    category_name: distractor
+    collision_shape: BOX
+    material_preprocessing: preserve
+
+  - model_name: table
+    model_path: models/environment/tables/table.glb
+    groups: [environment]
+    category_name: distractor
+    collision_shape: BOX
+    material_preprocessing: preserve
+
+  - model_name: cardboard_neg
+    model_path: models/environment/cardboards/cardboard_neg_short.glb
+    groups: [environment]
+    category_name: distractor
+    collision_shape: BOX
+    material_preprocessing: preserve
+
+  # Robotiq Hand-E, modeled in camera coordinates.
+  - model_name: gripper
+    model_path: models/environment/gripper/gripper_hande.glb
+    groups: [environment, camera_mount]
+    category_name: distractor
+    collision_shape: BOX
+    material_preprocessing: preserve
+    preprocess_model: false
+
+lights:
+  - light_name: key
+    light_type: AREA
+  - light_name: fill
+    light_type: AREA
+
+# PoseSamplingConfig
+pose_sampling:
+  strategy: random
+  min_height: 0.03
+  max_height: 0.12
+  face_sample_range: [0.2, 0.8]
+
+randomizers:
+  instance:
+    part:
+      counts:
+        50_pin_male_Centronics_connector: [0, 8]
+        black_cable_gland: [0, 8]
+        multi_pin_circular_connector: [0, 8]
+        panel_mount_pilot_light: [0, 8]
+      min_num_total_models: 1
+      max_num_total_models: 30
+    container:
+      counts:
+        bin_clothliner0: [0, 1]
+        bin_clothliner1: [0, 1]
+        bin_clothliner2: [0, 1]
+        bin_clothliner3: [0, 1]
+        bin_clothliner4: [0, 1]
+        bin_clothliner5: [0, 1]
+      min_num_total_models: 1
+      max_num_total_models: 1
+    distractor:
+      counts:
+        gearwheel_1: [0, 2]
+        gearwheel_2: [0, 2]
+        pipe_fixture_1: [0, 2]
+      min_num_total_models: 0
+      max_num_total_models: 3
+    environment:
+      counts:
+        neighbors_lleft: [1, 1]
+        neighbors_lright: [1, 1]
+        table: [1, 1]
+        cardboard_neg: [1, 1]
+        gripper: [1, 1]
+      min_num_total_models: 5
+      max_num_total_models: 5
+
+  # ModelPoseRandomizerConfig
+  model_pose:
+    sample_on_surface: null
+
+  material:
+    centronics:
+      target_models:
+        - 50_pin_male_Centronics_connector
+      seed: 101
+      material_slots:
+        silver_metal.004:
+          - preset: metal
+            color_sampling: segment
+            surface_imperfections:
+              enabled: true
+              directory: surface_imperfections
+              roughness_strength: [0.15, 0.35]
+              bump_strength: [0.02, 0.08]
+              bump_distance: 0.00005
+              scale: [1.0, 3.0]
+            parameters:
+              base_color:
+                - [0.85, 0.85, 0.86, 1.0]
+                - [0.95, 0.95, 0.96, 1.0]
+              roughness: [0.05, 0.15]
+              anisotropic: [0.3, 0.7]
+        blue_insulator.004:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0344, 0.033, 0.0302, 1.0]
+                - [0.7156, 0.687, 0.6298, 1.0]
+              roughness: [0.1338, 0.9662]
+        gold_contacts.004:
+          - preset: metal
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.5363, 0.3513, 0.0669, 1.0]
+                - [1.0, 0.9487, 0.4831, 1.0]
+              roughness: [0.0, 0.5188]
+        black_rubber.004:
+          - preset: metal
+            color_sampling: segment
+            surface_imperfections:
+              enabled: true
+              directory: surface_imperfections
+              roughness_strength: [0.15, 0.35]
+              bump_strength: [0.02, 0.08]
+              bump_distance: 0.00005
+              scale: [1.0, 3.0]
+            parameters:
+              base_color:
+                - [0.5, 0.5, 0.5, 1.0]
+                - [0.7, 0.7, 0.71, 1.0]
+              roughness: [0.2, 0.4]
+
+    cable_gland:
+      target_models:
+        - black_cable_gland
+      seed: 102
+      material_slots:
+        Black_gloss:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.045, 0.042, 0.04, 1.0]
+              roughness: [0.05, 0.2]
+        Black_satin:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.045, 0.042, 0.04, 1.0]
+              roughness: [0.15, 0.35]
+        Black_matte:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.045, 0.042, 0.04, 1.0]
+              roughness: [0.35, 0.6]
+
+    circular_connector:
+      target_models:
+        - multi_pin_circular_connector
+      seed: 103
+      material_slots:
+        Black_plastic.001:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.0222, 0.0204, 0.0186, 1.0]
+              roughness: [0.1, 0.35]
+        Cavity.002:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.0301, 0.0301, 0.0329, 1.0]
+              roughness: [0.3187, 1.0]
+        Contact_nickel.001:
+          - preset: metal
+            color_sampling: segment
+            surface_imperfections:
+              enabled: true
+              directory: surface_imperfections
+              roughness_strength: [0.15, 0.35]
+              bump_strength: [0.02, 0.08]
+              bump_distance: 0.00005
+              scale: [1.0, 3.0]
+            parameters:
+              base_color:
+                - [0.65, 0.65, 0.66, 1.0]
+                - [0.9, 0.9, 0.91, 1.0]
+              roughness: [0.08, 0.3]
+        Dark_rubber.001:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.0301, 0.0301, 0.0329, 1.0]
+              roughness: [0.3187, 1.0]
+        Label.001:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.0222, 0.0204, 0.0186, 1.0]
+              roughness: [0.0806, 0.7694]
+        Silver_polished.002:
+          - preset: metal
+            color_sampling: segment
+            surface_imperfections:
+              enabled: true
+              directory: surface_imperfections
+              roughness_strength: [0.15, 0.35]
+              bump_strength: [0.02, 0.08]
+              bump_distance: 0.00005
+              scale: [1.0, 3.0]
+            parameters:
+              base_color:
+                - [0.65, 0.65, 0.66, 1.0]
+                - [0.9, 0.9, 0.91, 1.0]
+              roughness: [0.08, 0.3]
+        Silver_satin.002:
+          - preset: metal
+            color_sampling: segment
+            surface_imperfections:
+              enabled: true
+              directory: surface_imperfections
+              roughness_strength: [0.15, 0.35]
+              bump_strength: [0.02, 0.08]
+              bump_distance: 0.00005
+              scale: [1.0, 3.0]
+            parameters:
+              base_color:
+                - [0.65, 0.65, 0.66, 1.0]
+                - [0.9, 0.9, 0.91, 1.0]
+              roughness: [0.08, 0.3]
+
+    pilot_light:
+      target_models:
+        - panel_mount_pilot_light
+      seed: 104
+      material_slots:
+        Gray_plastic.006:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.03, 0.03, 0.03, 1.0]
+              roughness: [0.25, 0.6]
+        Silver_polished.007:
+          - preset: metal
+            color_sampling: segment
+            surface_imperfections:
+              enabled: true
+              directory: surface_imperfections
+              roughness_strength: [0.15, 0.35]
+              bump_strength: [0.02, 0.08]
+              bump_distance: 0.00005
+              scale: [1.0, 3.0]
+            parameters:
+              base_color:
+                - [0.75, 0.75, 0.76, 1.0]
+                - [0.95, 0.95, 0.96, 1.0]
+              roughness: [0.05, 0.2]
+        Silver_satin.007:
+          - preset: metal
+            color_sampling: segment
+            surface_imperfections:
+              enabled: true
+              directory: surface_imperfections
+              roughness_strength: [0.15, 0.35]
+              bump_strength: [0.02, 0.08]
+              bump_distance: 0.00005
+              scale: [1.0, 3.0]
+            parameters:
+              base_color:
+                - [0.75, 0.75, 0.76, 1.0]
+                - [0.95, 0.95, 0.96, 1.0]
+              roughness: [0.05, 0.2]
+        Seal.006:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.0301, 0.0301, 0.0329, 1.0]
+              roughness: [0.3187, 1.0]
+        Brass_contact.006:
+          - preset: metal
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.5363, 0.3513, 0.0669, 1.0]
+                - [1.0, 0.9487, 0.4831, 1.0]
+              roughness: [0.0, 0.5188]
+        Gray_dark.006:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.2325, 0.2325, 0.2325, 1.0]
+              roughness: [0.2125, 0.7875]
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.03, 0.03, 0.03, 1.0]
+              roughness: [0.25, 0.8]
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.03, 0.03, 0.03, 1.0]
+              roughness: [0.25, 0.8]
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.03, 0.03, 0.03, 1.0]
+              roughness: [0.25, 0.8]
+        Amber_dark.006:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.6619, 0.1216, 0.0036, 1.0]
+              roughness: [0.02, 0.1]
+        Cavity.007:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.0, 0.0, 0.0, 1.0]
+                - [0.0301, 0.0301, 0.0329, 1.0]
+              roughness: [0.3187, 1.0]
+        Orange_plastic.006:
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.25, 0.07, 0.02, 1.0]
+                - [0.4, 0.11, 0.035, 1.0]
+              roughness: [0.02, 0.08]
+              transmission: [0.5, 0.8]
+              emission_strength: 0.0
+
+    # Slots: 0 bin plastic, 1 floor insert, 2 tape liner. The near-black tape
+    # also wraps the bin body, so slots 0 and 2 share one recipe.
+    liner_bin:
+      target_models:
+        - bin_clothliner0
+        - bin_clothliner1
+        - bin_clothliner2
+        - bin_clothliner3
+        - bin_clothliner4
+        - bin_clothliner5
+      seed: 111
+      material_slots:
+        0:
+          - preset: plastic
+            color_sampling: segment
+            parameters: &liner_tape
+              base_color:
+                - [0.009, 0.008, 0.007, 1.0]
+                - [0.014, 0.013, 0.011, 1.0]
+              roughness: [0.15, 0.3]
+              specular_ior_level: 0.5
+              coat_weight: [0.6, 0.9]
+              coat_roughness: [0.03, 0.08]
+              sheen_weight: [0.0, 0.1]
+              sheen_roughness: [0.3, 0.5]
+        1:
+          - texture: rubber
+            uv_scale: 4.0
+            displacement: false
+            tint: [0.6933, 0.6516, 0.221]
+        2:
+          - preset: plastic
+            color_sampling: segment
+            parameters: *liner_tape
+
+    mechanical_distractors:
+      target_models:
+        - gearwheel_1
+        - gearwheel_2
+        - pipe_fixture_1
+      seed: 112
+      groups: [metal]
+
+    neighbors:
+      target_models:
+        - neighbors_lleft
+        - neighbors_lright
+      seed: 106
+      material_slots:
+        0:
+          - texture: plastic
+            uv_scale: 0.4
+            displacement: false
+            tint:
+              - [3.0883, 1.8978, 1.4083]
+              - [3.6253, 2.2278, 1.6533]
+            uv_rotation: [-180, 180]
+            uv_offset: true
+            wear:
+              dust: [0.3, 0.5]
+              dust_color:
+                - [0.22, 0.23, 0.24]
+                - [0.3, 0.3, 0.3]
+              dust_roughness: 0.85
+              dust_cavity: 1.0
+              dust_up: 0.0
+              ao_distance: 0.02
+              grime_scale: [0.01, 0.03]
+              edge_wear: [0.25, 0.45]
+              edge_color:
+                - [0.35, 0.45, 0.55]
+                - [0.45, 0.55, 0.65]
+              edge_roughness: 0.45
+              edge_width: 0.003
+              scratches: [0.05, 0.15]
+              scratch_scale: 0.002
+            roughness_scale: [0.35, 0.5]
+            parameters:
+              coat_weight: [0.2, 0.4]
+              coat_roughness: [0.1, 0.2]
+
+    table:
+      target_models:
+        - table
+      seed: 107
+      material_slots:
+        0:
+          - texture: wood
+            uv_scale: 2.0
+            displacement: false
+            tint:
+              - [0.6255, 0.7786, 1.1964]
+              - [0.7343, 0.914, 1.4044]
+            uv_rotation: [-6, 6]
+            uv_offset: true
+
+    # Slots: 0 gripper body, 1 fingers, fingertips and trim.
+    gripper:
+      target_models:
+        - gripper
+      seed: 108
+      material_slots:
+        0:
+          - texture: plastic
+            uv_scale: 1.0
+            displacement: false
+        1:
+          - preset: metal
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.55, 0.55, 0.57, 1.0]
+                - [0.75, 0.75, 0.77, 1.0]
+              roughness: [0.3, 0.45]
+          - preset: metal
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.7, 0.7, 0.72, 1.0]
+                - [0.95, 0.95, 0.96, 1.0]
+              roughness: [0.4, 0.75]
+          - preset: plastic
+            color_sampling: segment
+            parameters:
+              base_color:
+                - [0.55, 0.55, 0.57, 1.0]
+                - [0.85, 0.85, 0.86, 1.0]
+              roughness: [0.35, 0.6]
+
+    cardboard:
+      target_models:
+        - cardboard_neg
+      seed: 115
+      material_slots:
+        0:
+          - texture: paper
+            uv_scale: 1.0
+            displacement: false
+            tint:
+              - [0.8149, 0.6775, 0.6595]
+              - [0.9567, 0.7953, 0.7741]
+
+  background:
+    groups: [indoor/industrial, indoor/misc]
+
+  light:
+    key:
+      properties:
+        power: { min: 71.25, max: 118.75 }
+        color: { min: [1.0, 0.82, 0.62], max: [1.0, 0.95, 0.85] }
+        shape: [RECTANGLE]
+        size: { min: 0.3, max: 0.5 }
+        size_y: { min: 0.03, max: 0.06 }
+    fill:
+      properties:
+        power: { min: 22.5, max: 37.5 }
+        color: { min: [1.0, 0.82, 0.62], max: [1.0, 0.95, 0.85] }
+        shape: [RECTANGLE]
+        size: { min: 0.3, max: 0.5 }
+        size_y: { min: 0.03, max: 0.06 }
+
+  light_pose:
+    key:
+      sampler: shell_sampler
+      min_distance: 0.05
+      max_tries: 100
+      params:
+        center: [bin_]
+        radius_min: 0.8
+        radius_max: 2.32
+        elevation_min: 32.5
+        elevation_max: 89.0
+        azimuth_min: 20.0
+        azimuth_max: 140.0
+    fill:
+      sampler: shell_sampler
+      min_distance: 0.05
+      max_tries: 100
+      params:
+        center: [bin_]
+        radius_min: 0.8
+        radius_max: 2.61
+        elevation_min: 15.0
+        elevation_max: 80.0
+
+  camera_pose:
+    sampler: volume_sampler
+    number_of_views: 1
+    params:
+      point_of_interst: [0.08, -0.0139, -0.04]
+      volume_center: [0.08, -0.0139, -0.04]
+      volume_size: [0.004, 0.004, 0.001]
+      distance_range: [0.47, 0.52]
+      inplane_rot_min: 88.0
+      inplane_rot_max: 92.0
+      up_hint: [0.0, 1.0, 0.0]
+
+sensor:
+  saturation:
+    - 1.15
+    - 1.3
+  contrast:
+    - 0.9
+    - 1.15
+  gamma:
+    - 0.9
+    - 1.1
+  shot_noise:
+    - 0.12
+    - 0.2
+  read_noise:
+    - 2.5
+    - 3.0
+  chroma_noise:
+    - 0.38
+    - 0.48
+  sharpen_amount:
+    - 0.0
+    - 0.0
+  sharpen_sigma:
+    - 0.7829
+    - 1.1743
+  blur_sigma:
+    - 0.4
+    - 0.7
+  vignetting:
+    - 0.0388
+    - 0.0583
+  white_balance:
+    - 0.99
+    - 1.01
+  jpeg_quality:
+    - 85
+    - 95
+  noise_blur:
+    - 1.3
+    - 1.7
+  noise_blur_mix:
+    - 0.4
+    - 0.6
+  exposure_ev:
+    - -1.8
+    - -1.0
