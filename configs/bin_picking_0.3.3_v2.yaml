@@ -4,8 +4,7 @@
 dataset:
   name: bin_picking_0.3.3_v2
   num_images: 5
-  asset_directory: "../assets/assets-v2"
-  output_directory: output/_render
+  output_directory: output
   shard:
     size: 100
     name_template: "shard_{date}_{uuid}"
@@ -74,7 +73,7 @@ physics:
 models:
   # --- Parts (non-beveled meshes) ---
   - model_name: 50_pin_male_Centronics_connector
-    model_path: models/parts/production_parts/50_pin_male_Centronics_connector.glb
+    model_path: models/parts/production_parts/50_pin_male_centronics_connector.glb
     groups: [part]
     category_name: 50_pin_male_Centronics_connector
     category_id: 1

@@ -65,7 +65,7 @@ def main():
 
     # Add models to the environment
     model_1_path = str(
-        assets_dir / "models" / "mechanical_parts" / "gearwheel_1.glb"
+        assets_dir / "models/parts/mechanical_parts/gearwheels/gearwheel_1.glb"
     )
     environment.add(
         config.ModelConfig.from_path(
@@ -77,7 +77,7 @@ def main():
     )
 
     model_2_path = str(
-        assets_dir / "models" / "mechanical_parts" / "pipe_1.glb"
+        assets_dir / "models/parts/mechanical_parts/pipes/pipe_1.glb"
     )
     environment.add(
         config.ModelConfig.from_path(

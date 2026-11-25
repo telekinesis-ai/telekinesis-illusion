@@ -21,16 +21,16 @@ from tqdm import tqdm
 # wherever it is used.
 _REPO_ASSETS = Path(__file__).resolve().parents[4] / "assets"
 
-# Public copy of <repo>/assets for installs without a checkout. The archive
-# holds a top-level 'assets/' folder. Its cache directory is named after the
-# archive, so publishing a new archive version never reuses an older cache.
+# Public copy of the assets for installs without a checkout. The archive holds
+# a single top-level folder named after the archive, e.g. 'assets-v2/'. The
+# cache directory carries that name, so publishing a new archive version never
+# reuses an older cache.
 _PUBLIC_ASSETS_URL = (
     "https://assets.telekinesis.ai/telekinesis-illusion/assets-v2.zip"
 )
 _CACHED_ASSETS = (
-    Path("~/.cache/telekinesis/telekinesis-illusion").expanduser()
+    Path("~/.cache/telekinesis/telekinesis-illusion/assets").expanduser()
     / PurePosixPath(_PUBLIC_ASSETS_URL).stem
-    / "assets"
 )
 
 
@@ -50,7 +50,8 @@ def resolve_asset_dir(
     3. '<repo>/assets' next to the source tree, if it exists. Only available
        for a src-layout checkout.
     4. The public assets cached in
-       '~/.cache/telekinesis/illusion/assets-<VERSION>/assets' by an earlier call.
+       '~/.cache/telekinesis/telekinesis-illusion/assets/assets-<VERSION>' by
+       an earlier call.
     5. Otherwise the public assets are downloaded once, extracted into that
        cache directory, and reused by later calls. Delete the cache
        directory to download them again.
@@ -104,7 +105,8 @@ def _download_public_assets() -> None:
     Download the public assets archive and extract it into the cache.
 
     The archive is downloaded and extracted inside a temporary directory next
-    to the cache, and only the complete 'assets' folder is moved into place.
+    to the cache, and only the complete top-level archive folder is moved into
+    place.
     An interrupted download therefore never leaves a partial cache behind.
 
     Raises:
@@ -146,7 +148,7 @@ def _download_public_assets() -> None:
                         "the extraction directory."
                     )
             archive.extractall(extract_dir)
-        os.replace(extract_dir / "assets", _CACHED_ASSETS)
+        os.replace(extract_dir / _CACHED_ASSETS.name, _CACHED_ASSETS)
 
 
 def _validate_asset_dir(
@@ -219,7 +221,7 @@ def resolve_asset_path(
     Args:
         path: str or Path
             The asset path as configured, e.g.
-            'models/mechanical_parts/gearwheel_2.glb'.
+            'models/parts/mechanical_parts/gearwheels/gearwheel_2.glb'.
         asset_dir: str or Path
             The directory relative paths are anchored on.
 

@@ -737,7 +737,8 @@ class ModelConfig(AssetConfig):
 
     Example:
         model = ModelConfig(
-            "assets/models/mechanical_parts/gearwheel_1.glb", "gear"
+            "assets/models/parts/mechanical_parts/gearwheels/gearwheel_1.glb",
+            "gear",
         )
     """
 

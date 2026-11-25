@@ -106,15 +106,17 @@ def test_quickstarts_render_multiple_samples(tmp_path, name):
 def test_worker_renders_and_exports_coco_shards(tmp_path):
     """The YAML example renders shards, merges them, and exports COCO splits."""
     config = yaml.safe_load(
-        (ROOT / "configs/bin_picking_example.yaml").read_text(encoding="utf8")
+        (ROOT / "configs/bin_picking_0.3.3_v2.yaml").read_text(encoding="utf8")
     )
     config["dataset"].update(
         name="test_bins",
         num_images=3,
-        asset_directory=str(ROOT / "assets"),
         output_directory=str(tmp_path),
     )
     config["dataset"]["shard"]["size"] = 2
+    config["dataset"]["writer"]["dataset_format"] = "coco"
+    # The calibrated intrinsics are in pixels of the full-size image.
+    config["camera"].pop("intrinsics")
     config["camera"].update(image_width=64, image_height=64)
     config["renderer"].update(samples=2, device="CPU")
     config_path = tmp_path / "config.yaml"

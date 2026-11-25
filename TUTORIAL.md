@@ -13,7 +13,7 @@ the generator renders that scene from the configured camera views.
 Use a source checkout with its `assets/` directory and install the package as
 described in [Getting started](DEVELOPMENT.md#get-started). Without a local
 `assets/` directory, the public example assets are downloaded on first use and
-cached in `~/.cache/telekinesis/telekinesis-illusion/assets-<VERSION>/assets`. Activate that
+cached in `~/.cache/telekinesis/telekinesis-illusion/assets/assets-<VERSION>`. Activate that
 environment and run the following steps from the repository root.
 
 The example uses CPU rendering, a 128-by-128 image size, and eight Cycles samples
@@ -32,6 +32,7 @@ from telekinesis.illusion.core import (
     synthetic_data_generator,
 )
 from telekinesis.illusion.randomizer import randomizer, randomizer_node
+from telekinesis.illusion.utils import assets
 from telekinesis.illusion.writer import writer
 
 
@@ -39,7 +40,8 @@ dataset_environment = environment.Environment()
 dataset_environment.add(config.CameraConfig(image_width=128, image_height=128))
 dataset_environment.add(
     config.ModelConfig.from_path(
-        "assets/models/mechanical_parts/gearwheel_1.glb",
+        assets.resolve_asset_dir()
+        / "models/parts/mechanical_parts/gearwheels/gearwheel_1.glb",
         model_name="gear",
         category_name="gear",
         category_id=1,

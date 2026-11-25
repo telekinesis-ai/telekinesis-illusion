@@ -33,6 +33,13 @@ This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) f
   collides with its mesh vertices as before.
 - Adding and removing rigid bodies no longer updates the view layer before and
   after each operation, which saves about 0.2 s per scene.
+- `examples/generate_synthetic_data_with_bin_picking_worker.py` defaults to
+  `configs/bin_picking_0.3.3_v2.yaml`, the production-parts eurobox scene,
+  instead of `configs/bin_picking_example.yaml`; the README and the
+  development guide reference it too. It merges shards without exporting
+  (`dataset_format: null`) to `output/bin_picking_0.3.3_v2/`. Pass
+  `--config-file configs/bin_picking_example.yaml` to run the gearwheel
+  example.
 
 ### Fixed
 
@@ -42,6 +49,19 @@ This file follows the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) f
   `texture` key) in `materials` and `material_slots`. Previously a
   configuration with such a choice failed with an `AttributeError` when the
   randomizer was created.
+- Downloading the public assets no longer fails with `FileNotFoundError`
+  after extraction. The archive holds a top-level folder named after the
+  archive (e.g. `assets-v2/`), not `assets/`. The cache directory moved from
+  `~/.cache/telekinesis/telekinesis-illusion/assets-<VERSION>/assets` to
+  `~/.cache/telekinesis/telekinesis-illusion/assets/assets-<VERSION>`; an
+  existing cache at the old location is not reused and can be deleted.
+- `configs/bin_picking_example.yaml` and
+  `configs/example_bin_picking_gearwheel_2.yaml` load again: both use the
+  public asset layout (`models/parts/...`, `models/environment/bins/...`) and
+  no longer set `dataset.asset_directory`, and the gearwheel configuration is
+  migrated to the current configuration format. The quickstart examples and
+  the tutorial use the same asset layout and find the assets with
+  `resolve_asset_dir()`.
 
 ## 0.3.0 - 2026-10-27
 

@@ -116,7 +116,7 @@ Asset lookup is implemented in
 2. Without an explicit directory, lookup checks `./assets` in the working
    directory, then the repository's `assets/` next to an editable checkout.
 3. If neither exists, the public example assets are used from
-   `~/.cache/telekinesis/telekinesis-illusion/assets-<VERSION>/assets`. The first such lookup
+   `~/.cache/telekinesis/telekinesis-illusion/assets/assets-<VERSION>`. The first such lookup
    downloads `https://assets.telekinesis.ai/telekinesis-illusion/assets-<VERSION>.zip`
    and extracts it there; members with paths outside the archive are
    rejected. An interrupted download leaves no partial cache. Delete the
@@ -170,19 +170,21 @@ Pass that engine to `SyntheticDataGenerator`. Set
 
 The bin-picking worker builds a complete generation run from one YAML file,
 such as the tracked
-[gearwheel configuration](configs/bin_picking_example.yaml):
+[bin-picking configuration](configs/bin_picking_0.3.3_v2.yaml):
 
 ```bash
-python examples/generate_synthetic_data_with_bin_picking_worker.py --config-file configs/bin_picking_example.yaml --no-preview
+python examples/generate_synthetic_data_with_bin_picking_worker.py --config-file configs/bin_picking_0.3.3_v2.yaml --no-preview
 ```
 
 This writes shards and merged annotations under
-`<dataset.output_directory>/<dataset.name>/`. The example YAML requests a COCO
-export in `coco_format/`. Use a new dataset name for another exported run: the
-worker asks before replacing an existing export directory. For deliberate
-shard accumulation, set `dataset.writer.dataset_format: null` in a local YAML copy and
-keep category IDs consistent across runs. The script defaults to
-`configs/bin_picking_example.yaml`; use `--config-file` to select another file
+`<dataset.output_directory>/<dataset.name>/`. The example YAML sets
+`dataset.writer.dataset_format: null`, so it only merges shards and repeated
+runs accumulate shards in the same dataset; keep category IDs consistent across
+runs. Set `dataset_format` to `coco` or `yolo` in a local YAML copy to also
+export split datasets to `coco_format/` or `yolo_format/`. Use a new dataset
+name for another exported run: the worker asks before replacing an existing
+export directory. The script defaults to
+`configs/bin_picking_0.3.3_v2.yaml`; use `--config-file` to select another file
 and `--preview` or `--no-preview` to control the viewer.
 
 #### Configuration structure
@@ -340,7 +342,7 @@ import yaml
 
 from telekinesis.illusion import config
 
-with open("configs/bin_picking_example.yaml", encoding="utf-8") as file:
+with open("configs/bin_picking_0.3.3_v2.yaml", encoding="utf-8") as file:
     raw = yaml.safe_load(file)
 camera_pose = config.CameraPoseRandomizerConfig.from_dict(
     raw["randomizers"]["camera_pose"]
@@ -498,7 +500,7 @@ ordinary contributions do not require publishing credentials or a version bump.
 | --- | --- |
 | Installation rejects Python or cannot find `bpy` | Check `python --version`, the active environment, and wheel availability for `bpy==4.2.17`. Python 3.12+ does not satisfy this project's metadata. |
 | Imports use old code or fail after an edit | Check the IDE interpreter and `python -m pip show telekinesis-illusion`. Reinstall editable metadata when needed and restart Python. |
-| Missing asset directory, model, HDRI, or material | Check the working directory, YAML-relative asset root, and referenced files. A wheel does not supply the top-level example assets; they are downloaded to `~/.cache/telekinesis/illusion/assets-<VERSION>/assets` when no local `assets/` directory exists. |
+| Missing asset directory, model, HDRI, or material | Check the working directory, YAML-relative asset root, and referenced files. A wheel does not supply the top-level example assets; they are downloaded to `~/.cache/telekinesis/telekinesis-illusion/assets/assets-<VERSION>` when no local `assets/` directory exists. |
 | Downloading the public assets fails | Check network access to `assets.telekinesis.ai`, or provide a local asset directory. |
 | CUDA device selection fails | Check the GPU and driver, or select CPU explicitly as described above. |
 | Viewer import fails or a preview starts unexpectedly | Install the `viewer` extra, or pass `--no-preview` to the quickstarts. |

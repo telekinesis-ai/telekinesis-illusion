@@ -72,7 +72,7 @@ class BinPickingWorker:
     group: part, container or distractor.
 
     Example:
-        worker = BinPickingWorker("configs/bin_picking_example.yaml")
+        worker = BinPickingWorker("configs/bin_picking_0.3.3_v2.yaml")
         worker.generate()
         worker.merge_shards(preview=False)
     """

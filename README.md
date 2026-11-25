@@ -86,7 +86,7 @@ package installed from PyPI. Follow the GitHub installation above, then run
 these commands from the repository root. The examples use the checkout's
 `assets/` directory, and the worker example also uses `configs/`. Without an
 `assets/` directory, the first run downloads the public example assets (174 MB) to
-`~/.cache/telekinesis/telekinesis-illusion/assets-<VERSION>/assets` and later runs reuse them.
+`~/.cache/telekinesis/telekinesis-illusion/assets/assets-<VERSION>` and later runs reuse them.
 
 The examples default to CUDA (`--device CUDA`); pass `--device CPU` to select
 CPU rendering:
@@ -101,7 +101,7 @@ python examples/quickstart_flying_things.py --preview
 python examples/quickstart_parts_in_bin.py --preview
 ```
 ```bash
-python examples/generate_synthetic_data_with_bin_picking_worker.py --config-file configs/bin_picking_example.yaml --preview
+python examples/generate_synthetic_data_with_bin_picking_worker.py --config-file configs/bin_picking_0.3.3_v2.yaml --preview
 ```
 
 The bin-picking worker defaults to this example YAML with preview disabled.
@@ -189,7 +189,7 @@ python -m pip install -e ".[viewer]"
 ```
 
 ```bash
-python examples/view_dataset.py output/bin_picking_example/coco_format
+python examples/view_dataset.py output/bin_picking_0.3.3_v2
 ```
 
 The script detects native shards and merged datasets as well as exported COCO
